@@ -1,0 +1,44 @@
+class Familiar < Formula
+  desc "Keyboard-driven kitty overlays for a Claude Code workflow"
+  homepage "https://github.com/DenoBY/familiar"
+  url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  license "MIT"
+  head "https://github.com/DenoBY/familiar.git", branch: "master"
+
+  depends_on :macos
+  depends_on "python@3.13"
+
+  def install
+    # Раскладку репозитория сохраняем целиком в libexec.
+    libexec.install "bin", "plugins", "config", "docs"
+    # Обёртка задаёт FAMILIAR_ROOT стабильным opt-путём: китены прописываются в
+    # kitty.conf через …/opt/familiar/…, а не версионный Cellar, поэтому переживают
+    # `brew upgrade`. Python зовём явно — шебанг скрипта не важен.
+    (bin/"familiar").write <<~SH
+      #!/bin/bash
+      export FAMILIAR_ROOT="#{opt_libexec}"
+      exec "#{formula_opt_bin("python@3.13")}/python3.13" "#{opt_libexec}/bin/familiar" "$@"
+    SH
+  end
+
+  def caveats
+    <<~EOS
+      familiar is installed but not wired into kitty yet.
+
+      Enable everything (kittens + terminal look):
+        familiar enable --all
+      Just the kittens, leaving your terminal config alone:
+        familiar enable --kittens
+      Or pick specific overlays:
+        familiar enable session review
+
+      Reload kitty afterwards (Cmd+Ctrl+, on macOS) or restart it.
+      Undo any time:  familiar disable   (--restore for a full revert)
+    EOS
+  end
+
+  test do
+    assert_match "config dir:", shell_output("#{bin}/familiar status")
+  end
+end
