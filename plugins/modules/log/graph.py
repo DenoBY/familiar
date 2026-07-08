@@ -6,7 +6,7 @@
 - каждый лейн занимает 2 колонки (узел + связь), поэтому мержи/ответвления рисуются
   горизонтальными пробегами `●─╮`, `├─╯`, а не тесными `╮╯`.
 
-Чистая функция без TUI — цвет по индексу лейна выбирает вызывающий.
+Чистая функция без TUI — цвет по номеру ветки выбирает вызывающий.
 """
 
 NODE = '●'
@@ -19,7 +19,7 @@ IN_R = '╯'    # ветка справа сходится в узел (влев
 IN_L = '╰'    # ветка слева сходится в узел (вправо-вверх)
 
 
-def _free_slot(lanes: list, colors: list, allow_zero: bool) -> int:
+def _free_slot(lanes: 'list[str | None]', colors: 'list[int]', allow_zero: bool) -> int:
     """Индекс свободного лейна. allow_zero=False резервирует лейн 0 под основную ветку."""
     for i in range(0 if allow_zero else 1, len(lanes)):
         if lanes[i] is None:
@@ -32,7 +32,7 @@ def _free_slot(lanes: list, colors: list, allow_zero: bool) -> int:
     return len(lanes) - 1
 
 
-def _main_chain(commits: list) -> set:
+def _main_chain(commits: 'list[dict]') -> 'set[str]':
     """Множество sha основной ветки: цепочка первых родителей от коммита с HEAD (иначе
     от самого свежего). Эти коммиты держим на лейне 0.
     """
@@ -49,10 +49,11 @@ def _main_chain(commits: list) -> set:
     return chain
 
 
-def build_graph(commits: list) -> list:
+def build_graph(commits: 'list[dict]') -> 'list[dict]':
     """commits (по порядку git log, с полями 'sha', 'parents', 'refs') → на каждый
     коммит {'col': int, 'cells': [(glyph, color)]}. cells — уже в 2-колоночной сетке
-    (узлы на чётных позициях, связи на нечётных). color — индекс лейна для палитры.
+    (узлы на чётных позициях, связи на нечётных). color — сквозной номер ветки
+    (монотонный счётчик, не индекс лейна) — палитру по нему выбирает вызывающий.
     """
     main_shas = _main_chain(commits)
     lanes = []        # ожидаемый sha на каждом лейне (None — свободен)

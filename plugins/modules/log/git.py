@@ -5,11 +5,13 @@
 """
 
 from modules.vcs.git import (
-    _diff_name_status, git_blob, git_numstat, run_git,
+    EMPTY_TREE,
+    diff_name_status,
+    git_blob,
+    git_numstat,
+    run_git,
 )
 
-# Пустое дерево git — родитель корневого коммита (у которого нет `^`).
-EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 # US (\x1f) между полями, \n между записями. %P — хеши родителей (для пометки merge),
 # %D — ref-names (ветки/теги/HEAD). %ad — дата автора (абсолютная, формат ниже).
@@ -48,6 +50,25 @@ def parse_refs(s: str) -> list[tuple[str, str]]:
                 out.append((name, 'remote'))
         else:                                 # fallback без --decorate=full
             out.append((part, 'head' if head else 'branch'))
+    return out
+
+
+def display_refs(refs: 'list[tuple[str, str]]') -> 'list[tuple[str, str]]':
+    """[(имя, тип)] → компактные метки для показа: локальную ветку с одноимённой
+    удалённой схлопываем в «origin & name» (как в IDE); одиночные remote/tag — как есть.
+    """
+    local_names = {n for n, k in refs if k in ('branch', 'head')}
+    out = []
+    for name, kind in refs:
+        if kind in ('branch', 'head'):
+            rem = next((r for r, k in refs
+                        if k == 'remote' and '/' in r and r.split('/', 1)[1] == name), None)
+            out.append((f'{rem.split("/", 1)[0]} & {name}' if rem else name, kind))
+    for name, kind in refs:
+        if kind == 'remote' and '/' in name and name.split('/', 1)[1] in local_names:
+            continue                       # уже показана как «origin & name»
+        if kind in ('remote', 'tag'):
+            out.append((name, kind))
     return out
 
 
@@ -109,11 +130,12 @@ def commit_detail(root: str, sha: str) -> dict:
     email, список веток, содержащих коммит. Отдельные git-вызовы (тяжеловато для списка —
     зовём лениво по выбранному коммиту).
     """
-    # %B многострочное → ставим первым, разделитель \x1e только между остальными полями
+    # %B многострочное → ставим первым, разделитель \x1e только между остальными полями;
+    # rsplit — тело коммита само может содержать \x1e, гарантированы лишь три последних
     raw = run_git(root, 'show', '-s', '--format=%B%x1e%ae%x1e%cn%x1e%ce', sha)
     body = a_email = committer = c_email = ''
     if raw:
-        parts = raw.rstrip('\n').split('\x1e')
+        parts = raw.rstrip('\n').rsplit('\x1e', 3)
         if len(parts) == 4:
             body, a_email, committer, c_email = parts
     br = run_git(root, 'branch', '-a', '--contains', sha)
@@ -143,7 +165,7 @@ def commit_files(root: str, sha: str, parent: 'str | None' = None) -> list[dict]
     """
     if parent is None:
         parent = first_parent(root, sha)
-    items = _diff_name_status(root, parent, sha)
+    items = diff_name_status(root, parent, sha)
     stats = git_numstat(root, parent, sha)
     for it in items:
         it['stat'] = stats.get(it['path'])

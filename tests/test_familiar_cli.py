@@ -1,5 +1,8 @@
+import contextlib
 import importlib.util
+import io
 import os
+import tempfile
 import unittest
 
 
@@ -10,6 +13,14 @@ _spec = importlib.util.spec_from_loader(
     "familiar_cli", importlib.machinery.SourceFileLoader("familiar_cli", _BIN))
 familiar = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(familiar)
+
+
+def _run(argv):
+    """Запуск CLI с подавленным stdout; возвращает напечатанное."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        familiar.main(argv)
+    return out.getvalue()
 
 
 class RenderTests(unittest.TestCase):
@@ -75,6 +86,191 @@ class BlockTests(unittest.TestCase):
     def test_unterminated_block_raises(self):
         with self.assertRaises(ValueError):
             familiar.remove_managed_block(familiar.MARKER_BEGIN + "\ninclude x\n")
+
+
+class SelectionTests(unittest.TestCase):
+    def _resolve(self, *argv):
+        args = familiar.build_parser().parse_args(["enable", *argv])
+        return familiar._resolve_selection(args)
+
+    def _parse_error(self, *argv):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                familiar.build_parser().parse_args(["enable", *argv])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_all_selects_everything_with_terminal(self):
+        self.assertEqual(self._resolve("--all"), (list(familiar.KITTENS), True))
+
+    def test_kittens_selects_everything_without_terminal(self):
+        self.assertEqual(self._resolve("--kittens"), (list(familiar.KITTENS), False))
+
+    def test_kittens_plus_terminal_flag(self):
+        self.assertEqual(self._resolve("--kittens", "--terminal"),
+                         (list(familiar.KITTENS), True))
+
+    def test_names_without_terminal(self):
+        self.assertEqual(self._resolve("session", "log"), (["session", "log"], False))
+
+    def test_names_plus_terminal_flag(self):
+        self.assertEqual(self._resolve("review", "--terminal"), (["review"], True))
+
+    def test_terminal_only_mode(self):
+        self.assertEqual(self._resolve("--terminal"), ([], True))
+
+    def test_empty_selection_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._resolve()
+
+    def test_unknown_kitten_rejected(self):
+        with self.assertRaises(SystemExit):
+            self._resolve("nope")
+
+    def test_all_conflicts_with_names(self):
+        self._parse_error("--all", "session")
+
+    def test_all_conflicts_with_kittens(self):
+        self._parse_error("--all", "--kittens")
+
+    def test_kittens_conflicts_with_names(self):
+        self._parse_error("--kittens", "session")
+
+
+class ConfigDirTests(unittest.TestCase):
+    def setUp(self):
+        self._env = {k: os.environ.get(k)
+                     for k in ("KITTY_CONFIG_DIRECTORY", "XDG_CONFIG_HOME")}
+        for k in self._env:
+            os.environ.pop(k, None)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_explicit_kitty_config_directory_wins(self):
+        os.environ["KITTY_CONFIG_DIRECTORY"] = "/x/kitty-cfg"
+        os.environ["XDG_CONFIG_HOME"] = "/x/xdg"
+        self.assertEqual(familiar.kitty_config_dir(), "/x/kitty-cfg")
+
+    def test_xdg_config_home_fallback(self):
+        os.environ["XDG_CONFIG_HOME"] = "/x/xdg"
+        self.assertEqual(familiar.kitty_config_dir(), "/x/xdg/kitty")
+
+    def test_home_default(self):
+        self.assertEqual(familiar.kitty_config_dir(),
+                         os.path.expanduser("~/.config/kitty"))
+
+
+class EndToEndTests(unittest.TestCase):
+    """enable → status → disable → restore на временном каталоге конфига."""
+
+    ORIGINAL = "font_size 14\nmap cmd+t new_tab\n"
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.config_dir = self.dir.name
+        self.kitty_conf = os.path.join(self.config_dir, "kitty.conf")
+        self.generated = os.path.join(self.config_dir, familiar.GENERATED_CONF)
+        self.backup = self.kitty_conf + familiar.BACKUP_SUFFIX
+        with open(self.kitty_conf, "w", encoding="utf-8") as f:
+            f.write(self.ORIGINAL)
+        self._old_env = os.environ.get("KITTY_CONFIG_DIRECTORY")
+        os.environ["KITTY_CONFIG_DIRECTORY"] = self.config_dir
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        if self._old_env is None:
+            os.environ.pop("KITTY_CONFIG_DIRECTORY", None)
+        else:
+            os.environ["KITTY_CONFIG_DIRECTORY"] = self._old_env
+
+    def _read(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def test_enable_status_disable_cycle(self):
+        _run(["enable", "session"])
+
+        conf = self._read(self.kitty_conf)
+        self.assertTrue(conf.startswith(self.ORIGINAL))
+        self.assertIn(familiar.MARKER_BEGIN, conf)
+        self.assertIn(f"include {familiar.GENERATED_CONF}", conf)
+        self.assertIn("cc_plugin=session", self._read(self.generated))
+        self.assertEqual(self._read(self.backup), self.ORIGINAL)
+
+        status = _run(["status"])
+        self.assertIn("enabled:    yes", status)
+        self.assertIn("kittens:    session", status)
+        self.assertIn("terminal:   no", status)
+
+        _run(["disable"])
+        self.assertEqual(self._read(self.kitty_conf), self.ORIGINAL)
+        self.assertFalse(os.path.exists(self.generated))
+        self.assertIn("enabled:    no", _run(["status"]))
+
+    def test_enable_is_idempotent(self):
+        _run(["enable", "review"])
+        first = self._read(self.kitty_conf)
+        _run(["enable", "review"])
+        self.assertEqual(self._read(self.kitty_conf), first)
+        self.assertEqual(first.count(familiar.MARKER_BEGIN), 1)
+        self.assertEqual(self._read(self.backup), self.ORIGINAL)
+
+    def test_terminal_only_mode(self):
+        _run(["enable", "--terminal", "-y"])
+        generated = self._read(self.generated)
+        self.assertIn("terminal.conf", generated)
+        self.assertNotIn("cc_plugin=", generated)
+
+        status = _run(["status"])
+        self.assertIn("terminal:   yes", status)
+        self.assertIn("kittens:    —", status)
+
+    def test_status_terminal_detection_needs_exact_include_line(self):
+        _run(["enable", "session"])
+        # Упоминание terminal.conf в комментарии не должно давать terminal: yes.
+        with open(self.generated, "a", encoding="utf-8") as f:
+            f.write("# include is described in config/terminal.conf\n")
+        self.assertIn("terminal:   no", _run(["status"]))
+
+    def test_backup_taken_once(self):
+        self.assertEqual(familiar._backup_once(self.kitty_conf), self.backup)
+        with open(self.kitty_conf, "w", encoding="utf-8") as f:
+            f.write("changed\n")
+        self.assertIsNone(familiar._backup_once(self.kitty_conf))
+        self.assertEqual(self._read(self.backup), self.ORIGINAL)
+
+    def test_restore_works_when_block_already_removed(self):
+        _run(["enable", "session"])
+        _run(["disable"])
+        with open(self.kitty_conf, "a", encoding="utf-8") as f:
+            f.write("junk\n")
+
+        out = _run(["disable", "--restore"])
+        self.assertIn("not enabled", out)
+        self.assertIn("restored", out)
+        self.assertEqual(self._read(self.kitty_conf), self.ORIGINAL)
+
+    def test_disable_restore_reverts_original(self):
+        _run(["enable", "--all", "-y"])
+        _run(["disable", "--restore"])
+        self.assertEqual(self._read(self.kitty_conf), self.ORIGINAL)
+
+    def test_restore_without_backup_reports_it(self):
+        os.remove(self.kitty_conf)
+        out = _run(["disable", "--restore"])
+        self.assertIn("no backup", out)
+
+    def test_write_is_atomic_and_leaves_no_temp_files(self):
+        familiar._write(self.kitty_conf, "new content\n")
+        self.assertEqual(self._read(self.kitty_conf), "new content\n")
+        leftovers = [n for n in os.listdir(self.config_dir) if n.startswith(".familiar-")]
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

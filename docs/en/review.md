@@ -46,13 +46,23 @@ The project folder and git root are determined from the `cwd` of the window the 
 
 ## Setup
 
-In `~/.config/kitty/kitty.conf` (or an included file):
+```sh
+familiar enable review
+```
+
+Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open: `cmd+shift+r`.
+
+Minimal fallback — a manual `map` in `~/.config/kitty/kitty.conf` (or an
+included file):
 
 ```conf
 map cmd+shift+r kitten /path/to/familiar/plugins/review.py
 ```
 
-Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open: `cmd+shift+r`.
+Unlike `familiar enable`, this bare map lacks the toggle-to-close behavior, the
+guard against re-opening the overlay on top of itself, the Cyrillic key
+duplicates, and the `cmd+c` / `cmd+shift+c` pass-through for copying inside the
+overlay.
 
 ## Keys
 

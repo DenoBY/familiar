@@ -1,12 +1,14 @@
 import os
 import shutil
-import tempfile
 import subprocess
+import tempfile
 import unittest
 
 import kittymock  # noqa: F401
-from kittymock import wire, draw_text
 import review as R
+from kittymock import draw_text, wire
+from modules.vcs.diff import DiffSource
+
 
 _ENV = {
     'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@e',
@@ -84,12 +86,54 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tree_move(999)
         self.assertEqual(self.h.tsel, len(self.h.rows) - 1)
 
+    def test_fast_tree_scroll_defers_diff_load(self):
+        scheduled = []
+
+        class Timer:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        class DeferredLoop:
+            def call_later(self, delay, cb, *args):
+                t = Timer()
+                scheduled.append((t, cb))
+                return t
+
+        self.h.asyncio_loop = DeferredLoop()
+        loads = []
+        self.h.load_diff = lambda: loads.append(self.h.tsel)
+        self.h.tsel = 0
+        self.h.tree_move(1)
+        self.h.tree_move(1)
+        self.assertEqual(loads, [])                    # во время прокрутки дифф не грузится
+        self.assertTrue(scheduled[0][0].cancelled)     # прежний таймер отменён
+        self.assertFalse(scheduled[1][0].cancelled)
+        scheduled[-1][1]()                             # прокрутка утихла — таймер сработал
+        self.assertEqual(loads, [2])                   # одна загрузка, по итоговой позиции
+
     def test_draw_screen_smoke(self):
         self.h.draw_screen()
         text = draw_text(self.h)
         self.assertTrue(self.h.out)
         self.assertIn('working', text)             # scope в шапке
         self.assertIn('[tree]', text)              # футер режима дерева
+
+    def test_draw_screen_is_atomic_frame(self):
+        calls = []
+
+        class RecordingCmd:
+            def __getattr__(self, name):
+                return lambda *a, **k: calls.append(name)
+
+        self.h.cmd = RecordingCmd()
+        self.h.draw_screen()
+        # кадр обёрнут в synchronized update (mode 2026) — иначе панели мигают
+        self.assertEqual(calls[0], 'set_mode')
+        self.assertEqual(calls[-1], 'reset_mode')
+        self.assertIn('clear_screen', calls)
 
     # --- scope ---
 
@@ -117,6 +161,28 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertFalse(self.h.show_noise)
         self.h.toggle_noise()
         self.assertTrue(self.h.show_noise)
+
+    # --- ошибки git ---
+
+    def test_git_error_shown_when_scan_fails(self):
+        d = tempfile.mkdtemp(prefix='ccrev_notrepo_')
+        try:
+            self.h.root = d
+            self.h.load_source()
+            self.assertEqual(self.h.items, [])
+            self.assertIn('not a git repository', self.h.status)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    # --- бинарные файлы ---
+
+    def test_binary_file_shows_placeholder(self):
+        with open(os.path.join(self.repo, 'blob.bin'), 'wb') as f:
+            f.write(b'\x00\x01\x02data\x00')
+        self.h.refresh()
+        self._select_file('blob.bin')
+        self.assertEqual(self.h.diff_plain, ['  (binary file)'])
+        self.assertEqual(self.h.diff_lineno, [0])   # не строка кода: копировать нечего
 
     # --- сворачивание папок ---
 
@@ -266,28 +332,28 @@ class EditorCommandTest(unittest.TestCase):
     def test_terminal_editor(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'vim'
-        cmd, gui = R._editor_command(self.proj, '/f.py', 10)
+        cmd, gui = R.editor_command(self.proj, '/f.py', 10)
         self.assertFalse(gui)
         self.assertEqual(cmd, ['vim', '+10', '/f.py'])
 
     def test_gui_editor_code(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'code'
-        cmd, gui = R._editor_command(self.proj, '/f.py', 7)
+        cmd, gui = R.editor_command(self.proj, '/f.py', 7)
         self.assertTrue(gui)
         self.assertEqual(cmd, ['code', '-g', '/f.py:7'])
 
     def test_gui_editor_subl_positional(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'subl'
-        cmd, gui = R._editor_command(self.proj, '/f.py', 3)
+        cmd, gui = R.editor_command(self.proj, '/f.py', 3)
         self.assertTrue(gui)
         self.assertEqual(cmd, ['subl', '/f.py:3'])
 
     def test_visual_precedence(self):
         os.environ['VISUAL'] = 'code'
         os.environ['EDITOR'] = 'vim'
-        cmd, gui = R._editor_command(self.proj, '/f.py', 1)
+        cmd, gui = R.editor_command(self.proj, '/f.py', 1)
         self.assertTrue(gui)
         self.assertEqual(cmd[0], 'code')
 
@@ -333,6 +399,7 @@ class YankTest(unittest.TestCase):
     def test_hscroll_capped_at_right_edge(self):
         self.h.diff_before = 'a\n'
         self.h.diff_after = 'a' + 'Z' * 200 + '\n'   # одна очень длинная строка
+        self.h.diff_src = DiffSource(self.h.diff_before, self.h.diff_after)
         self.h.build_diff_rows()
         cap = self.h.hscroll_max
         self.assertGreater(cap, 0)

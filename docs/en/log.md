@@ -35,13 +35,23 @@ The project folder and git root are determined from the `cwd` of the window the 
 
 ## Setup
 
-In `~/.config/kitty/kitty.conf` (or an include file):
+```sh
+familiar enable log
+```
+
+Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open with: `cmd+shift+l`.
+
+Minimal fallback — a manual `map` in `~/.config/kitty/kitty.conf` (or an include
+file):
 
 ```conf
 map cmd+shift+l kitten /path/to/familiar/plugins/log.py
 ```
 
-Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open with: `cmd+shift+l`.
+Unlike `familiar enable`, this bare map lacks the toggle-to-close behavior, the
+guard against re-opening the overlay on top of itself, the Cyrillic key
+duplicates, and the `cmd+c` / `cmd+shift+c` pass-through for copying inside the
+overlay.
 
 ## Keys
 

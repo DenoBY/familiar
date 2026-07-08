@@ -14,11 +14,16 @@
 который может переопределить чужие настройки.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import shutil
 import sys
+import tempfile
 
+
+VERSION = "0.2.0"
 
 MARKER_BEGIN = "# >>> familiar >>> (managed by `familiar enable` — do not edit)"
 MARKER_END = "# <<< familiar <<<"
@@ -26,7 +31,8 @@ MARKER_END = "# <<< familiar <<<"
 GENERATED_CONF = "familiar.conf"
 BACKUP_SUFFIX = ".familiar.bak"
 
-# Порядок канонический: session, review, log (как в исходном kittens.conf).
+# Порядок ключей канонический (session, review, log) — render_generated_conf
+# выводит киты именно в нём, независимо от порядка аргументов.
 # clipboard=True — внутри review/log копирование по cmd+c/cmd+shift+c должно
 # доходить до kitten, поэтому глобальный маппинг снимаем, пока оверлей в фокусе.
 KITTENS = {
@@ -39,33 +45,42 @@ KITTENS = {
 }
 
 
-def app_root():
+def app_root() -> str:
     # FAMILIAR_ROOT задаёт brew-обёртка стабильным opt-путём (…/opt/familiar/libexec):
     # он переживает `brew upgrade`, тогда как realpath схлопнул бы симлинк до версионного
     # …/Cellar/familiar/<ver>/… — и запечённые в конфиг пути ломались бы при обновлении.
-    env = os.environ.get('FAMILIAR_ROOT')
+    env = os.environ.get("FAMILIAR_ROOT")
     if env:
         return env
     # Клон: <root>/bin/familiar → <root>. Папка клона стабильна, realpath безопасен.
     return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
-def plugins_dir():
+def plugins_dir() -> str:
     return os.path.join(app_root(), "plugins")
 
 
-def config_source_dir():
+def config_source_dir() -> str:
     return os.path.join(app_root(), "config")
 
 
-def kitty_config_dir():
+def kitty_config_dir() -> str:
+    # Порядок как у самого kitty: KITTY_CONFIG_DIRECTORY → XDG_CONFIG_HOME/kitty
+    # → ~/.config/kitty.
     env = os.environ.get("KITTY_CONFIG_DIRECTORY")
     if env:
         return os.path.expanduser(env)
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return os.path.join(os.path.expanduser(xdg), "kitty")
     return os.path.expanduser("~/.config/kitty")
 
 
-def _kitten_maps(name, plugins):
+def _terminal_include_line() -> str:
+    return "include " + os.path.join(config_source_dir(), "terminal.conf")
+
+
+def _kitten_maps(name: str, plugins: str) -> list[str]:
     k = KITTENS[name]
     entry = os.path.join(plugins, k["file"])
     combine = (
@@ -79,7 +94,7 @@ def _kitten_maps(name, plugins):
     return lines
 
 
-def _clipboard_unmaps(names):
+def _clipboard_unmaps(names: list[str]) -> list[str]:
     active = [n for n in names if KITTENS[n]["clipboard"]]
     if not active:
         return []
@@ -91,7 +106,7 @@ def _clipboard_unmaps(names):
     return lines
 
 
-def render_generated_conf(names, with_terminal):
+def render_generated_conf(names: list[str], with_terminal: bool) -> str:
     """Содержимое ~/.config/kitty/familiar.conf под выбранный режим."""
     ordered = [n for n in KITTENS if n in names]
     out = [
@@ -101,9 +116,8 @@ def render_generated_conf(names, with_terminal):
         "",
     ]
     if with_terminal:
-        terminal = os.path.join(config_source_dir(), "terminal.conf")
         out += ["# Terminal config (look, splits, tabs, layout):",
-                f"include {terminal}", ""]
+                _terminal_include_line(), ""]
     plugins = plugins_dir()
     for name in ordered:
         out += _kitten_maps(name, plugins)
@@ -115,7 +129,7 @@ def render_generated_conf(names, with_terminal):
     return "\n".join(out).rstrip() + "\n"
 
 
-def upsert_managed_block(text, include_line):
+def upsert_managed_block(text: str, include_line: str) -> str:
     block = f"{MARKER_BEGIN}\n{include_line}\n{MARKER_END}"
     begin = text.find(MARKER_BEGIN)
     if begin == -1:
@@ -129,7 +143,7 @@ def upsert_managed_block(text, include_line):
     return text[:begin] + block + text[end:]
 
 
-def remove_managed_block(text):
+def remove_managed_block(text: str) -> tuple[str, bool]:
     begin = text.find(MARKER_BEGIN)
     if begin == -1:
         return text, False
@@ -147,7 +161,7 @@ def remove_managed_block(text):
     return cleaned, True
 
 
-def _read(path):
+def _read(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as f:
             return f.read()
@@ -155,13 +169,28 @@ def _read(path):
         return ""
 
 
-def _write(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+def _write(path: str, text: str) -> None:
+    # Атомарно: temp-файл в том же каталоге + os.replace — упавшая запись
+    # не оставит kitty.conf обрезанным.
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".familiar-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        # mkstemp даёт 0600 — сохраняем права существующего файла,
+        # новому ставим обычные для конфига 0644.
+        try:
+            os.chmod(tmp, os.stat(path).st_mode)
+        except FileNotFoundError:
+            os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
-def _backup_once(kitty_conf):
+def _backup_once(kitty_conf: str) -> str | None:
     # Снимаем копию только один раз — чтобы .bak хранил состояние ДО familiar.
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(kitty_conf) and not os.path.exists(backup):
@@ -170,14 +199,20 @@ def _backup_once(kitty_conf):
     return None
 
 
-def _confirm(prompt):
+def _confirm(prompt: str) -> bool:
     try:
         return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
     except EOFError:
         return False
 
 
-def _resolve_selection(args):
+def _resolve_selection(args: argparse.Namespace) -> tuple[list[str], bool]:
+    """Выбранные киты и флаг терминал-конфига из аргументов enable.
+
+    `--all` — все киты + терминал; `--kittens` — все киты (+ терминал
+    по флагу); имена — выбранные киты (+ терминал по флагу);
+    `--terminal` без имён — режим «только терминал».
+    """
     if args.all:
         return list(KITTENS), True
     if args.kittens:
@@ -188,12 +223,13 @@ def _resolve_selection(args):
             valid = ", ".join(KITTENS)
             raise SystemExit(f"unknown kitten: {name} (available: {valid})")
         names.append(name)
-    if not names:
-        raise SystemExit("specify kittens, --kittens or --all (see familiar enable -h)")
+    if not names and not args.terminal:
+        raise SystemExit(
+            "specify kittens, --kittens, --all or --terminal (see familiar enable -h)")
     return names, args.terminal
 
 
-def cmd_enable(args):
+def cmd_enable(args: argparse.Namespace) -> None:
     names, with_terminal = _resolve_selection(args)
     config_dir = kitty_config_dir()
     kitty_conf = os.path.join(config_dir, "kitty.conf")
@@ -211,37 +247,46 @@ def cmd_enable(args):
     _write(kitty_conf, upsert_managed_block(_read(kitty_conf),
                                             f"include {GENERATED_CONF}"))
 
-    enabled = ", ".join(names) + (" + terminal" if with_terminal else "")
+    enabled = ", ".join(names + (["terminal"] if with_terminal else []))
     print(f"enabled: {enabled}")
     if backup:
         print(f"backup:  {backup}")
     print("reload kitty (Cmd+Ctrl+, on macOS) or restart it to apply")
 
 
-def cmd_disable(args):
+def cmd_disable(args: argparse.Namespace) -> None:
     config_dir = kitty_config_dir()
     kitty_conf = os.path.join(config_dir, "kitty.conf")
-    text, found = remove_managed_block(_read(kitty_conf))
-    if not found:
-        print("familiar is not enabled — nothing to remove")
-        return
-    _write(kitty_conf, text)
-    generated = os.path.join(config_dir, GENERATED_CONF)
-    if os.path.exists(generated):
-        os.remove(generated)
-    print("disabled: familiar block removed from kitty.conf")
-
     backup = kitty_conf + BACKUP_SUFFIX
-    if args.restore and os.path.exists(backup):
-        shutil.copy2(backup, kitty_conf)
-        print(f"restored: kitty.conf ← {backup}")
-    elif os.path.exists(backup):
+
+    text, found = remove_managed_block(_read(kitty_conf))
+    if found:
+        _write(kitty_conf, text)
+        generated = os.path.join(config_dir, GENERATED_CONF)
+        if os.path.exists(generated):
+            os.remove(generated)
+        print("disabled: familiar block removed from kitty.conf")
+    else:
+        print("familiar is not enabled — nothing to remove")
+
+    # --restore работает и при уже снятом блоке: откат из .bak — отдельное
+    # действие, а не продолжение disable.
+    restored = False
+    if args.restore:
+        if os.path.exists(backup):
+            shutil.copy2(backup, kitty_conf)
+            restored = True
+            print(f"restored: kitty.conf ← {backup}")
+        else:
+            print(f"no backup to restore from: {backup}")
+    elif found and os.path.exists(backup):
         print(f"backup available for a full revert: {backup} "
-              f"(familiar disable --restore)")
-    print("reload kitty to apply")
+              "(familiar disable --restore)")
+    if found or restored:
+        print("reload kitty to apply")
 
 
-def cmd_status(args):
+def cmd_status(args: argparse.Namespace) -> None:
     config_dir = kitty_config_dir()
     kitty_conf = os.path.join(config_dir, "kitty.conf")
     text = _read(kitty_conf)
@@ -252,7 +297,7 @@ def cmd_status(args):
     if enabled:
         generated = _read(os.path.join(config_dir, GENERATED_CONF))
         active = [n for n in KITTENS if f"cc_plugin={n} " in generated]
-        terminal = "include" in generated and "terminal.conf" in generated
+        terminal = _terminal_include_line() in generated.splitlines()
         print(f"kittens:    {', '.join(active) or '—'}")
         print(f"terminal:   {'yes' if terminal else 'no'}")
     backup = kitty_conf + BACKUP_SUFFIX
@@ -260,22 +305,25 @@ def cmd_status(args):
         print(f"backup:     {backup}")
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="familiar",
         description="Enable/disable familiar kitty overlays in kitty.conf.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     enable = sub.add_parser(
-        "enable", help="enable kittens (and optionally the terminal config)")
-    enable.add_argument("names", nargs="*", metavar="KITTEN",
-                        help="which kittens: " + ", ".join(KITTENS))
-    enable.add_argument("--all", action="store_true",
-                        help="all kittens + terminal config")
-    enable.add_argument("--kittens", action="store_true",
-                        help="all kittens, without the terminal config")
+        "enable", help="enable kittens and/or the terminal config")
+    what = enable.add_mutually_exclusive_group()
+    what.add_argument("names", nargs="*", default=[], metavar="KITTEN",
+                      help="which kittens: " + ", ".join(KITTENS))
+    what.add_argument("--all", action="store_true",
+                      help="all kittens + terminal config")
+    what.add_argument("--kittens", action="store_true",
+                      help="all kittens, without the terminal config")
     enable.add_argument("--terminal", action="store_true",
-                        help="add the terminal config to the selection")
+                        help="add the terminal config to the selection "
+                             "(alone — terminal config only)")
     enable.add_argument("-y", "--yes", action="store_true",
                         help="skip the terminal-config confirmation")
     enable.set_defaults(func=cmd_enable)
@@ -290,7 +338,7 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     args.func(args)
 
@@ -298,8 +346,6 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except SystemExit:
-        raise
     except (OSError, ValueError) as exc:
         print(f"familiar: {exc}", file=sys.stderr)
         sys.exit(1)

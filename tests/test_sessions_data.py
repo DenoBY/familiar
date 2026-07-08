@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -177,6 +177,15 @@ class TestAppendCustomTitle(TmpDirTest):
     def test_missing_file_returns_false(self):
         self.assertFalse(Dt.append_custom_title(self.path('nope.jsonl'), 'S', 'N'))
 
+    def test_appends_after_non_ascii_tail_without_newline(self):
+        p = self.path('s.jsonl')
+        with open(p, 'w', encoding='utf-8') as f:
+            f.write('{"type": "user", "message": {"content": "привет"}}')
+        self.assertTrue(Dt.append_custom_title(p, 'SID', 'Имя'))
+        meta = Dt.load_session_meta(p)
+        self.assertEqual(meta['title'], 'Имя')
+        self.assertEqual(meta['msg_count'], 1)
+
 
 class TestLoadSessions(TmpDirTest):
     def test_sorted_by_mtime_desc(self):
@@ -191,6 +200,24 @@ class TestLoadSessions(TmpDirTest):
         self.assertEqual([s['id'] for s in sessions], ['new', 'old'])
         self.assertEqual(sessions[0]['title'], 'new')
         self.assertEqual(sessions[0]['cwd'], '/proj')      # fallback на project path
+
+    def test_meta_cached_until_file_changes(self):
+        p = self.path('s.jsonl')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': 'first'}}])
+        project = {'files': [p], 'path': '/proj'}
+        self.assertEqual(Dt.load_sessions(project)[0]['title'], 'first')
+
+        # без изменения файла — из кэша, parse не зовётся
+        orig = Dt.load_session_meta
+        Dt.load_session_meta = lambda path: self.fail('parse must be cached')
+        try:
+            self.assertEqual(Dt.load_sessions(project)[0]['title'], 'first')
+        finally:
+            Dt.load_session_meta = orig
+
+        # изменение файла инвалидирует кэш (append меняет size)
+        self.assertTrue(Dt.append_custom_title(p, 'SID', 'renamed'))
+        self.assertEqual(Dt.load_sessions(project)[0]['title'], 'renamed')
 
 
 class TestRunningSessions(TmpDirTest):

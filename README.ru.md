@@ -76,7 +76,8 @@ kitty. (`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки
 |---|---|
 | `familiar enable --all` | все киты **+** [конфиг терминала](config/README.ru.md) (вид, сплиты, табы, русская раскладка) — спросит подтверждение, т.к. переопределит твои настройки kitty |
 | `familiar enable --kittens` | только все киты, конфиг терминала не трогает |
-| `familiar enable session review log` | только названные оверлеи |
+| `familiar enable session review log` | только названные оверлеи (`--terminal` добавит и конфиг терминала) |
+| `familiar enable --terminal` | только конфиг терминала, без китов |
 | `familiar disable` | снять familiar-блок (`--restore` вернёт `kitty.conf` из копии, снятой при первом enable) |
 | `familiar status` | показать, что подключено сейчас |
 

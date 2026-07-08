@@ -3,6 +3,7 @@
 import base64
 import sys
 
+
 OVERLAY_VAR = 'cc_plugin'
 
 

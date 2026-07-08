@@ -76,7 +76,8 @@ kitty. (`Ctrl+Shift+F5` is kitty's *Linux* reload default; on macOS it's
 |---|---|
 | `familiar enable --all` | all kittens **+** the [terminal config](config/README.md) (look, splits, tabs, Russian layout) — asks first, since it overrides your kitty settings |
 | `familiar enable --kittens` | all kittens only, leaves your terminal config untouched |
-| `familiar enable session review log` | only the named overlays |
+| `familiar enable session review log` | only the named overlays (add `--terminal` for the terminal config too) |
+| `familiar enable --terminal` | only the terminal config, no kittens |
 | `familiar disable` | remove the familiar block (`--restore` reverts `kitty.conf` from the backup taken on first enable) |
 | `familiar status` | show what's currently enabled |
 

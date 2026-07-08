@@ -1,8 +1,8 @@
 class Familiar < Formula
   desc "Keyboard-driven kitty overlays for a Claude Code workflow"
   homepage "https://github.com/DenoBY/familiar"
-  url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "e90713f67ac699728865a52cd3bc260aefa5c652a5eb4624d4c25f73787d4492"
+  url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   head "https://github.com/DenoBY/familiar.git", branch: "master"
 
@@ -39,6 +39,18 @@ class Familiar < Formula
   end
 
   test do
+    ENV["KITTY_CONFIG_DIRECTORY"] = testpath.to_s
+
     assert_match "config dir:", shell_output("#{bin}/familiar status")
+
+    shell_output("#{bin}/familiar enable session")
+    generated = (testpath/"familiar.conf").read
+    assert_match "cc_plugin=session", generated
+    assert_match "plugins/session.py", generated
+    assert_match "include familiar.conf", (testpath/"kitty.conf").read
+
+    shell_output("#{bin}/familiar disable")
+    refute_path_exists testpath/"familiar.conf"
+    refute_match ">>> familiar >>>", (testpath/"kitty.conf").read
   end
 end

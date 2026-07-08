@@ -1,0 +1,15 @@
+# CI: тесты + стиль Homebrew-формулы. macOS — целевая платформа проекта
+# (формула depends_on :macos), там же есть и python3, и brew.
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -t tests
+      - name: Check formula style
+        run: brew style Formula/familiar.rb

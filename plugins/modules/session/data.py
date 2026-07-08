@@ -4,10 +4,11 @@
 ~/.claude/sessions/<pid>.json, разбирая их в структуры для показа. Без зависимостей от TUI.
 """
 
-import os
-import re
 import glob
 import json
+import os
+import re
+
 
 # Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs: env-vars); иначе ~/.claude.
 CONFIG_DIR = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~/.claude')
@@ -52,11 +53,11 @@ def decode_dir_name(name: str) -> str:
     return '/' + name.lstrip('-').replace('-', '/')
 
 
-def _probe_session(path, max_lines=50):
+def _probe_session(path: str, max_lines: int = 50) -> 'tuple[str | None, str | None]':
     """Дёшево достать (cwd, entrypoint) из начала файла, не парся его целиком."""
     cwd = ep = None
     try:
-        with open(path, errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             for i, line in enumerate(fh):
                 if i > max_lines:
                     break
@@ -77,7 +78,7 @@ def _probe_session(path, max_lines=50):
     return cwd, ep
 
 
-def _pid_alive(pid):
+def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -89,7 +90,7 @@ def _pid_alive(pid):
     return True
 
 
-def running_sessions() -> dict:
+def running_sessions() -> 'dict[str, dict]':
     """Реально запущенные сейчас сессии {sessionId: {status, cwd, name, ...}}.
 
     Источник — реестр ~/.claude/sessions/<pid>.json, который Claude Code ведёт для
@@ -102,7 +103,7 @@ def running_sessions() -> dict:
         return result
     for f in files:
         try:
-            with open(f) as fh:
+            with open(f, encoding='utf-8') as fh:
                 data = json.load(fh)
         except (OSError, ValueError):
             continue
@@ -157,8 +158,9 @@ def scan_projects() -> list[dict]:
             continue
         if path is None:
             path = decode_dir_name(name)
-        if path.startswith(claude_dir):
-            continue  # внутренняя папка Claude — не проект
+        # сравнение с разделителем: соседний ~/.claude-backup — не внутренняя папка
+        if path == claude_dir or path.startswith(claude_dir + os.sep):
+            continue
 
         projects.append({
             'dir': d,
@@ -171,9 +173,42 @@ def scan_projects() -> list[dict]:
     return projects
 
 
-def is_interactive(entrypoint) -> bool:
+def is_interactive(entrypoint: 'str | None') -> bool:
     """cli или старые сессии без поля — интерактивные; sdk-cli и прочее — нет."""
     return entrypoint in (None, 'cli')
+
+
+def build_projects(all_projects: list, running_ids: set, show_all: bool) -> list:
+    """Видимый список проектов из сырого скана: фильтр по entrypoint, агрегаты
+    (count/mtime/active) и признак текущего каталога; сортировка по свежести."""
+    cwd = os.path.realpath(os.getcwd())
+    enc = encode_path(cwd)
+    res = []
+    for p in all_projects:
+        if show_all:
+            probes = p['probes']
+        else:
+            probes = [pr for pr in p['probes'] if is_interactive(pr['entrypoint'])]
+        if not probes:
+            continue
+        files = [pr['file'] for pr in probes]
+        ids = {os.path.splitext(os.path.basename(f))[0] for f in files}
+        res.append({
+            'dir': p['dir'],
+            'dir_name': p['dir_name'],
+            'path': p['path'],
+            'name': p['name'],
+            'files': files,
+            'count': len(files),
+            'mtime': max(pr['mtime'] for pr in probes),
+            'active': len(ids & running_ids),
+            # текущий проект: совпало закодированное имя папки ЛИБО реальный
+            # путь проекта (надёжнее — не зависит от кодировки спецсимволов).
+            'is_current': (p['dir_name'] == enc
+                           or os.path.realpath(p['path'].rstrip('/')) == cwd),
+        })
+    res.sort(key=lambda x: x['mtime'], reverse=True)
+    return res
 
 
 def _user_text(record):
@@ -216,6 +251,13 @@ def _clean_first_human(text: str) -> str:
     return ' '.join(_KNOWN_TAG_RE.sub(' ', text).split())
 
 
+# Записи без этих маркеров (progress, snapshots и т.п.) метаданных не несут —
+# их можно пропустить без json.loads. Подстроки с кавычками устойчивы к пробелам
+# после двоеточия и не зависят от порядка ключей.
+_META_MARKERS = ('"user"', '"assistant"', '"custom-title"', '"ai-title"',
+                 '"gitBranch"', '"cwd"')
+
+
 def load_session_meta(path: str) -> dict:
     """Разобрать файл сессии: заголовок, число сообщений, cwd."""
     custom_title = None   # из /rename (запись custom-title) — высший приоритет
@@ -225,10 +267,12 @@ def load_session_meta(path: str) -> dict:
     branch = None
     msg_count = 0
     try:
-        with open(path, errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
+                    continue
+                if not any(m in line for m in _META_MARKERS):
                     continue
                 try:
                     o = json.loads(line)
@@ -276,28 +320,49 @@ def append_custom_title(path: str, session_id: str, name: str) -> bool:
         {'type': 'custom-title', 'customTitle': name, 'sessionId': session_id},
         ensure_ascii=False,
     )
+    # бинарный режим: в текстовом арифметика с tell() не определена
+    # (seek принимает только непрозрачные cookie), не-ASCII хвост ломал бы позицию
     try:
-        with open(path, 'r+') as f:
+        with open(path, 'rb+') as f:
             f.seek(0, os.SEEK_END)
             if f.tell() > 0:
-                f.seek(f.tell() - 1)
-                if f.read(1) != '\n':
-                    f.write('\n')
-            f.write(rec + '\n')
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b'\n':
+                    f.write(b'\n')
+            f.write(rec.encode('utf-8') + b'\n')
         return True
     except OSError:
         return False
+
+
+# Кэш метаданных сессий: parse jsonl-файлов (бывают десятки МБ) не повторяется,
+# пока файл не изменился. Ключ инвалидируется по (mtime, size).
+_meta_cache: 'dict[str, tuple[tuple[float, int], dict]]' = {}
+
+
+def _cached_meta(path: str) -> 'dict | None':
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime, st.st_size)
+    hit = _meta_cache.get(path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    meta = load_session_meta(path)
+    meta['mtime'] = st.st_mtime
+    _meta_cache[path] = (key, meta)
+    return meta
 
 
 def load_sessions(project: dict) -> list[dict]:
     """Сессии проекта, отсортированные по времени изменения (свежие сверху)."""
     sessions = []
     for f in project['files']:
-        try:
-            mtime = os.path.getmtime(f)
-        except OSError:
+        meta = _cached_meta(f)
+        if meta is None:
             continue
-        meta = load_session_meta(f)
+        mtime = meta['mtime']
         sessions.append({
             'id': os.path.splitext(os.path.basename(f))[0],
             'file': f,
@@ -329,7 +394,7 @@ def load_conversation(path: str) -> list:
     """Список записей диалога [(kind, text)], kind ∈ {user, assistant, tool}."""
     entries = []
     try:
-        with open(path, errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             for line in fh:
                 line = line.strip()
                 if not line:

@@ -10,6 +10,7 @@ import os
 import sys
 import types
 
+
 _TESTS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(_TESTS)
 PLUGINS = os.path.join(REPO, 'plugins')
@@ -52,6 +53,10 @@ class MouseTracking:
     buttons_and_drag = 'buttons_and_drag'
 
 
+class Mode:
+    PENDING_UPDATE = (2026, '?')
+
+
 class EventType:
     PRESS = 'PRESS'
     REPEAT = 'REPEAT'
@@ -83,6 +88,7 @@ def _install():
     loop.EventType = EventType
     operations.styled = styled
     operations.MouseTracking = MouseTracking
+    operations.Mode = Mode
     key_encoding.EventType = EventType
 
     for name, mod in [
@@ -113,6 +119,19 @@ class NoopCmd:
         return lambda *a, **k: None
 
 
+class ImmediateLoop:
+    """asyncio_loop для тестов: call_later выполняет колбэк сразу — отложенная
+    загрузка диффа (debounce прокрутки) в тестах остаётся синхронной."""
+
+    class _Timer:
+        def cancel(self):
+            pass
+
+    def call_later(self, delay, callback, *args):
+        callback(*args)
+        return self._Timer()
+
+
 class KeyEvent:
     def __init__(self, key=None, type=EventType.PRESS, matches=()):
         self.key = key
@@ -138,6 +157,7 @@ def wire(handler, rows=40, cols=120):
     handler.print = lambda *a, **k: handler.out.append(a[0] if a else '')
     handler.quits = []
     handler.quit_loop = lambda code=0: handler.quits.append(code)
+    handler.asyncio_loop = ImmediateLoop()
     return handler
 
 

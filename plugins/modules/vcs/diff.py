@@ -5,13 +5,15 @@
 sticky-скоупы и плоское дерево файлов. Без обращения к git и без состояния хендлера.
 """
 
-import re
 import bisect
 import difflib
+import re
+from typing import NamedTuple
 
 from kittens.tui.operations import styled
 
 from .util import truncate
+
 
 # ──────────────────── лёгкая подсветка синтаксиса ────────────────────
 
@@ -136,8 +138,10 @@ def _bg(text: str, bg: 'int | None') -> str:
 def _render_diff_line(gut_plain, sign, sign_fg, code, ext, base_bg, strong, strong_bg,
                       num_fg, width):
     """Строка диффа: номера, знак, фон на всю ширину, синтаксис + word-diff подсветка."""
-    g = styled(gut_plain, fg=num_fg, bg=base_bg) if (num_fg or base_bg is not None) else gut_plain
-    s = styled(sign, fg=sign_fg, bold=True, bg=base_bg) if (sign_fg or base_bg is not None) else sign
+    g = (styled(gut_plain, fg=num_fg, bg=base_bg)
+         if (num_fg or base_bg is not None) else gut_plain)
+    s = (styled(sign, fg=sign_fg, bold=True, bg=base_bg)
+         if (sign_fg or base_bg is not None) else sign)
     line = g + s + render_code(code, ext, base_bg, strong, strong_bg)
     if base_bg is not None:
         used = len(gut_plain) + len(sign) + len(code)
@@ -146,23 +150,70 @@ def _render_diff_line(gut_plain, sign, sign_fg, code, ext, base_bg, strong, stro
     return line
 
 
-def unified_rows(before: str, after: str, ext: str, width: int, context: int = 3,
+class DiffModel(NamedTuple):
+    """Модель unified-диффа: параллельные массивы по строкам плюс индексы ханков.
+
+    rows — готовые ANSI-строки; plains — полный plain-текст (поиск/копирование);
+    hunks — индексы начал блоков изменений (прыжки [ / ]); linenos — номер строки
+    нового файла (open-in-editor); scopes — объемлющая функция/класс (sticky);
+    gaps — id гэпа (None, кроме строк-разделителей — раскрываются по Enter);
+    kinds — фон строки (ADD_BG/DEL_BG/None); vis — видимый plain с применённым
+    hscroll (фоновая подсветка курсора/выделения).
+    """
+    rows: 'list[str]'
+    plains: 'list[str]'
+    hunks: 'list[int]'
+    linenos: 'list[int]'
+    scopes: 'list[str]'
+    gaps: 'list[int | None]'
+    kinds: 'list[int | None]'
+    vis: 'list[str]'
+
+
+class DiffSource:
+    """Разобранная пара (before, after): всё, что не зависит от ширины и скролла.
+
+    SequenceMatcher по файлам, word-diff по парам строк и поиск определений —
+    самая дорогая часть построения диффа; считаются один раз на файл, а
+    unified_rows переиспользует их при каждом hscroll/раскрытии гэпа.
+    """
+
+    def __init__(self, before: str, after: str) -> None:
+        self.before = before
+        self.after = after
+        self.a = before.splitlines()
+        self.b = after.splitlines()
+        self.one_col = (not before) or (not after)
+        self.ops = difflib.SequenceMatcher(
+            None, self.a, self.b, autojunk=False).get_opcodes()
+        self.longest = max(
+            (len(s.replace('\t', '    ')) for s in self.a + self.b), default=0)
+        # строки-определения нового файла — для sticky-заголовка скоупа
+        self.def_lns = [i + 1 for i, s in enumerate(self.b) if _DEF_RE.match(s)]
+        self.def_txt = [self.b[n - 1].strip() for n in self.def_lns]
+        self._ranges_by_op: 'dict[int, list]' = {}
+
+    def word_ranges(self, oi: int, rem: 'list[str]', add: 'list[str]',
+                    pairs: int) -> list:
+        cached = self._ranges_by_op.get(oi)
+        if cached is None:
+            cached = [_word_ranges(rem[k], add[k]) for k in range(pairs)]
+            self._ranges_by_op[oi] = cached
+        return cached
+
+
+def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
                  hscroll: int = 0, expanded: 'set | None' = None,
-                 expand_all: bool = False) -> tuple:
-    """(rows, plains, hunks, linenos, scopes, gaps, kinds, vis): строки диффа, их полный
-    plain-текст (для поиска/копирования), индексы начал блоков изменений (прыжки [ / ]),
-    номер строки нового файла (open-in-editor), «скоуп» (объемлющая функция/класс для sticky),
-    id-гэпа на строку (None, кроме строк-разделителей — их можно раскрыть по Enter) и vis —
-    видимый plain-текст с уже применённым hscroll (для фоновой подсветки курсора/выделения).
+                 expand_all: bool = False) -> DiffModel:
+    """Модель диффа для готового DiffSource.
 
     context — строк контекста вокруг изменений. expanded — множество id раскрытых гэпов.
     expand_all — показать весь файл без сворачивания. hscroll — горизонтальный сдвиг.
     Соседние удалённая/добавленная строки спариваются — word-diff подсвечивает изменившиеся слова.
     """
     expanded = expanded or set()
-    a = before.splitlines()
-    b = after.splitlines()
-    one_col = (not before) or (not after)
+    a, b = src.a, src.b
+    one_col = src.one_col
     gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
     codew = max(1, width - gutter_w - 2)   # gutter + знак
     rows, plains, vis, hunks, linenos, gaps, kinds = [], [], [], [], [], [], []
@@ -199,12 +250,12 @@ def unified_rows(before: str, after: str, ext: str, width: int, context: int = 3
                                'gray', width), gut + '  ' + full, ib + 1,
              visible=gut + '  ' + cf)
 
-    def emit_change(i1, i2, j1, j2):
+    def emit_change(oi, i1, i2, j1, j2):
         hunks.append(len(rows))
         rem = [a[i].replace('\t', '    ') for i in range(i1, i2)]
         add = [b[j].replace('\t', '    ') for j in range(j1, j2)]
         pairs = min(len(rem), len(add))
-        rng = [_word_ranges(rem[k], add[k]) for k in range(pairs)]
+        rng = src.word_ranges(oi, rem, add, pairs)
         for k, full in enumerate(rem):
             strong = clip_strong(rng[k][0]) if (k < pairs and rng[k][2] >= 0.3) else None
             gut = gutter('-', i1 + k + 1, j1 + 1)
@@ -231,7 +282,7 @@ def unified_rows(before: str, after: str, ext: str, width: int, context: int = 3
         emit(styled(tsep, fg='cyan', bold=True), sep, lineno, gid, visible=tsep)
         emit('', '', 0, gid)                                           # padding снизу
 
-    ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+    ops = src.ops
     n_ops = len(ops)
     gid = 0
     for oi, (tag, i1, i2, j1, j2) in enumerate(ops):
@@ -252,29 +303,23 @@ def unified_rows(before: str, after: str, ext: str, width: int, context: int = 3
                     emit_ctx(i1 + off, j1 + off)
                 gid += 1
         else:
-            emit_change(i1, i2, j1, j2)
+            emit_change(oi, i1, i2, j1, j2)
 
     # скоупы: для каждой строки — ближайшее определение (def/class/…) выше по новому файлу
-    def_lns = [i + 1 for i, s in enumerate(b) if _DEF_RE.match(s)]
-    def_txt = [b[n - 1].strip() for n in def_lns]
-
     def scope_for(ln):
-        j = bisect.bisect_right(def_lns, ln) - 1
-        return def_txt[j] if j >= 0 else ''
+        j = bisect.bisect_right(src.def_lns, ln) - 1
+        return src.def_txt[j] if j >= 0 else ''
 
     scopes = [scope_for(ln) for ln in linenos]
-    return rows, plains, hunks, linenos, scopes, gaps, kinds, vis
+    return DiffModel(rows, plains, hunks, linenos, scopes, gaps, kinds, vis)
 
 
-def max_hscroll(before: str, after: str, width: int) -> int:
+def max_hscroll(src: DiffSource, width: int) -> int:
     """Предел горизонтального скролла: дальше вправо некуда — самая длинная строка
     уже целиком помещается в видимую ширину кода. gutter/codew считаются как в unified_rows."""
-    one_col = (not before) or (not after)
-    gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
+    gutter_w = (_NUMW + 1) if src.one_col else (2 * _NUMW + 2)
     codew = max(1, width - gutter_w - 2)
-    lines = before.splitlines() + after.splitlines()
-    longest = max((len(s.replace('\t', '    ')) for s in lines), default=0)
-    return max(0, longest - codew)
+    return max(0, src.longest - codew)
 
 
 # ──────────────── отрисовка одной строки диффа под курсором/выделением ────────────────

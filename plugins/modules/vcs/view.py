@@ -13,19 +13,31 @@
 - `_empty_pane_msg() -> str` — сообщение, когда файлов нет.
 """
 
+import base64
 import os
 import time
-import base64
 
 from kittens.tui.handler import Handler
-from kittens.tui.loop import MouseButton, EventType as MouseEventType
-from kittens.tui.operations import styled, MouseTracking
+from kittens.tui.loop import EventType as MouseEventType
+from kittens.tui.loop import MouseButton
+from kittens.tui.operations import MouseTracking, styled
 
+from modules.draw import AtomicDraw
+from modules.inputline import InputLine
+
+from .diff import (
+    DiffModel,
+    DiffSource,
+    build_tree,
+    is_code_row,
+    max_hscroll,
+    render_diff_cell,
+    unified_rows,
+)
 from .util import STATUS_STYLE, compose, is_noise, pad, truncate
-from .diff import build_tree, is_code_row, max_hscroll, render_diff_cell, unified_rows
 
 
-class DiffTreeView(Handler):
+class DiffTreeView(AtomicDraw, InputLine, Handler):
 
     mouse_tracking = MouseTracking.buttons_and_drag
 
@@ -43,6 +55,7 @@ class DiffTreeView(Handler):
         self.diff_before = ''
         self.diff_after = ''
         self.diff_ext = ''
+        self.diff_src = None
         self.diff_rows = []
         self.diff_plain = []
         self.diff_vis = []
@@ -69,6 +82,7 @@ class DiffTreeView(Handler):
         self.search_idx = 0
         self.status = ''
         self.flash = ''
+        self._load_later = None         # таймер отложенной загрузки диффа (debounce)
 
     # --- хуки подкласса ---
 
@@ -93,7 +107,7 @@ class DiffTreeView(Handler):
     # --- геометрия ---
 
     def visible_rows(self):
-        reserved = 3 + (1 if getattr(self, 'input_mode', None) else 0)
+        reserved = 3 + (1 if self.input_mode else 0)
         return max(1, self.screen_size.rows - reserved)
 
     def left_width(self):
@@ -120,10 +134,12 @@ class DiffTreeView(Handler):
         self.tsel = min(self.tsel, max(0, len(self.rows) - 1))
         if prev:
             for i, r in enumerate(self.rows):
-                if prev['type'] == 'dir' and r['type'] == 'dir' and r.get('key') == prev.get('key'):
+                if (prev['type'] == 'dir' and r['type'] == 'dir'
+                        and r.get('key') == prev.get('key')):
                     self.tsel = i
                     break
-                if prev['type'] == 'file' and r['type'] == 'file' and r.get('idx') == prev.get('idx'):
+                if (prev['type'] == 'file' and r['type'] == 'file'
+                        and r.get('idx') == prev.get('idx')):
                     self.tsel = i
                     break
 
@@ -166,7 +182,22 @@ class DiffTreeView(Handler):
     def tree_move(self, delta):
         if not self.rows:
             return
+        prev = self.tsel
         self.tsel = max(0, min(len(self.rows) - 1, self.tsel + delta))
+        if self.tsel != prev:
+            self._schedule_load_diff()
+        self.draw_screen()
+
+    def _schedule_load_diff(self):
+        """Дифф при прокрутке дерева грузим отложенно: git show + разбор дороже кадра,
+        синхронная загрузка на каждый шаг колеса копит очередь событий и курсор
+        «догоняет» с лагом. Курсор двигается сразу, дифф — когда прокрутка утихла."""
+        if self._load_later is not None:
+            self._load_later.cancel()
+        self._load_later = self.asyncio_loop.call_later(0.08, self._load_deferred)
+
+    def _load_deferred(self):
+        self._load_later = None
         self.load_diff()
         self.draw_screen()
 
@@ -207,24 +238,35 @@ class DiffTreeView(Handler):
 
     # --- дифф выбранного файла ---
 
-    def _set_diff(self, rows, plains, hunks, linenos, scopes, gaps, kinds, vis):
-        self.diff_rows, self.diff_plain, self.diff_vis = rows, plains, vis
-        self.diff_hunks, self.diff_lineno, self.diff_scope = hunks, linenos, scopes
-        self.diff_gap, self.diff_kind_bg = gaps, kinds
+    def _set_diff(self, model):
+        self.diff_rows, self.diff_plain, self.diff_vis = model.rows, model.plains, model.vis
+        self.diff_hunks, self.diff_lineno = model.hunks, model.linenos
+        self.diff_scope, self.diff_gap, self.diff_kind_bg = (
+            model.scopes, model.gaps, model.kinds)
         if self.search_query:
             self._recompute_matches()
 
     def _set_placeholder(self, msg):
+        # lineno 0: плейсхолдер — не строка кода, копирование/комменты по нему не работают
         self.hscroll_max = 0
-        self._set_diff([styled(msg, fg='gray')], [msg], [], [1], [''], [None], [None], [msg])
+        self._set_diff(DiffModel([styled(msg, fg='gray')], [msg], [], [0], [''],
+                                 [None], [None], [msg]))
+
+    @staticmethod
+    def _is_binary(it, before, after):
+        return it.get('stat') == (None, None) or '\x00' in before or '\x00' in after
 
     def load_diff(self):
+        if self._load_later is not None:    # прямая загрузка отменяет отложенную
+            self._load_later.cancel()
+            self._load_later = None
         self.diff_offset = 0
         self.hscroll = 0
         self.diff_cur = 0
         self.diff_sel = None
         self.diff_char_sel = None
         self.expanded = set()
+        self.diff_src = None
         it = self.current_item()
         if not it:
             self.diff_before = self.diff_after = self.diff_ext = ''
@@ -232,22 +274,27 @@ class DiffTreeView(Handler):
             return
         self.diff_before, self.diff_after = self._contents(it)
         self.diff_ext = os.path.splitext(it['rel'])[1].lower()
+        if self._is_binary(it, self.diff_before, self.diff_after):
+            self._set_placeholder('  (binary file)')
+            return
+        # дорогая часть модели (SequenceMatcher, word-diff) — один раз на файл;
+        # hscroll/гэпы дальше перестраивают только рендер
+        self.diff_src = DiffSource(self.diff_before, self.diff_after)
         self.build_diff_rows()
 
     def build_diff_rows(self):
-        if self.current_item() is None:
+        if self.current_item() is None or self.diff_src is None:
             return
         rw = max(10, self.screen_size.cols - self.left_width() - 3)
         if not self.diff_before and not self.diff_after:
             self._set_placeholder('  (empty file)')
             return
-        self.hscroll_max = max_hscroll(self.diff_before, self.diff_after, rw)
+        self.hscroll_max = max_hscroll(self.diff_src, rw)
         self.hscroll = min(self.hscroll, self.hscroll_max)
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified_rows(
-            self.diff_before, self.diff_after, self.diff_ext, rw, 3, self.hscroll,
-            self.expanded, self.expand)
-        if rows:
-            self._set_diff(rows, plains, hunks, linenos, scopes, gaps, kinds, vis)
+        model = unified_rows(self.diff_src, self.diff_ext, rw, 3, self.hscroll,
+                             self.expanded, self.expand)
+        if model.rows:
+            self._set_diff(model)
         else:
             self._set_placeholder('  (no textual changes)')
 
@@ -561,7 +608,7 @@ class DiffTreeView(Handler):
             self.print(self._left_cell(left_row, lw, li == self.tsel) + sep + right)
 
     def _draw_input_line(self):
-        if getattr(self, 'input_mode', None):
+        if self.input_mode:
             self.print(styled(truncate(f' {self.input_mode}: {self.input_buffer}▏',
                                        self.screen_size.cols), fg='cyan', bold=True))
 
@@ -637,7 +684,7 @@ class DiffTreeView(Handler):
         super().on_mouse_event(ev)
 
     def on_click(self, ev):
-        if getattr(self, 'input_mode', None):
+        if self.input_mode:
             return
         self.diff_sel = None
         self.diff_char_sel = None

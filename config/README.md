@@ -82,8 +82,8 @@ Two pieces make hotkeys work while the Russian layout is active:
   layout-independent — no duplicate needed.
 
 **Don't use a Russian layout?** Delete `russian-ctrl.conf` (and drop its
-`include` from `kitty.conf`) and remove the Cyrillic duplicate `map` lines — the
-Latin bindings are unaffected.
+`include` from `terminal.conf`) and remove the Cyrillic duplicate `map` lines —
+the Latin bindings are unaffected.
 
 ## The Cmd+W fix
 
@@ -109,8 +109,8 @@ grabs it, so `Cmd+W` closed the *tab* instead of the pane, even in Russian.
   `Cmd` to `Ctrl`/`Super` throughout; the `Cmd+W` fix is macOS-only.
 - **No Russian layout?** See [Russian keyboard layout](#russian-keyboard-layout).
 - **Different font?** Change `font_family` in `ghostty.conf`.
-- **Terminal only?** Enable just this config (`familiar enable --all` without
-  the kittens, or the manual `cp` above) and skip `familiar enable --kittens`.
+- **Terminal only?** `familiar enable --terminal` wires in just this config,
+  without any kittens (or use the manual `cp` above).
 
 ## License
 

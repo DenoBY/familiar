@@ -46,13 +46,22 @@ The three screens — a project's sessions, the projects list, and the conversat
 
 ## Setup
 
-In `~/.config/kitty/kitty.conf` (or a separate include file):
+```sh
+familiar enable session
+```
+
+Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open with: `cmd+shift+s`.
+
+Minimal fallback — a manual `map` in `~/.config/kitty/kitty.conf` (or a separate
+include file):
 
 ```conf
 map cmd+shift+s kitten /path/to/familiar/plugins/session.py
 ```
 
-Reload the config with `Cmd+Ctrl+,` (macOS) or restart kitty. Open with: `cmd+shift+s`.
+Unlike `familiar enable`, this bare map lacks the toggle-to-close behavior, the
+guard against re-opening the overlay on top of itself, and the Cyrillic key
+duplicates for the Russian layout.
 
 ## Keys
 

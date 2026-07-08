@@ -1,12 +1,13 @@
-import os
 import json
+import os
 import shutil
 import tempfile
 import unittest
 
 import kittymock  # noqa: F401
-from kittymock import wire, draw_text, MouseEvent
 import session as S
+from kittymock import MouseEvent, draw_text, wire
+
 
 NOW = 2_000_000.0
 

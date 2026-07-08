@@ -15,15 +15,14 @@ review — kitten для kitty.
 """
 
 import os
-import sys
-import shlex
-import shutil
 import subprocess
+import sys
 
 from kittens.tui.handler import result_handler
 from kittens.tui.loop import Loop
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
+
 
 # Пакет modules лежит рядом с этим файлом. При запуске через `kitten path.py`
 # (CLI/автодополнение) kitty не добавляет его папку в sys.path; при штатном launch
@@ -32,15 +31,17 @@ if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.overlay import mark_overlay
-from modules.vcs.util import short_path, to_latin, truncate
-from modules.vcs.git import git_blob, git_root, has_head, read_text
-from modules.vcs.view import DiffTreeView
+from modules.review.editor import editor_command
 from modules.review.git import detect_base, scan_changes
+from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
+from modules.vcs.util import short_path, to_latin, truncate
+from modules.vcs.view import DiffTreeView
 
 
 class ReviewHandler(DiffTreeView):
 
-    def __init__(self, args, cwd, root, base='main'):
+    def __init__(self, args: list, cwd: str, root: 'str | None',
+                 base: str = 'main') -> None:
         super().__init__(root)
         self.cli_args = args
         self.cwd = cwd
@@ -50,8 +51,6 @@ class ReviewHandler(DiffTreeView):
         self.annots = {}             # (file_rel, line) -> {'code': str, 'text': str}
         self.comment_target = None   # (rel, line, code) редактируемой аннотации
         self.filter_query = ''
-        self.input_mode = None
-        self.input_buffer = ''
 
     # --- хуки DiffTreeView ---
 
@@ -106,10 +105,15 @@ class ReviewHandler(DiffTreeView):
         self.cmd.set_cursor_visible(True)
 
     def _reload_items(self):
-        self.items = scan_changes(self.root, self.scope, self.base) if self.root else []
-        self.status = '' if self.root else 'not a git repository'
+        if not self.root:
+            self.items = []
+            self.status = 'not a git repository'
+            return
+        self.items = scan_changes(self.root, self.scope, self.base)
         for it in self.items:
             it['rel'] = it['path']
+        # пустой список из-за ошибки git — показать её, а не «no changes»
+        self.status = '' if self.items else last_error()
 
     def cycle_scope(self):
         order = ('working', 'staged', 'branch')
@@ -143,7 +147,7 @@ class ReviewHandler(DiffTreeView):
 
     # --- отрисовка ---
 
-    def draw_screen(self):
+    def _draw_frame(self):
         self.cmd.clear_screen()
         cols = self.screen_size.cols
         base = short_path(self.root or self.cwd)
@@ -164,7 +168,7 @@ class ReviewHandler(DiffTreeView):
 
     def _footer(self):
         if self.input_mode == 'comment':
-            return ' Enter — save   Esc — cancel   (пустой = удалить)'
+            return ' Enter — save   Esc — cancel   (empty = delete)'
         if self.input_mode:
             return ' Enter — keep   Esc — clear'
         if self.flash:
@@ -224,9 +228,7 @@ class ReviewHandler(DiffTreeView):
         code = after_lines[line - 1] if 0 < line <= len(after_lines) else ''
         self.comment_target = (cur['rel'], line, code)
         existing = self.annots.get((cur['rel'], line))
-        self.input_mode = 'comment'
-        self.input_buffer = existing['text'] if existing else ''
-        self.draw_screen()
+        self.start_input('comment', existing['text'] if existing else '')
 
     def _save_comment(self):
         rel, line, code = self.comment_target
@@ -280,11 +282,12 @@ class ReviewHandler(DiffTreeView):
         if 0 <= self.diff_offset < len(self.diff_lineno):
             line = max(1, self.diff_lineno[self.diff_offset])
         project = self.root or os.path.dirname(path)
-        cmd, gui = _editor_command(project, path, line)
+        cmd, gui = editor_command(project, path, line)
         if gui:
+            # start_new_session: жизнь редактора не должна зависеть от процесса оверлея
             try:
                 subprocess.Popen(cmd, cwd=project, stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
                 self.flash = f'opened  {os.path.basename(path)}:{line}'
             except OSError as e:
                 self.flash = f'editor failed: {e}'
@@ -297,20 +300,18 @@ class ReviewHandler(DiffTreeView):
     # --- фильтр/поиск/комментарий (ввод в строке) ---
 
     def start_filter(self):
-        self.input_mode = 'filter'
-        self.input_buffer = self.filter_query
-        self.draw_screen()
+        self.start_input('filter', self.filter_query)
 
     def start_search(self):
-        self.input_mode = 'search'
-        self.input_buffer = self.search_query
-        self.draw_screen()
+        self.start_input('search', self.search_query)
 
-    def _apply_input(self):
+    def _input_live(self):
         if self.input_mode == 'filter':
             self._apply_filter()
-        else:
+        elif self.input_mode == 'search':
             self._apply_search()
+        else:
+            self.draw_screen()
 
     def _apply_filter(self):
         self.filter_query = self.input_buffer
@@ -331,13 +332,9 @@ class ReviewHandler(DiffTreeView):
     def commit_input(self):
         if self.input_mode == 'comment' and self.comment_target:
             self._save_comment()
-        self.input_mode = None
-        self.draw_screen()
+        super().commit_input()
 
-    def cancel_input(self):
-        mode = self.input_mode
-        self.input_mode = None
-        self.input_buffer = ''
+    def _input_cancelled(self, mode):
         if mode == 'filter':
             self.filter_query = ''
             self.tsel = 0
@@ -348,7 +345,6 @@ class ReviewHandler(DiffTreeView):
             self.search_matches = []
         elif mode == 'comment':
             self.comment_target = None
-        self.draw_screen()
 
     # --- ввод ---
 
@@ -365,17 +361,7 @@ class ReviewHandler(DiffTreeView):
             self.diff_scroll(-self.visible_rows() // 2)
             return
         k = key_event.key
-        if self.input_mode:
-            if k == 'ENTER':
-                self.commit_input()
-            elif k == 'ESCAPE':
-                self.cancel_input()
-            elif k == 'BACKSPACE':
-                self.input_buffer = self.input_buffer[:-1]
-                if self.input_mode in ('filter', 'search'):
-                    self._apply_input()
-                else:
-                    self.draw_screen()
+        if self.input_key(k):
             return
         if key_event.matches('cmd+c'):
             self.smart_copy()
@@ -426,12 +412,7 @@ class ReviewHandler(DiffTreeView):
                 self.quit_loop(0)
 
     def on_text(self, text, in_bracketed_paste=False):
-        if self.input_mode:
-            self.input_buffer += ''.join(ch for ch in text if ch.isprintable())
-            if self.input_mode in ('filter', 'search'):
-                self._apply_input()
-            else:
-                self.draw_screen()
+        if self.input_text(text):
             return
         for ch in text:
             if ch == '\x15':   # Ctrl+U — скролл диффа на полстраницы вверх
@@ -504,7 +485,7 @@ class ReviewHandler(DiffTreeView):
         self.diff_scroll(self.visible_rows() // 2)
 
 
-def main(args):
+def main(args: list) -> 'dict | None':
     mark_overlay('review')
     cwd = os.getcwd()
     root = git_root(cwd)
@@ -515,62 +496,15 @@ def main(args):
     return handler.action
 
 
-# GUI-редакторы открываем без окна kitty (у них своя оконная система),
-# терминальные — в новом табе kitty.
-_GUI_EDITORS = {'code', 'code-insiders', 'codium', 'cursor', 'windsurf', 'subl', 'zed'}
-
-# JetBrains: shell-лаунчеры (если стоит command-line launcher) и .app в /Applications.
-_JETBRAINS_CLI = ('phpstorm', 'idea', 'pycharm', 'webstorm', 'goland', 'rubymine',
-                  'clion', 'rider', 'datagrip', 'idea-ce', 'pycharm-ce')
-_JETBRAINS_APPS = ('PhpStorm', 'IntelliJ IDEA', 'IntelliJ IDEA CE', 'PyCharm',
-                   'PyCharm CE', 'WebStorm', 'GoLand', 'RubyMine', 'CLion', 'Rider',
-                   'DataGrip')
-
-
-def _editor_command(project, path, line):
-    """(argv, gui) — чем открыть файл на строке. Приоритет: IDE по конфигам проекта
-    (открываем со всем проектом), иначе $VISUAL/$EDITOR, иначе vim.
-    """
-    j = os.path.join
-    # 1) JetBrains — по .idea/ (открывает файл в проекте, к которому он принадлежит)
-    if os.path.isdir(j(project, '.idea')):
-        for launcher in _JETBRAINS_CLI:
-            if shutil.which(launcher):
-                return ([launcher, '--line', str(line), path], True)
-        for app in _JETBRAINS_APPS:
-            ap = f'/Applications/{app}.app'
-            if os.path.isdir(ap):
-                return (['open', '-na', ap, '--args', '--line', str(line), path], True)
-    # 2) VS Code / Cursor — по .vscode/ или .cursor/ (открываем папку проекта + файл:строка)
-    if os.path.isdir(j(project, '.vscode')) or os.path.isdir(j(project, '.cursor')):
-        cursor = os.path.isdir(j(project, '.cursor'))
-        clis = ('cursor',) if cursor else ('code', 'codium', 'code-insiders')
-        for launcher in clis:
-            if shutil.which(launcher):
-                return ([launcher, project, '-g', f'{path}:{line}'], True)
-        app = '/Applications/Cursor.app' if cursor else '/Applications/Visual Studio Code.app'
-        if os.path.isdir(app):
-            return (['open', '-na', app, '--args', project, '-g', f'{path}:{line}'], True)
-    # 3) Zed — по .zed/
-    if os.path.isdir(j(project, '.zed')) and shutil.which('zed'):
-        return (['zed', f'{path}:{line}'], True)
-    # 4) $VISUAL / $EDITOR (или vim)
-    parts = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vim')
-    prog = os.path.basename(parts[0]) if parts else 'vim'
-    if prog in _GUI_EDITORS:
-        target = f'{path}:{line}'
-        tail = [target] if prog in ('subl', 'zed') else ['-g', target]
-        return (parts + tail, True)
-    return (parts + [f'+{line}', path], False)
-
-
 @result_handler()
 def handle_result(args, answer, target_window_id, boss):
     if not answer or answer.get('action') != 'edit':
         return
     project, path, line = answer['cwd'], answer['path'], answer['line']
-    cmd, gui = _editor_command(project, path, line)
+    cmd, gui = editor_command(project, path, line)
     w = boss.window_id_map.get(target_window_id)
+    if w is None:
+        return   # исходное окно уже закрыто — не запускать «куда попало»
     kind = '--type=background' if gui else '--type=tab'
     boss.call_remote_control(w, ('launch', kind, '--cwd', project, *cmd))
 

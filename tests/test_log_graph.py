@@ -1,7 +1,7 @@
 import unittest
 
 import kittymock  # noqa: F401
-from modules.log.graph import build_graph, NODE, VERT, HORIZ, OUT_R, IN_R
+from modules.log.graph import HORIZ, IN_R, NODE, OUT_R, VERT, build_graph
 
 
 def gutter(row):

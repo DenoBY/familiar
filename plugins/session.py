@@ -24,8 +24,9 @@ import time
 
 from kittens.tui.handler import Handler, result_handler
 from kittens.tui.loop import Loop, MouseButton
-from kittens.tui.operations import styled, MouseTracking
+from kittens.tui.operations import MouseTracking, styled
 from kitty.key_encoding import EventType
+
 
 # Пакет modules лежит рядом с этим файлом. При запуске через `kitten path.py`
 # (CLI/автодополнение) kitty не добавляет его папку в sys.path; при штатном launch
@@ -33,19 +34,27 @@ from kitty.key_encoding import EventType
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from modules.draw import AtomicDraw
+from modules.inputline import InputLine
 from modules.overlay import mark_overlay
-from modules.session.util import human_age, short_path, to_latin, truncate, wrap_text
 from modules.session.data import (
-    STATUS_COLOR, STATUS_LABEL, append_custom_title, encode_path, is_interactive,
-    load_conversation, load_sessions, running_sessions, scan_projects,
+    STATUS_COLOR,
+    STATUS_LABEL,
+    append_custom_title,
+    build_projects,
+    load_conversation,
+    load_sessions,
+    running_sessions,
+    scan_projects,
 )
+from modules.session.util import human_age, short_path, to_latin, truncate, wrap_text
 
 
-class SessionsHandler(Handler):
+class SessionsHandler(AtomicDraw, InputLine, Handler):
 
-    mouse_tracking = MouseTracking.buttons_only   # включаем отчёты о кликах
+    mouse_tracking = MouseTracking.buttons_only
 
-    def __init__(self, args, now):
+    def __init__(self, args: list, now: float) -> None:
         self.cli_args = args
         self.now = now
         self.result = None
@@ -65,9 +74,7 @@ class SessionsHandler(Handler):
         self.preview_lines = []
         self.preview_offset = 0
         self.preview_session = None
-        # ввод (фильтр списка / поиск в диалоге / переименование / worktree)
-        self.input_mode = None      # None | 'filter' | 'search' | 'rename' | 'worktree'
-        self.input_buffer = ''
+        # режимы строки ввода: 'filter' | 'search' | 'rename' | 'worktree'
         self._worktree_cwd = None   # каталог, для которого создаём worktree
         self.filter_query = ''      # фильтр списка проектов/сессий
         self.search_query = ''
@@ -92,35 +99,8 @@ class SessionsHandler(Handler):
         self.draw_screen()
 
     def rebuild_projects(self):
-        """Собрать видимый список проектов из сырого скана с учётом фильтра."""
-        cwd = os.path.realpath(os.getcwd())
-        enc = encode_path(cwd)
-        res = []
-        for p in self._all_projects:
-            if self.show_all:
-                probes = p['probes']
-            else:
-                probes = [pr for pr in p['probes'] if is_interactive(pr['entrypoint'])]
-            if not probes:
-                continue
-            files = [pr['file'] for pr in probes]
-            ids = {os.path.splitext(os.path.basename(f))[0] for f in files}
-            res.append({
-                'dir': p['dir'],
-                'dir_name': p['dir_name'],
-                'path': p['path'],
-                'name': p['name'],
-                'files': files,
-                'count': len(files),
-                'mtime': max(pr['mtime'] for pr in probes),
-                'active': len(ids & self.running_ids),
-                # текущий проект: совпало закодированное имя папки ЛИБО реальный
-                # путь проекта (надёжнее — не зависит от кодировки спецсимволов).
-                'is_current': (p['dir_name'] == enc
-                               or os.path.realpath(p['path'].rstrip('/')) == cwd),
-            })
-        res.sort(key=lambda x: x['mtime'], reverse=True)
-        self.projects = res
+        self.projects = build_projects(self._all_projects, self.running_ids,
+                                       self.show_all)
 
     def finalize(self):
         self.cmd.set_cursor_visible(True)
@@ -193,7 +173,7 @@ class SessionsHandler(Handler):
 
     # --- отрисовка ---
 
-    def draw_screen(self):
+    def _draw_frame(self):
         self.cmd.clear_screen()
         cols = self.screen_size.cols
 
@@ -432,9 +412,7 @@ class SessionsHandler(Handler):
     def start_filter(self):
         if self.screen not in ('projects', 'sessions'):
             return
-        self.input_mode = 'filter'
-        self.input_buffer = self.filter_query
-        self.draw_screen()
+        self.start_input('filter', self.filter_query)
 
     # --- предпросмотр ---
 
@@ -547,9 +525,7 @@ class SessionsHandler(Handler):
         if not cwd:
             return
         self._worktree_cwd = cwd
-        self.input_mode = 'worktree'
-        self.input_buffer = ''
-        self.draw_screen()
+        self.start_input('worktree')
 
     def start_rename(self):
         if self.screen != 'sessions':
@@ -557,26 +533,18 @@ class SessionsHandler(Handler):
         s = self.current_item()
         if not s:
             return
-        self.input_mode = 'rename'
-        self.input_buffer = s['title'] if s.get('custom') else ''
-        self.draw_screen()
+        self.start_input('rename', s['title'] if s.get('custom') else '')
 
     def start_search(self):
         if self.screen != 'preview':
             return
-        self.input_mode = 'search'
-        self.input_buffer = self.search_query
-        self.draw_screen()
+        self.start_input('search', self.search_query)
 
-    def cancel_input(self):
-        mode = self.input_mode
-        self.input_mode = None
-        self.input_buffer = ''
+    def _input_cancelled(self, mode):
         if mode == 'filter':
             self.filter_query = ''   # Esc в фильтре — сбросить
             self.sel = 0
             self.offset = 0
-        self.draw_screen()
 
     def commit_input(self):
         mode = self.input_mode
@@ -660,15 +628,7 @@ class SessionsHandler(Handler):
             return
         k = key_event.key
 
-        # режим ввода (фильтр / поиск / переименование / worktree) перехватывает клавиши
-        if self.input_mode:
-            if k == 'ENTER':
-                self.commit_input()
-            elif k == 'ESCAPE':
-                self.cancel_input()
-            elif k == 'BACKSPACE':
-                self.input_buffer = self.input_buffer[:-1]
-                self._input_changed()
+        if self.input_key(k):
             return
 
         if self.screen == 'preview':
@@ -714,7 +674,7 @@ class SessionsHandler(Handler):
             else:
                 self.activate()
 
-    def _input_changed(self):
+    def _input_live(self):
         """Живой отклик ввода: для фильтра сразу применяем к списку."""
         if self.input_mode == 'filter':
             self.filter_query = self.input_buffer
@@ -723,13 +683,11 @@ class SessionsHandler(Handler):
         self.draw_screen()
 
     def on_text(self, text, in_bracketed_paste=False):
-        if self.input_mode:
-            self.input_buffer += ''.join(ch for ch in text if ch.isprintable())
-            self._input_changed()
+        if self.input_text(text):
             return
 
         for ch in text:
-            c = to_latin(ch)   # нормализуем раскладку для шорткатов
+            c = to_latin(ch)
             if self.screen == 'preview':
                 if c in ('q', 'Q'):
                     self.quit_loop(0)
@@ -825,7 +783,7 @@ class SessionsHandler(Handler):
         self.quit_loop(0)
 
 
-def main(args):
+def main(args: list) -> 'dict | None':
     mark_overlay('session')
     now = time.time()
     loop = Loop()
@@ -877,6 +835,8 @@ def handle_result(args, result, target_window_id, boss):
 
     cwd = result.get('cwd')
     w = boss.window_id_map.get(target_window_id)
+    if w is None:
+        return   # исходное окно уже закрыто — не запускать относительно «какого-то» окна
     # Окно занято claude — открываем новую сессию отдельным окном-сплитом рядом
     # (--location=vsplit, тот же механизм, что cmd+d в splits.conf: cmd+w закроет
     # только этот сплит и вернёт к соседней сессии, а не весь таб). Иначе оверлей

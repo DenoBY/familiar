@@ -4,6 +4,10 @@ import kittymock  # noqa: F401
 import modules.vcs.diff as D
 
 
+def unified(before, after, ext, width, **kw):
+    return D.unified_rows(D.DiffSource(before, after), ext, width, **kw)
+
+
 class TestFgMap(unittest.TestCase):
     def test_highlights_by_token_kind(self):
         code = 'return 42 "s" # note'
@@ -47,7 +51,7 @@ class TestWordRanges(unittest.TestCase):
 
 class TestUnifiedRows(unittest.TestCase):
     def test_single_line_modify(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             'l1\nl2\nl3\n', 'l1\nX2\nl3\n', '.py', 40)
         self.assertEqual(len(rows), 4)
         self.assertEqual(hunks, [1])
@@ -66,7 +70,7 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_context_folds_into_gap(self):
         before, after = self._big()
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             before, after, '.py', 40, context=3)
         self.assertTrue(any(g is not None for g in gaps))
         sep = [p for p in plains if 'hidden' in p]
@@ -75,40 +79,40 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_expand_all_no_gap(self):
         before, after = self._big()
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             before, after, '.py', 40, context=3, expand_all=True)
         self.assertTrue(all(g is None for g in gaps))
         self.assertFalse(any('hidden' in p for p in plains))
 
     def test_expanded_gap_shows_context(self):
         before, after = self._big()
-        rows, plains, *_ , gaps, kinds = D.unified_rows(
+        rows, plains, *_ , gaps, kinds = unified(
             before, after, '.py', 40, context=3, expanded={0})
         self.assertFalse(any('hidden' in p for p in plains))
 
     def test_added_file_one_column_all_adds(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             '', 'n1\nn2\nn3\n', '.py', 40)
         self.assertEqual(len(rows), 3)
         self.assertTrue(all(k == D.ADD_BG for k in kinds))
         self.assertEqual(linenos, [1, 2, 3])
 
     def test_deleted_file_one_column_all_dels(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             'o1\no2\n', '', '.py', 40)
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(k == D.DEL_BG for k in kinds))
 
     def test_scope_tracks_enclosing_def(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = D.unified_rows(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             'def foo():\n    x = 1\n', 'def foo():\n    x = 2\n', '.py', 40)
         self.assertIn('def foo():', scopes)
 
     def test_vis_tracks_hscroll_plains_stay_full(self):
         # plains — полный текст (поиск/копирование), vis — видимый срез по hscroll
         before, after = 'x\n', 'x0123456789abcdef\n'
-        r0 = D.unified_rows(before, after, '.py', 40, hscroll=0)
-        r5 = D.unified_rows(before, after, '.py', 40, hscroll=5)
+        r0 = unified(before, after, '.py', 40, hscroll=0)
+        r5 = unified(before, after, '.py', 40, hscroll=5)
         rows0, plains0, vis0 = r0[0], r0[1], r0[7]
         plains5, vis5 = r5[1], r5[7]
         self.assertEqual(len(vis0), len(rows0))       # vis параллелен rows
@@ -120,11 +124,11 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_max_hscroll_caps_at_longest_line(self):
         # два столбца: gutter_w=10, codew=width-12; предел = longest - codew
-        self.assertEqual(D.max_hscroll('short\n', 'x' * 50 + '\n', 40), 22)
+        self.assertEqual(D.max_hscroll(D.DiffSource('short\n', 'x' * 50 + '\n'), 40), 22)
         # короткие строки целиком видны → скроллить вправо некуда
-        self.assertEqual(D.max_hscroll('a\n', 'b\n', 40), 0)
+        self.assertEqual(D.max_hscroll(D.DiffSource('a\n', 'b\n'), 40), 0)
         # один столбец (added file): gutter_w=5, codew=width-7
-        self.assertEqual(D.max_hscroll('', 'y' * 50 + '\n', 40), 17)
+        self.assertEqual(D.max_hscroll(D.DiffSource('', 'y' * 50 + '\n'), 40), 17)
 
 
 class TestBuildTree(unittest.TestCase):

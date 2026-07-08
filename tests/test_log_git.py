@@ -1,11 +1,12 @@
 import os
 import shutil
-import tempfile
 import subprocess
+import tempfile
 import unittest
 
 import kittymock  # noqa: F401
 import modules.log.git as G
+
 
 _ENV = {
     'GIT_AUTHOR_NAME': 'Alice', 'GIT_AUTHOR_EMAIL': 'a@e',
@@ -195,6 +196,15 @@ class LogGitTest(unittest.TestCase):
         self.assertIn('main', d['branches'])               # ветка, содержащая коммит
         self.assertNotIn('->', ' '.join(d['branches']))    # без символической origin/HEAD
 
+    def test_commit_detail_body_with_separator_char(self):
+        # \x1e в теле коммита не должен ломать разбор полей (rsplit по трём последним)
+        self.write('sep.txt', 's\n')
+        self._git('add', '-A')
+        self._commit('subject\n\nbody with \x1e inside')
+        head = G.load_commits(self.repo)[0]['sha']
+        d = G.commit_detail(self.repo, head)
+        self.assertIn('\x1e inside', d['body'])
+        self.assertEqual(d['author_email'], 'a@e')
 
     # --- unpushed_shas ---
 

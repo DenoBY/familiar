@@ -1,0 +1,15 @@
+# Только dev-инструменты: проект zero-dependency и не ставится как
+# python-пакет (киты грузит сам kitty), поэтому секции [project] нет.
+
+[tool.ruff]
+line-length = 99
+# kitty 0.47 несёт встроенный Python 3.11+ — на нём и исполняются киты.
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["modules", "review", "session", "log", "kittymock"]
+# В репо после блока импортов — две пустые строки (PEP 8 для top-level кода).
+lines-after-imports = 2

@@ -4,7 +4,7 @@
 
 Tests use `unittest` from the standard library — no external dependencies (just like the kittens themselves).
 They run outside kitty: `kittymock.py` replaces the `kittens.*`/`kitty.*` packages with stubs and adds
-the repository root to `sys.path`, so `review`/`session`/`log` and `modules.*` are imported directly.
+`plugins/` to `sys.path`, so `review`/`session`/`log` and `modules.*` are imported directly.
 Shared code lives in the `modules.vcs` package: diff/tree rendering (`diff`), string utilities (`util`),
 git primitives (`git`), and the base two-panel TUI class `DiffTreeView` (`view`), from which
 both review and log inherit — all navigation/scroll/search/copy live there.

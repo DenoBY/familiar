@@ -6,19 +6,37 @@ Source-agnostic слой без зависимостей от TUI и от кон
 log (коммиты).
 """
 
-import os
 import subprocess
+
+
+_last_error = ''
+
+
+def last_error() -> str:
+    """stderr последнего неудачного вызова git; пусто после успешного вызова.
+
+    Для хендлеров: «список пуст из-за ошибки git» (index.lock, битый репозиторий)
+    иначе неотличим от честного «изменений нет».
+    """
+    return _last_error
 
 
 def run_git(root: str, *args: str, binary: bool = False,
             timeout: int = 8) -> 'str | bytes | None':
+    global _last_error
     try:
         out = subprocess.run(['git', '-C', root, *args],
                              capture_output=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        _last_error = str(e)
         return None
     if out.returncode != 0:
+        err = out.stderr.decode('utf-8', 'replace').strip()
+        # тихие пробы (--verify -q) падают без stderr — прежнюю ошибку не затираем
+        if err:
+            _last_error = err.splitlines()[0]
         return None
+    _last_error = ''
     return out.stdout if binary else out.stdout.decode('utf-8', 'replace')
 
 
@@ -28,17 +46,19 @@ def git_root(cwd: str) -> 'str | None':
 
 
 def has_head(root: str) -> bool:
-    try:
-        r = subprocess.run(['git', '-C', root, 'rev-parse', '--verify', '-q', 'HEAD'],
-                           capture_output=True, timeout=5)
-        return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    return run_git(root, 'rev-parse', '--verify', '-q', 'HEAD', timeout=5) is not None
+
+
+# Пустое дерево git — родитель корневого коммита (у которого нет `^`)
+# и база для diff в репозитории без коммитов.
+EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 
 def read_text(path: str) -> str:
+    # git-сторона диффа декодируется как utf-8 (run_git/git_blob) — читаем диск
+    # так же, иначе при LANG=C стороны разъедутся и появятся ложные изменения.
     try:
-        with open(path, errors='replace') as f:
+        with open(path, encoding='utf-8', errors='replace') as f:
             return f.read()
     except OSError:
         return ''
@@ -50,7 +70,7 @@ def git_blob(root: str, ref: str, path: str) -> str:
     return b.decode('utf-8', 'replace') if b else ''
 
 
-def _classify(xy: str) -> str:
+def classify_status(xy: str) -> str:
     if '?' in xy:
         return 'untracked'
     if 'R' in xy:
@@ -62,7 +82,7 @@ def _classify(xy: str) -> str:
     return 'modified'
 
 
-def _count_lines(path: str) -> int:
+def count_lines(path: str) -> int:
     try:
         with open(path, 'rb') as f:
             return sum(1 for _ in f)
@@ -71,18 +91,29 @@ def _count_lines(path: str) -> int:
 
 
 def git_numstat(root: str, *args: str) -> 'dict[str, tuple[int | None, int | None]]':
-    """path → (added, deleted) из `git diff --numstat <args>` (бинарники → (None, None))."""
-    out = run_git(root, 'diff', '--numstat', *args)
+    """path → (added, deleted) из `git diff --numstat -z <args>` (бинарники → (None, None)).
+
+    -z вместо разбора фигурной записи "dir/{old => new}/f": у переименования пути
+    идут отдельными NUL-токенами (old, new), ключом становится new — тот же путь,
+    что отдаёт diff_name_status.
+    """
+    out = run_git(root, 'diff', '--numstat', '-z', *args)
     stats = {}
     if not out:
         return stats
-    for line in out.splitlines():
-        parts = line.split('\t')
+    toks = out.split('\0')
+    i = 0
+    while i < len(toks):
+        parts = toks[i].split('\t')
         if len(parts) < 3:
+            i += 1
             continue
         a, d, path = parts[0], parts[1], parts[2]
-        if ' => ' in path:   # переименование: "old => new" / "dir/{old => new}/f"
-            path = path.replace('{', '').replace('}', '').split(' => ')[-1]
+        if not path:
+            path = toks[i + 2] if i + 2 < len(toks) else ''
+            i += 3
+        else:
+            i += 1
         stats[path] = (None if a == '-' else int(a), None if d == '-' else int(d))
     return stats
 
@@ -90,7 +121,7 @@ def git_numstat(root: str, *args: str) -> 'dict[str, tuple[int | None, int | Non
 _NAME_STATUS = {'M': 'modified', 'A': 'added', 'D': 'deleted', 'T': 'modified'}
 
 
-def _diff_name_status(root: str, *args: str) -> list[dict]:
+def diff_name_status(root: str, *args: str) -> list[dict]:
     """items из `git diff --name-status -z <args>` (staged / vs ветка / коммит)."""
     raw = run_git(root, 'diff', '--name-status', '-z', *args)
     if raw is None:

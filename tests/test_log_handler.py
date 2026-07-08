@@ -1,12 +1,13 @@
 import os
 import shutil
-import tempfile
 import subprocess
+import tempfile
 import unittest
 
 import kittymock  # noqa: F401
-from kittymock import wire, draw_text, MouseEvent
 import log as L
+from kittymock import MouseEvent, draw_text, wire
+
 
 _ENV = {
     'GIT_AUTHOR_NAME': 'Alice', 'GIT_AUTHOR_EMAIL': 'a@e',
@@ -57,6 +58,16 @@ class LogHandlerTest(unittest.TestCase):
         self.assertEqual([c['subject'] for c in self.h.commits],
                          ['add feature', 'first'])
 
+    def test_git_error_shown_when_log_fails(self):
+        d = tempfile.mkdtemp(prefix='cclog_notrepo_')
+        try:
+            self.h.root = d
+            self.h.reload_commits()
+            self.assertEqual(self.h.commits, [])
+            self.assertIn('not a git repository', self.h.status)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_draw_commits_smoke(self):
         self.h.draw_screen()
         text = draw_text(self.h)
@@ -99,14 +110,14 @@ class LogHandlerTest(unittest.TestCase):
 
     def test_display_refs_collapses_remote(self):
         self.assertEqual(
-            L._display_refs([('master', 'head'), ('origin/master', 'remote')]),
+            L.display_refs([('master', 'head'), ('origin/master', 'remote')]),
             [('origin & master', 'head')])                 # local+remote → один чип
         # ветка со слэшем + одноимённая удалёнка → не дублируется
         self.assertEqual(
-            L._display_refs([('feature/x', 'branch'), ('origin/feature/x', 'remote')]),
+            L.display_refs([('feature/x', 'branch'), ('origin/feature/x', 'remote')]),
             [('origin & feature/x', 'branch')])
         self.assertEqual(
-            L._display_refs([('origin/PP-1', 'remote'), ('v1.0', 'tag')]),
+            L.display_refs([('origin/PP-1', 'remote'), ('v1.0', 'tag')]),
             [('origin/PP-1', 'remote'), ('v1.0', 'tag')])  # без локальной — как есть
 
     def test_commit_row_columns_aligned(self):

@@ -35,13 +35,22 @@ Kitten для [kitty](https://sw.kovidgoyal.net/kitty/): оверлей прос
 
 ## Подключение
 
-В `~/.config/kitty/kitty.conf` (или include-файле):
+```sh
+familiar enable log
+```
+
+Перезагрузить конфиг: `Cmd+Ctrl+,`. Открыть: `cmd+shift+l`.
+
+Минимальный fallback — ручной `map` в `~/.config/kitty/kitty.conf` (или
+include-файле):
 
 ```conf
 map cmd+shift+l kitten /path/to/familiar/plugins/log.py
 ```
 
-Перезагрузить конфиг: `Cmd+Ctrl+,`. Открыть: `cmd+shift+l`.
+В отличие от `familiar enable`, голый `map` лишён toggle-закрытия, защиты от
+повторного открытия оверлея поверх самого себя, кириллических дублей клавиш и
+проброса `cmd+c` / `cmd+shift+c` для копирования внутри оверлея.
 
 ## Клавиши
 
