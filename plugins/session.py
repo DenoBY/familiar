@@ -74,7 +74,6 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         self.preview_lines = []
         self.preview_offset = 0
         self.preview_session = None
-        # режимы строки ввода: 'filter' | 'search' | 'rename' | 'worktree'
         self._worktree_cwd = None   # каталог, для которого создаём worktree
         self.filter_query = ''      # фильтр списка проектов/сессий
         self.search_query = ''

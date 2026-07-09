@@ -133,8 +133,9 @@ Both the Homebrew `familiar` and the repo `./bin/familiar` write the same
 `~/.config/kitty/familiar.conf`, so switching is just re-running the other one —
 no duplication, nothing to clean up. `familiar` bakes absolute paths from wherever
 it runs: the brew build points at `/opt/homebrew/opt/familiar`, the checkout at
-your clone. `familiar status` prints the active `app root:` so you always know
-which is wired; `familiar disable` removes it entirely.
+your clone. `familiar status` prints `wired root:` — the installation kitty
+actually runs — next to the `app root:` of the copy you invoked, and warns when
+the two differ; `familiar disable` removes it entirely.
 
 ### Tests
 

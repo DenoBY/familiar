@@ -82,7 +82,7 @@ class DiffTreeView(AtomicDraw, InputLine, Handler):
         self.search_idx = 0
         self.status = ''
         self.flash = ''
-        self._load_later = None         # таймер отложенной загрузки диффа (debounce)
+        self._load_later = None
 
     # --- хуки подкласса ---
 

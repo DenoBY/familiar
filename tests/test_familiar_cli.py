@@ -136,6 +136,30 @@ class SelectionTests(unittest.TestCase):
         self._parse_error("--kittens", "session")
 
 
+class WiredRootTests(unittest.TestCase):
+    def test_root_from_kitten_map(self):
+        conf = familiar.render_generated_conf(["session"], False)
+        self.assertEqual(familiar.wired_root(conf), familiar.app_root())
+
+    def test_root_from_terminal_only_conf(self):
+        conf = familiar.render_generated_conf([], True)
+        self.assertNotIn("cc_plugin=", conf)
+        self.assertEqual(familiar.wired_root(conf), familiar.app_root())
+
+    def test_unknown_content_returns_none(self):
+        self.assertIsNone(familiar.wired_root(""))
+        self.assertIsNone(familiar.wired_root("font_size 14\n# plugins/session.py\n"))
+
+    def test_terminal_include_detected_regardless_of_root(self):
+        self.assertTrue(familiar._has_terminal_include(
+            "include /other/root/config/terminal.conf"))
+
+    def test_terminal_include_ignores_comments_and_absence(self):
+        self.assertFalse(familiar._has_terminal_include(
+            "# include is described in config/terminal.conf"))
+        self.assertFalse(familiar._has_terminal_include("include familiar.conf"))
+
+
 class ConfigDirTests(unittest.TestCase):
     def setUp(self):
         self._env = {k: os.environ.get(k)
@@ -265,6 +289,30 @@ class EndToEndTests(unittest.TestCase):
         os.remove(self.kitty_conf)
         out = _run(["disable", "--restore"])
         self.assertIn("no backup", out)
+
+    def test_status_reports_wired_root_and_warns_on_mismatch(self):
+        _run(["enable", "session", "--terminal", "-y"])
+        with open(self.generated, encoding="utf-8") as f:
+            conf = f.read()
+        with open(self.generated, "w", encoding="utf-8") as f:
+            f.write(conf.replace(familiar.app_root(), "/other/root"))
+
+        status = _run(["status"])
+        self.assertIn("wired root: /other/root", status)
+        self.assertIn(f"app root:   {familiar.app_root()}", status)
+        self.assertIn("terminal:   yes", status)
+        self.assertIn("warning:", status)
+
+    def test_status_has_no_warning_when_roots_match(self):
+        _run(["enable", "session"])
+        status = _run(["status"])
+        self.assertIn(f"wired root: {familiar.app_root()}", status)
+        self.assertNotIn("warning:", status)
+
+    def test_status_without_familiar_has_no_wired_root(self):
+        status = _run(["status"])
+        self.assertIn("enabled:    no", status)
+        self.assertNotIn("wired root:", status)
 
     def test_write_is_atomic_and_leaves_no_temp_files(self):
         familiar._write(self.kitty_conf, "new content\n")

@@ -5,6 +5,20 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.2.1] — 2026-07-09
+
+### Changed
+
+- `familiar status` reports `wired root:` — the installation baked into
+  `familiar.conf`, i.e. the code kitty actually runs — alongside the `app root:`
+  of the copy you invoked, and warns when the two differ.
+
+### Fixed
+
+- `familiar status` no longer reports `terminal: no` for a terminal config
+  wired from a different installation (detection was tied to the invoked copy's
+  path).
+
 ## [0.2.0] — 2026-07-09
 
 ### Added

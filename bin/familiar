@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 MARKER_BEGIN = "# >>> familiar >>> (managed by `familiar enable` — do not edit)"
 MARKER_END = "# <<< familiar <<<"
@@ -78,6 +78,33 @@ def kitty_config_dir() -> str:
 
 def _terminal_include_line() -> str:
     return "include " + os.path.join(config_source_dir(), "terminal.conf")
+
+
+TERMINAL_SUFFIX = "/config/terminal.conf"
+
+
+def wired_root(generated: str) -> str | None:
+    """Корень установки, запечённый в familiar.conf — то, что kitty реально
+    исполняет. Может отличаться от app_root() вызванной копии: клон подключён,
+    brew стоит рядом.
+    """
+    for raw in generated.splitlines():
+        line = raw.strip()
+        if line.startswith("map "):
+            for k in KITTENS.values():
+                suffix = "/plugins/" + k["file"]
+                if line.endswith(suffix):
+                    return line[line.rindex(" ") + 1:-len(suffix)]
+        elif line.startswith("include ") and line.endswith(TERMINAL_SUFFIX):
+            return line[len("include "):-len(TERMINAL_SUFFIX)]
+    return None
+
+
+def _has_terminal_include(generated: str) -> bool:
+    # По суффиксу, а не по пути вызванной копии: иначе brew-бинарь сообщал бы
+    # «terminal: no» о терминал-конфиге, подключённом из клона.
+    return any(line.startswith("include ") and line.endswith(TERMINAL_SUFFIX)
+               for line in (raw.strip() for raw in generated.splitlines()))
 
 
 def _kitten_maps(name: str, plugins: str) -> list[str]:
@@ -291,18 +318,29 @@ def cmd_status(args: argparse.Namespace) -> None:
     kitty_conf = os.path.join(config_dir, "kitty.conf")
     text = _read(kitty_conf)
     enabled = MARKER_BEGIN in text
+    generated = _read(os.path.join(config_dir, GENERATED_CONF)) if enabled else ""
+    wired = wired_root(generated) if enabled else None
+
     print(f"config dir: {config_dir}")
+    if wired:
+        print(f"wired root: {wired}")
     print(f"app root:   {app_root()}")
     print(f"enabled:    {'yes' if enabled else 'no'}")
     if enabled:
-        generated = _read(os.path.join(config_dir, GENERATED_CONF))
         active = [n for n in KITTENS if f"cc_plugin={n} " in generated]
-        terminal = _terminal_include_line() in generated.splitlines()
         print(f"kittens:    {', '.join(active) or '—'}")
-        print(f"terminal:   {'yes' if terminal else 'no'}")
+        print(f"terminal:   {'yes' if _has_terminal_include(generated) else 'no'}")
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(backup):
         print(f"backup:     {backup}")
+
+    # realpath с обеих сторон: brew-обёртка задаёт opt-путь (симлинк на Cellar),
+    # и запечённый opt-путь — та же установка, а не расхождение.
+    if wired and os.path.realpath(wired) != os.path.realpath(app_root()):
+        print()
+        print("warning: kitty.conf points at a different familiar installation")
+        print("         than the one you just ran (wired root above).")
+        print("         Re-run 'familiar enable …' to rebake the paths.")
 
 
 def build_parser() -> argparse.ArgumentParser:
