@@ -4,8 +4,9 @@ session — kitten для kitty.
 
 Оверлей для просмотра и управления сессиями Claude Code.
 
-Точка входа кита; логика разнесена по пакету modules.session: util (строки,
-раскладка, возраст) и data (чтение проектов/сессий из ~/.claude).
+Точка входа кита; логика разнесена по пакету modules.session:
+util (строки, раскладка, возраст) и data (чтение проектов/сессий
+из ~/.claude).
 
 Подключение в ~/.config/kitty/kitty.conf:
     map cmd+shift+s kitten /Users/deno/Projects/kitty/plugins/session.py
@@ -28,14 +29,19 @@ from kittens.tui.operations import MouseTracking, styled
 from kitty.key_encoding import EventType
 
 
-# Пакет modules лежит рядом с этим файлом. При запуске через `kitten path.py`
-# (CLI/автодополнение) kitty не добавляет его папку в sys.path; при штатном launch
-# папка и так в sys.path на время загрузки, но __file__ там отсутствует.
+# Пакет modules лежит рядом с этим файлом. При запуске через
+# `kitten path.py` (CLI/автодополнение) kitty не добавляет его папку
+# в sys.path; при штатном launch папка и так в sys.path на время
+# загрузки, но __file__ там отсутствует.
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from modules.clipboard import osc52
+from modules.dragselect import DragSelect
 from modules.draw import AtomicDraw
+from modules.highlight import SEL_RANGE_BG
 from modules.inputline import InputLine
+from modules.keylayout import chord
 from modules.overlay import mark_overlay
 from modules.session.data import (
     STATUS_COLOR,
@@ -47,12 +53,13 @@ from modules.session.data import (
     running_sessions,
     scan_projects,
 )
-from modules.session.util import human_age, short_path, to_latin, truncate, wrap_text
+from modules.session.transcript import transcript_lines
+from modules.session.util import human_age, pad, short_path, to_latin, truncate
 
 
-class SessionsHandler(AtomicDraw, InputLine, Handler):
+class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
 
-    mouse_tracking = MouseTracking.buttons_only
+    mouse_tracking = MouseTracking.buttons_and_drag
 
     def __init__(self, args: list, now: float) -> None:
         self.cli_args = args
@@ -73,7 +80,13 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         self.preview_entries = []
         self.preview_lines = []
         self.preview_offset = 0
+        self.preview_expanded = set()   # индексы раскрытых записей диалога
         self.preview_session = None
+        self.preview_sel = None         # (lo, hi) — выделение целых строк
+        self.preview_char_sel = None    # (row, cs, ce) — выделение куска строки
+        self._preview_cache = {}        # кэш строк transcript_lines
+        self._preview_cache_width = 0       # ширина, для которой он собран
+        self._preview_cache_entries = None  # и список записей (сравнение по is)
         self._worktree_cwd = None   # каталог, для которого создаём worktree
         self.filter_query = ''      # фильтр списка проектов/сессий
         self.search_query = ''
@@ -111,12 +124,14 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             return
         self.project = project
         self.sessions = load_sessions(self.project)
-        # Активные сессии — те, что реально запущены (есть в реестре живых).
+        # Активные сессии — те, что реально запущены
+        # (есть в реестре живых).
         for s in self.sessions:
             info = self.running.get(s['id'])
             s['active'] = info is not None
             s['status'] = info.get('status') if info else None
             s['waitingFor'] = info.get('waitingFor') if info else None
+            s['bg'] = bool(info) and info.get('kind') == 'bg'
         # Запущенные — наверх, дальше по свежести.
         self.sessions.sort(key=lambda s: (not s['active'], -s['mtime']))
         self.screen = 'sessions'
@@ -217,8 +232,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         if self.input_mode:
             self.print(styled(truncate(self._input_line(), cols), fg='cyan', bold=True))
 
-        # footer — без финального перевода строки, иначе экран прокрутится
-        # вверх на одну строку и шапка уедет за верх окна.
+        # footer — без финального перевода строки, иначе экран
+        # прокрутится вверх на одну строку и шапка уедет за верх окна.
         self.print(styled(truncate(self._footer(), cols), fg='gray'), end='')
 
     def _draw_preview(self, cols):
@@ -237,8 +252,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         if self.search_matches and 0 <= self.search_idx < len(self.search_matches):
             cur_match = self.search_matches[self.search_idx]
         for i in range(self.preview_offset, end):
-            text, color, bold = self.preview_lines[i]
-            self.print(self._preview_line(text, color, bold, cols, i == cur_match))
+            self.print(self._preview_line(self.preview_lines[i], cols,
+                                          i == cur_match, i))
         for _ in range(vis - (end - self.preview_offset)):
             self.print()
 
@@ -247,23 +262,46 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
 
         self.print(styled(truncate(self._footer(), cols), fg='gray'), end='')
 
-    def _preview_line(self, text, color, bold, cols, is_current):
-        """Строка предпросмотра с подсветкой совпадений поиска."""
-        line = truncate(text, cols)
+    def _selection_render(self, ln, cols, row):
+        """Фон выделения поверх строки: диапазон строк целиком,
+        символьное — срезом.
+        """
+        line = truncate(ln.text, cols)
+        if self.preview_sel and self.preview_sel[0] <= row <= self.preview_sel[1]:
+            return styled(pad(line, cols), bg=SEL_RANGE_BG)
+        if self.preview_char_sel and self.preview_char_sel[0] == row:
+            _, cs, ce = self.preview_char_sel
+            cs, ce = max(0, cs), min(len(line), ce)
+            if cs >= ce:
+                return None
+            return (styled(line[:cs], fg=ln.color)
+                    + styled(line[cs:ce], bg=SEL_RANGE_BG)
+                    + styled(line[ce:], fg=ln.color))
+        return None
+
+    def _preview_line(self, ln, cols, is_current, row):
+        """Строка предпросмотра: выделение, подсветка совпадений
+        поиска, готовый ANSI.
+        """
+        sel = self._selection_render(ln, cols, row)
+        if sel is not None:
+            return sel
+        line = truncate(ln.text, cols)
+        color = ln.color
         q = self.search_query.lower()
-        if not q:
-            return styled(line, fg=color, bold=bold) if line else ''
+        if not q or q not in line.lower():
+            if ln.render is not None:
+                return ln.render
+            return styled(line, fg=color) if line else ''
         low = line.lower()
-        if q not in low:
-            return styled(line, fg=color, bold=bold) if line else ''
         out = ''
         i = 0
         while True:
             j = low.find(q, i)
             if j < 0:
-                out += styled(line[i:], fg=color, bold=bold)
+                out += styled(line[i:], fg=color)
                 break
-            out += styled(line[i:j], fg=color, bold=bold)
+            out += styled(line[i:j], fg=color)
             seg = line[j:j + len(q)]
             if is_current:
                 out += styled(seg, fg='black', bg='green', bold=True)
@@ -295,7 +333,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         else:
             right = f'{p["count"]} sess · {human_age(self.now - p["mtime"])} '
 
-        # " ● name  path" — путь занимает остаток строки и обрезается при нехватке.
+        # " ● name  path" — путь занимает остаток строки и обрезается
+        # при нехватке.
         base = f' {marker} {name}  '
         avail = max(0, cols - len(right) - 1)
         path_shown = truncate(path, max(0, avail - len(base)))
@@ -311,8 +350,9 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         pad = max(1, cols - visible_left - len(right))
         return left + ' ' * pad + styled(right, fg='gray')
 
-    # Фиксированные колонки правого блока строки сессии — чтобы ветка, msg и
-    # возраст выстраивались вертикально, а имена резались с ровным зазором.
+    # Фиксированные колонки правого блока строки сессии — чтобы
+    # ветка, msg и возраст выстраивались вертикально, а имена
+    # резались с ровным зазором.
     _BRANCH_W = 18
     _MSG_W = 8
     _AGE_W = 8
@@ -328,12 +368,17 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
 
     def _session_row(self, s, cols, selected):
         active = s.get('active', False)
-        marker = '●'
+        # ромб — фоновый агент: к нему нельзя подключиться через
+        # --resume, пока процесс жив
+        marker = '◆' if s.get('bg') else '●'
         if active:
             status = s.get('status')
-            # только базовый статус в колонку (waitingFor опускаем — иначе блок «едет»);
-            # состояние и так видно по цвету точки/строки
+            # только базовый статус в колонку (waitingFor опускаем —
+            # иначе блок «едет»); состояние и так видно по цвету
+            # точки/строки
             right_text = STATUS_LABEL.get(status, status or 'running')
+            if s.get('bg'):
+                right_text = 'bg ' + right_text
             color = STATUS_COLOR.get(status, 'green')
         else:
             right_text = human_age(self.now - s['mtime'])
@@ -389,7 +434,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         if self.search_matches:
             return (f' match {self.search_idx + 1}/{len(self.search_matches)}'
                     f'   n/N — next/prev   / — search   Esc — back')
-        return ' ↑↓ — scroll   o — resume   f — fork   / — search   Esc — back'
+        return (' ↑↓ — scroll   g/G — top/bottom   [ ] — prompt   ⌃o — expand'
+                '   ⌘c — copy   o — resume   f — fork   / — search   Esc — back')
 
     def toggle_show_all(self):
         if self.screen != 'projects':
@@ -418,54 +464,143 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
     def open_preview(self, session):
         self.preview_session = session
         self.preview_entries = load_conversation(session['file'])
-        self.build_preview_lines()
-        self.preview_offset = 0
+        self.preview_expanded = set()
+        self.clear_selection()
         self.search_query = ''
         self.search_matches = []
         self.search_idx = -1
         self.screen = 'preview'
         self.status = ''
+        self.build_preview_lines()
+        # открываемся на свежих сообщениях: их и хотят увидеть,
+        # а не начало диалога
+        self.preview_offset = self._preview_limit()
 
     def build_preview_lines(self):
-        cols = self.screen_size.cols
-        width = max(10, cols - 2)
-        lines = []
-        for kind, text in self.preview_entries:
-            if kind == 'user':
-                lines.append(('▌ You', 'cyan', True))
-            elif kind == 'assistant':
-                lines.append(('▌ Claude', 'green', True))
-            body_color = 'gray' if kind == 'tool' else None
-            for para in text.split('\n'):
-                for wl in wrap_text(para, width - 2):
-                    lines.append(('  ' + wl, body_color, False))
-            lines.append(('', None, False))
-        self.preview_lines = lines
+        width = max(10, self.screen_size.cols)
+        if (width != self._preview_cache_width
+                or self.preview_entries is not self._preview_cache_entries):
+            self._preview_cache = {}
+            self._preview_cache_width = width
+            self._preview_cache_entries = self.preview_entries
+        root = (self.preview_session or {}).get('cwd') or ''
+        self.preview_lines = transcript_lines(self.preview_entries, width,
+                                              self.preview_expanded, root,
+                                              cache=self._preview_cache)
+
+    def _preview_limit(self):
+        return max(0, len(self.preview_lines) - self.visible_rows())
 
     def preview_scroll(self, delta):
-        total = len(self.preview_lines)
-        limit = max(0, total - self.visible_rows())
-        self.preview_offset = max(0, min(limit, self.preview_offset + delta))
+        self.preview_offset = max(0, min(self._preview_limit(),
+                                         self.preview_offset + delta))
+        self.clear_selection()
         self.status = ''
         self.draw_screen()
 
-    def run_search(self):
-        q = self.search_query.lower()
-        if not q:
-            self.search_matches = []
-            self.search_idx = -1
-            return
-        self.search_matches = [i for i, (t, _, _) in enumerate(self.preview_lines)
-                               if q in t.lower()]
-        if self.search_matches:
-            self.search_idx = 0
-            for j, mi in enumerate(self.search_matches):
-                if mi >= self.preview_offset:
-                    self.search_idx = j
-                    break
-            self._scroll_to_match()
+    def preview_jump(self, to_end):
+        self.preview_offset = self._preview_limit() if to_end else 0
+        self.clear_selection()
+        self.status = ''
+        self.draw_screen()
+
+    def jump_prompt(self, step):
+        """[ / ]: к предыдущей/следующей реплике пользователя —
+        оглавление диалога.
+        """
+        rows = [i for i, ln in enumerate(self.preview_lines) if ln.prompt]
+        if step > 0:
+            nxt = next((r for r in rows if r > self.preview_offset), None)
         else:
+            nxt = next((r for r in reversed(rows) if r < self.preview_offset), None)
+        if nxt is None:
+            self.status = 'no prompts' if not rows else (
+                'last prompt' if step > 0 else 'first prompt')
+            self.draw_screen()
+            return
+        self.preview_offset = min(nxt, self._preview_limit())
+        self.clear_selection()
+        self.status = ''
+        self.draw_screen()
+
+    def clear_selection(self):
+        self.preview_sel = None
+        self.preview_char_sel = None
+
+    def _rebuild_after_fold(self):
+        self.clear_selection()
+        self.build_preview_lines()
+        self.preview_offset = min(self.preview_offset, self._preview_limit())
+        self._find_matches()
+        self.draw_screen()
+
+    def toggle_fold(self, idx):
+        """Клик по строке: раскрыть/свернуть одну запись."""
+        if idx < 0:
+            return
+        self.preview_expanded ^= {idx}
+        self._rebuild_after_fold()
+
+    def _foldable(self):
+        return {ln.entry for ln in self.preview_lines if ln.entry >= 0}
+
+    def expand_all(self):
+        """Ctrl+o / Enter: раскрыть ВЕСЬ свёрнутый вывод разом
+        (как в Claude Code); когда раскрыто всё — свернуть обратно.
+        """
+        foldable = self._foldable()
+        if not foldable:
+            self.status = 'nothing to expand'
+            self.draw_screen()
+            return
+        self.preview_expanded = foldable if foldable - self.preview_expanded else set()
+        self._rebuild_after_fold()
+
+    def copy_selection(self):
+        if self.preview_char_sel is not None:
+            row, cs, ce = self.preview_char_sel
+            text = self.preview_lines[row].text[cs:ce].strip()
+            what = f'copied "{truncate(text, 30)}"'
+        elif self.preview_sel is not None:
+            lo, hi = self.preview_sel
+            text = '\n'.join(ln.text for ln in self.preview_lines[lo:hi + 1])
+            what = f'copied {hi - lo + 1} lines'
+        else:
+            self.status = 'select with the mouse first'
+            self.draw_screen()
+            return
+        if text.strip():
+            self.print(osc52(text), end='')
+            self.status = what
+        else:
+            self.status = 'nothing to copy'
+        self.clear_selection()
+        self.draw_screen()
+
+    def _find_matches(self):
+        # ищем в видимой (обрезанной по ширине) части строки — как
+        # подсветка: совпадение за границей экрана было бы «найдено»,
+        # но невидимо
+        q = self.search_query.lower()
+        cols = self.screen_size.cols
+        self.search_matches = [i for i, ln in enumerate(self.preview_lines)
+                               if q and q in truncate(ln.text, cols).lower()]
+        if not self.search_matches:
             self.search_idx = -1
+        elif self.search_idx >= len(self.search_matches):
+            self.search_idx = 0
+
+    def run_search(self):
+        self.search_idx = -1
+        self._find_matches()
+        if not self.search_matches:
+            return
+        self.search_idx = 0
+        for j, mi in enumerate(self.search_matches):
+            if mi >= self.preview_offset:
+                self.search_idx = j
+                break
+        self._scroll_to_match()
 
     def search_jump(self, step):
         if not self.search_matches:
@@ -489,13 +624,22 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
     def do_resume(self, session, fork=False):
         if not session:
             return
+        # Claude Code откажется подключаться к живому фоновому
+        # агенту («stop it there first to resume here») — не
+        # запускаем заведомо падающий --resume. Форк делает новую
+        # сессию из файла, ему живой процесс не мешает.
+        if session.get('bg') and not fork:
+            self.status = 'background agent — stop it, attach via `claude agents`, or f to fork'
+            self.draw_screen()
+            return
         cwd = session.get('cwd') or (self.project['path'] if self.project else None)
         self.result = {'action': 'resume', 'session_id': session['id'],
                        'cwd': cwd, 'fork': fork}
         self.quit_loop(0)
 
     def do_continue(self, project):
-        # claude --continue — самая свежая сессия каталога, без захода в список
+        # claude --continue — самая свежая сессия каталога, без
+        # захода в список
         if not project:
             return
         self.result = {'action': 'continue', 'cwd': project.get('path')}
@@ -509,7 +653,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         self.quit_loop(0)
 
     def _screen_cwd(self):
-        # каталог для нового запуска: проект под курсором либо открытый проект
+        # каталог для нового запуска: проект под курсором либо
+        # открытый проект
         if self.screen == 'projects':
             item = self.current_item()
             return item['path'] if item else None
@@ -518,8 +663,9 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         return None
 
     def start_worktree(self):
-        # claude --worktree <name> создаёт изолированный worktree и новую сессию;
-        # имя опционально (пусто → claude сгенерирует, напр. bright-running-fox)
+        # claude --worktree <name> создаёт изолированный worktree и
+        # новую сессию; имя опционально (пусто → claude сгенерирует,
+        # напр. bright-running-fox)
         cwd = self._screen_cwd()
         if not cwd:
             return
@@ -556,8 +702,8 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             self.search_query = buf
             self.run_search()
         elif mode == 'rename' and buf:
-            # Пишем ту же запись, что и /rename в Claude Code — имя станет
-            # единым и в плагине, и в самом Claude Code.
+            # Пишем ту же запись, что и /rename в Claude Code — имя
+            # станет единым и в плагине, и в самом Claude Code.
             s = self.current_item()
             if s and append_custom_title(s['file'], s['id'], buf):
                 s['title'] = buf
@@ -618,17 +764,27 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
     # --- ввод ---
 
     def on_key(self, key_event):
-        # kitty шлёт и нажатие, и отпускание — реагируем только на нажатие/повтор,
-        # иначе одно нажатие стрелки срабатывает дважды.
+        # kitty шлёт и нажатие, и отпускание — реагируем только на
+        # нажатие/повтор, иначе одно нажатие стрелки срабатывает дважды.
         if key_event.type == EventType.RELEASE:
             return
-        if key_event.matches('ctrl+c'):
+        if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
             return
         k = key_event.key
 
         if self.input_key(k):
             return
+
+        if self.screen == 'preview' and chord(key_event, 'super', 'c'):
+            self.copy_selection()
+            return
+
+        if self.screen == 'preview' and key_event.ctrl:
+            # chord с буквой самого события = «зажат ровно ctrl»
+            letter = to_latin((key_event.key or '').lower())
+            if chord(key_event, 'ctrl', letter) and self._preview_ctrl(letter):
+                return
 
         if self.screen == 'preview':
             if k == 'UP':
@@ -640,10 +796,11 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             elif k == 'PAGE_DOWN':
                 self.preview_scroll(self.visible_rows())
             elif k == 'HOME':
-                self.preview_offset = 0
-                self.draw_screen()
+                self.preview_jump(False)
             elif k == 'END':
-                self.preview_scroll(len(self.preview_lines))
+                self.preview_jump(True)
+            elif k == 'ENTER':
+                self.expand_all()
             elif k in ('ESCAPE', 'LEFT'):
                 self.go_back()
             return
@@ -681,6 +838,19 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             self.offset = 0
         self.draw_screen()
 
+    def _preview_ctrl(self, letter: str) -> bool:
+        """Ctrl-хоткеи предпросмотра — единая точка для on_key и
+        on_text: на кириллице ctrl+буква приходит не событием клавиши,
+        а C0-байтом (конфиг терминала мапит ctrl+<кириллица>
+        в send_text).
+        """
+        if self.screen != 'preview':
+            return False
+        if letter == 'o':
+            self.expand_all()
+            return True
+        return False
+
     def on_text(self, text, in_bracketed_paste=False):
         if self.input_text(text):
             return
@@ -688,6 +858,9 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
         for ch in text:
             c = to_latin(ch)
             if self.screen == 'preview':
+                if '\x01' <= ch <= '\x1a':          # C0-байт → ctrl+буква
+                    self._preview_ctrl(chr(ord(ch) + 96))
+                    continue
                 if c in ('q', 'Q'):
                     self.quit_loop(0)
                     return
@@ -698,10 +871,13 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
                 elif c == 'N':
                     self.search_jump(-1)
                 elif c == 'g':
-                    self.preview_offset = 0
-                    self.draw_screen()
+                    self.preview_jump(False)
                 elif c == 'G':
-                    self.preview_scroll(len(self.preview_lines))
+                    self.preview_jump(True)
+                elif c == '[':
+                    self.jump_prompt(-1)
+                elif c == ']':
+                    self.jump_prompt(1)
                 elif c in ('o', 'O'):
                     self.do_resume(self.preview_session)
                     return
@@ -742,8 +918,16 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             elif c in ('r', 'R') and self.screen == 'sessions':
                 self.start_rename()
 
+    def _preview_row_at(self, ev):
+        r = ev.cell_y - 2                      # шапка + разделитель
+        if not (0 <= r < self.visible_rows()):
+            return None
+        row = self.preview_offset + r
+        return row if 0 <= row < len(self.preview_lines) else None
+
     def on_mouse_event(self, ev):
-        # колесо мыши: в предпросмотре — скролл текста, в списках — движение по строкам
+        # колесо мыши: в предпросмотре — скролл текста, в списках —
+        # движение по строкам
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
             up = ev.buttons == MouseButton.WHEEL_UP
             if self.screen == 'preview':
@@ -751,11 +935,40 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
             else:
                 self.move(-1 if up else 1)
             return
+        if self.screen == 'preview' and self.drag_select(ev):
+            return
         super().on_mouse_event(ev)
 
+    # --- хуки DragSelect (выделение мышью в предпросмотре) ---
+
+    def _sel_row_at(self, ev):
+        return self._preview_row_at(ev)
+
+    def _apply_char_sel(self, row, cs, ce):
+        self.preview_char_sel = (row, cs, ce)
+        self.preview_sel = None
+
+    def _apply_line_sel(self, lo, hi, row):
+        self.preview_sel = (lo, hi)
+        self.preview_char_sel = None
+
+    def _sel_done(self):
+        self.status = 'selected — ⌘c to copy'
+
     def on_click(self, ev):
-        """Клик по строке списка — выбрать; повторный клик по выбранной — открыть."""
-        if self.input_mode or self.screen == 'preview':
+        """Клик по строке списка — выбрать; повторный по
+        выбранной — открыть.
+        В предпросмотре клик раскрывает свёрнутую запись.
+        """
+        if self.input_mode:
+            return
+        if self.screen == 'preview':
+            self.clear_selection()
+            row = self._preview_row_at(ev)
+            if row is not None and self.preview_lines[row].entry >= 0:
+                self.toggle_fold(self.preview_lines[row].entry)
+            else:
+                self.draw_screen()
             return
         head = 0 if self.screen == 'projects' else 2   # на проектах шапки нет
         r = ev.cell_y - head
@@ -772,7 +985,10 @@ class SessionsHandler(AtomicDraw, InputLine, Handler):
 
     def on_resize(self, new_size):
         if self.screen == 'preview' and self.preview_entries:
+            self.clear_selection()
             self.build_preview_lines()
+            self.preview_offset = min(self.preview_offset, self._preview_limit())
+            self._find_matches()   # видимая часть строк изменилась вместе с шириной
         self.draw_screen()
 
     def on_interrupt(self):
@@ -792,7 +1008,9 @@ def main(args: list) -> 'dict | None':
 
 
 def _running_claude(window) -> bool:
-    """True, если в окне уже идёт сессия claude — накрывать её оверлеем нельзя."""
+    """True, если в окне уже идёт сессия claude — накрывать её
+    оверлеем нельзя.
+    """
     try:
         procs = list(window.child.foreground_processes)
         procs += list(window.child.background_processes)
@@ -806,9 +1024,9 @@ def _running_claude(window) -> bool:
 def handle_result(args, result, target_window_id, boss):
     """Выполняется в процессе kitty (вместо UI-процесса).
 
-    Запускает claude поверх активного окна: resume/fork по id, continue,
-    new или worktree. Если в окне уже идёт сессия claude — открывает новую
-    сплитом рядом, иначе оверлеем в том же окне.
+    Запускает claude поверх активного окна: resume/fork по id,
+    continue, new или worktree. Если в окне уже идёт сессия claude —
+    открывает новую сплитом рядом, иначе оверлеем в том же окне.
     """
     if not result:
         return
@@ -836,14 +1054,16 @@ def handle_result(args, result, target_window_id, boss):
     w = boss.window_id_map.get(target_window_id)
     if w is None:
         return   # исходное окно уже закрыто — не запускать относительно «какого-то» окна
-    # Окно занято claude — открываем новую сессию отдельным окном-сплитом рядом
-    # (--location=vsplit, тот же механизм, что cmd+d в splits.conf: cmd+w закроет
-    # только этот сплит и вернёт к соседней сессии, а не весь таб). Иначе оверлей
-    # лёг бы поверх текущей сессии (наложение). Свободное окно — оверлеем в том же
+    # Окно занято claude — открываем новую сессию отдельным
+    # окном-сплитом рядом (--location=vsplit, тот же механизм, что
+    # cmd+d в splits.conf: cmd+w закроет только этот сплит и вернёт к
+    # соседней сессии, а не весь таб). Иначе оверлей лёг бы поверх
+    # текущей сессии (наложение). Свободное окно — оверлеем в том же
     # окне: по выходу из claude вернётся исходный шелл.
-    # Запуск через login+interactive шелл, а не `claude` напрямую: PATH и переменные
-    # (~/.local/bin, где лежит claude) задаются в .zshrc/.zprofile — при прямом запуске
-    # они не подхватываются, claude не находит креды в Keychain и требует /login.
+    # Запуск через login+interactive шелл, а не `claude` напрямую:
+    # PATH и переменные (~/.local/bin, где лежит claude) задаются в
+    # .zshrc/.zprofile — при прямом запуске они не подхватываются,
+    # claude не находит креды в Keychain и требует /login.
     shell = os.environ.get('SHELL') or '/bin/zsh'
     placement = '--location=vsplit' if _running_claude(w) else '--type=overlay'
     cmd = ['launch', placement]

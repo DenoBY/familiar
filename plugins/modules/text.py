@@ -1,10 +1,12 @@
 """Форматирование строк по ширине: общий модуль всех китов.
 
-Лежит в корне пакета modules (как keylayout): нужен и vcs-китам (review/log),
-и session — иначе одинаковые функции жили бы в двух util по копии.
+Лежит в корне пакета modules (как keylayout): нужен и vcs-китам
+(review/log), и session — иначе одинаковые функции жили бы в двух
+util по копии.
 """
 
 import os
+from typing import Callable
 
 
 HOME = os.path.expanduser('~')
@@ -14,6 +16,11 @@ def short_path(path: str) -> str:
     if path.startswith(HOME):
         return '~' + path[len(HOME):]
     return path
+
+
+def plural(n: int, noun: str) -> str:
+    """«1 line» / «2 lines» — счётчик с англ. множественным числом."""
+    return f'{n} {noun}' if n == 1 else f'{n} {noun}s'
 
 
 def truncate(s: str, width: int) -> str:
@@ -31,25 +38,43 @@ def pad(s: str, width: int) -> str:
     return s + ' ' * (width - len(s))
 
 
-def wrap_text(text: str, width: int) -> list[str]:
-    """Простой перенос по словам; длинные токены режем жёстко."""
+def wrap_words(
+    words: 'list[list]',
+    width: int,
+    space: Callable[[object, 'object | None'], object],
+) -> 'list[list]':
+    """Перенос по словам над произвольными токенами; длинные слова
+    режем жёстко.
+
+    words — слова как списки элементов (символы, пары (символ, стиль)
+    и т.п.); space(prev, nxt) — элемент-пробел между соседними словами
+    (nxt может быть None для пустого слова). Общий движок wrap_text
+    и markdown._wrap_chars.
+    """
     if width < 1:
         width = 1
-    out = []
-    cur = ''
-    for w in text.split(' '):
-        while len(w) > width:
-            if cur:
-                out.append(cur)
-                cur = ''
-            out.append(w[:width])
-            w = w[width:]
-        if not cur:
-            cur = w
-        elif len(cur) + 1 + len(w) <= width:
-            cur += ' ' + w
+    lines: list[list] = []
+    line: list = []
+    for word in words:
+        while len(word) > width:
+            if line:
+                lines.append(line)
+                line = []
+            lines.append(list(word[:width]))
+            word = word[width:]
+        if not line:
+            line = list(word)
+        elif len(line) + 1 + len(word) <= width:
+            line.append(space(line[-1], word[0] if word else None))
+            line += word
         else:
-            out.append(cur)
-            cur = w
-    out.append(cur)
-    return out
+            lines.append(line)
+            line = list(word)
+    lines.append(line)
+    return lines
+
+
+def wrap_text(text: str, width: int) -> list[str]:
+    """Простой перенос по словам; длинные токены режем жёстко."""
+    words = [list(w) for w in text.split(' ')]
+    return [''.join(line) for line in wrap_words(words, width, lambda a, b: ' ')]

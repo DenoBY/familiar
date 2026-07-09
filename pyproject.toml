@@ -9,6 +9,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.ruff.lint.pycodestyle]
+# W505: лимит на строки-комментарии и docstrings. Inline-комментарий
+# после кода под него не попадает — там действует line-length.
+max-doc-length = 72
+
 [tool.ruff.lint.isort]
 known-first-party = ["modules", "review", "session", "log", "kittymock"]
 # В репо после блока импортов — две пустые строки (PEP 8 для top-level кода).

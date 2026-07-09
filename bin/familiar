@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 MARKER_BEGIN = "# >>> familiar >>> (managed by `familiar enable` — do not edit)"
 MARKER_END = "# <<< familiar <<<"

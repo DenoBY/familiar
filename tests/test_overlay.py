@@ -11,7 +11,8 @@ class MarkOverlayTest(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             mark_overlay('session')
-        # c2Vzc2lvbg== = base64('session'); OSC 1337 SetUserVar, терминатор BEL
+        # c2Vzc2lvbg== = base64('session'); OSC 1337 SetUserVar,
+        # терминатор BEL
         self.assertEqual(buf.getvalue(),
                          '\033]1337;SetUserVar=cc_plugin=c2Vzc2lvbg==\007')
 

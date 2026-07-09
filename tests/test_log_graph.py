@@ -18,7 +18,8 @@ class GraphTest(unittest.TestCase):
         self.assertTrue(all(gutter(r) == NODE for r in g))    # линейно — один ствол
 
     def test_branch_and_merge(self):
-        # m — merge (родители d и f2); ветка f1→f2 отходит от d. main-цепочка m→d→c.
+        # m — merge (родители d и f2); ветка f1→f2 отходит от d.
+        # main-цепочка m→d→c.
         commits = [{'sha': 'm', 'parents': ['d', 'f2']},
                    {'sha': 'f2', 'parents': ['f1']},
                    {'sha': 'f1', 'parents': ['d']},
@@ -34,7 +35,8 @@ class GraphTest(unittest.TestCase):
         self.assertEqual([r['col'] for r in g], [0, 1, 1, 0, 0])
 
     def test_main_stays_on_lane_zero(self):
-        # main (по HEAD-ref) держится на лейне 0, даже если ветка f новее в списке
+        # main (по HEAD-ref) держится на лейне 0,
+        # даже если ветка f новее в списке
         commits = [{'sha': 'f2', 'parents': ['f1']},           # свежая невлитая ветка
                    {'sha': 'f1', 'parents': ['b']},
                    {'sha': 'm2', 'parents': ['m1'], 'refs': [('main', 'head')]},

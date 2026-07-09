@@ -2,12 +2,15 @@
 """
 log — kitten для kitty.
 
-Оверлей просмотра истории git: экран списка коммитов (текущая ветка или все ветки) и
-по выбранному коммиту — двухпанельный просмотр его изменений (дерево файлов + unified
-diff), как в cc-review, с подсветкой, поиском и копированием в буфер для вставки в промт.
+Оверлей просмотра истории git: экран списка коммитов (текущая
+ветка или все ветки) и по выбранному коммиту — двухпанельный
+просмотр его изменений (дерево файлов + unified diff), как в
+cc-review, с подсветкой, поиском и копированием в буфер для
+вставки в промт.
 
-Двухпанельная diff-механика — общий базовый класс modules.vcs.view.DiffTreeView; здесь
-только экран списка коммитов и подключение git-слоя коммитов (modules.log.git).
+Двухпанельная diff-механика — общий базовый класс
+modules.vcs.view.DiffTreeView; здесь только экран списка
+коммитов и подключение git-слоя коммитов (modules.log.git).
 
 Подключение в ~/.config/kitty/kitty.conf:
     map cmd+shift+l kitten /Users/deno/Projects/kitty/plugins/log.py
@@ -39,21 +42,24 @@ from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay
 from modules.text import wrap_text
 from modules.vcs.git import git_root, last_error
-from modules.vcs.util import compose, pad, short_path, to_latin, truncate
+from modules.vcs.util import chord, compose, pad, short_path, to_latin, truncate
 from modules.vcs.view import DiffTreeView
 
 
 BATCH = 300   # сколько коммитов тянем за раз (докрутка подгружает следующую пачку)
 
-# Цвет ref-меток в списке коммитов по типу (см. modules.log.git.parse_refs).
+# Цвет ref-меток в списке коммитов по типу
+# (см. modules.log.git.parse_refs).
 _REF_STYLE = {'head': {'fg': 'cyan', 'bold': True}, 'branch': {'fg': 'green'},
               'remote': {'fg': 'blue'}, 'tag': {'fg': 'yellow'}}
 
-# Палитра лейнов графа веток (лейн 0 — золотой основной ствол, как в IDE).
+# Палитра лейнов графа веток (лейн 0 — золотой основной ствол,
+# как в IDE).
 _GRAPH_COLORS = ['yellow', 'magenta', 'blue', 'green', 'cyan', 'red']
 
-# Узел незапушенного коммита. 256-цвет, а не имя 'green': ANSI-green темы бывает
-# оливковым (#b5bd68) и сливается с лейнами — берём настоящий зелёный.
+# Узел незапушенного коммита. 256-цвет, а не имя 'green':
+# ANSI-green темы бывает оливковым (#b5bd68) и сливается с
+# лейнами — берём настоящий зелёный.
 _UNPUSHED_COLOR = 77
 
 _AUTHOR_W = 12   # фикс-колонка автора (справа) — чтобы строки выравнивались
@@ -111,7 +117,8 @@ class CommitLogHandler(DiffTreeView):
         self.unpushed = unpushed_shas(self.root)
         self.all_commits = load_commits(self.root, self.all_branches, BATCH)
         self.exhausted = len(self.all_commits) < BATCH
-        # пустая история из-за ошибки git — показать её, а не «no commits»
+        # пустая история из-за ошибки git — показать её, а не
+        # «no commits»
         self.status = '' if self.all_commits else (last_error() or 'no commits')
         self.rebuild_commits()
 
@@ -141,7 +148,9 @@ class CommitLogHandler(DiffTreeView):
         self.draw_screen()
 
     def _graph_gutter(self, i, gw):
-        """Цветной граф-гаттер строки коммита i, добитый пробелами до ширины gw."""
+        """Цветной граф-гаттер строки коммита i, добитый
+        пробелами до ширины gw.
+        """
         cells = self.graph[i]['cells'] if i < len(self.graph) else []
         unpushed = (i < len(self.commits)
                     and self.commits[i]['sha'] in self.unpushed)
@@ -165,8 +174,9 @@ class CommitLogHandler(DiffTreeView):
     def do_fetch(self):
         """Подтянуть изменения с удалёнок и перечитать список.
 
-        git fetch — сеть до минуты; в колбэке ждать нельзя (UI и Ctrl+C замёрзнут),
-        поэтому работа уходит в executor, а результат возвращается в event loop.
+        git fetch — сеть до минуты; в колбэке ждать нельзя (UI и
+        Ctrl+C замёрзнут), поэтому работа уходит в executor, а
+        результат возвращается в event loop.
         """
         if not self.root or self._fetching:
             return
@@ -255,8 +265,9 @@ class CommitLogHandler(DiffTreeView):
         panel_w = min(52, cols // 3) if panel else 0
         list_w = cols - (panel_w + 3 if panel else 0)
         end = min(self.offset + vis, len(self.commits))
-        # ширина графа — максимум по ВИДИМЫМ строкам, а не глобальный: на линейных
-        # экранах граф прижат к тексту, на мержах — расширяется ровно сколько нужно
+        # ширина графа — максимум по ВИДИМЫМ строкам, а не
+        # глобальный: на линейных экранах граф прижат к тексту,
+        # на мержах — расширяется ровно сколько нужно
         gw = max((len(self.graph[i]['cells']) for i in range(self.offset, end)
                   if i < len(self.graph)), default=0) if self.show_graph else 0
         detail = self._detail_lines(panel_w) if panel else []
@@ -280,7 +291,9 @@ class CommitLogHandler(DiffTreeView):
         return self._detail_cache[sha]
 
     def _detail_lines(self, width):
-        """Строки правой панели: подробности выбранного коммита (как в IDE)."""
+        """Строки правой панели: подробности выбранного коммита
+        (как в IDE).
+        """
         if not self.commits or not (0 <= self.sel < len(self.commits)):
             return []
         c = self.commits[self.sel]
@@ -312,8 +325,9 @@ class CommitLogHandler(DiffTreeView):
         refs_plain = '  '.join(name for name, _ in refs)
         author = truncate(c['author'], _AUTHOR_W)
         date = truncate(c['date'], _DATE_W)
-        # автор и дата — фикс-колонки у правого края (строки выравниваются);
-        # ветки/теги — правее subject, вплотную к колонке автора
+        # автор и дата — фикс-колонки у правого края (строки
+        # выравниваются); ветки/теги — правее subject, вплотную
+        # к колонке автора
         tail_plain = f'{author:<{_AUTHOR_W}}  {date:<{_DATE_W}}'
         left_w = max(1, width - len(tail_plain) - 1)
         head = f'{badge}{c["short"]}  '
@@ -411,20 +425,20 @@ class CommitLogHandler(DiffTreeView):
     def on_key(self, key_event):
         if key_event.type == EventType.RELEASE:
             return
-        if key_event.matches('ctrl+c'):
+        if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
             return
         k = key_event.key
         if self.input_key(k):
             return
         if self.screen == 'diff':
-            if key_event.matches('cmd+c'):
+            if chord(key_event, 'super', 'c'):
                 self.smart_copy()
                 return
-            if key_event.matches('cmd+shift+c'):
+            if chord(key_event, 'super+shift', 'c'):
                 self.smart_copy_location()
                 return
-        elif key_event.matches('cmd+c'):
+        elif chord(key_event, 'super', 'c'):
             self.copy_commit()                 # список коммитов — скопировать hash
             return
         if self.screen == 'commits':

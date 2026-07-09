@@ -1,23 +1,29 @@
-"""Данные session-кита: проекты, сессии и их живые процессы из ~/.claude.
+"""Данные session-кита: проекты, сессии и живые процессы из ~/.claude.
 
-Читает каталог ~/.claude/projects (файлы сессий *.jsonl) и реестр живых процессов
-~/.claude/sessions/<pid>.json, разбирая их в структуры для показа. Без зависимостей от TUI.
+Читает каталог ~/.claude/projects (файлы сессий *.jsonl) и реестр
+живых процессов ~/.claude/sessions/<pid>.json, разбирая их в
+структуры для показа. Без зависимостей от TUI.
 """
 
 import glob
 import json
 import os
 import re
+from typing import NamedTuple
+
+from ..text import plural
 
 
-# Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs: env-vars); иначе ~/.claude.
+# Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs:
+# env-vars); иначе ~/.claude.
 CONFIG_DIR = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~/.claude')
 PROJECTS_DIR = os.path.join(CONFIG_DIR, 'projects')
 SESSIONS_DIR = os.path.join(CONFIG_DIR, 'sessions')
 
-# ANSI-escape (CSI/OSC/прочие) + управляющие байты. В JSONL они лежат как  и при
-# json.loads становятся настоящими ESC — если печатать их в превью как есть, терминал
-# исполняет очистку экрана/alt-screen/скрытие курсора и рендер ломается.
+# ANSI-escape (CSI/OSC/прочие) + управляющие байты. В JSONL они
+# лежат как  и при json.loads становятся настоящими ESC — если
+# печатать их в превью как есть, терминал исполняет
+# очистку экрана/alt-screen/скрытие курсора и рендер ломается.
 _ANSI_RE = re.compile(
     r'\x1b\[[0-?]*[ -/]*[@-~]'              # CSI: \x1b[…m, \x1b[2J, \x1b[?25l и т.п.
     r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'   # OSC
@@ -27,8 +33,13 @@ _CTRL_RE = re.compile('[\x00-\x08\x0b-\x1f\x7f]')   # управляющие, к
 
 
 def _sanitize(s: str) -> str:
-    """Убрать ANSI-escape и управляющие символы из текста сессии (сырой вывод TUI)."""
-    return _CTRL_RE.sub('', _ANSI_RE.sub('', s))
+    """Убрать ANSI-escape и управляющие символы из текста сессии
+    (сырой вывод TUI).
+
+    Табы раскрываются в пробелы: терминал раздувает \\t до 8 колонок, а
+    truncate/wrap считают символы — строка с табом вылезала бы за экран.
+    """
+    return _CTRL_RE.sub('', _ANSI_RE.sub('', s)).expandtabs()
 
 # Метки статуса живой сессии (из реестра ~/.claude/sessions/<pid>.json)
 STATUS_LABEL = {
@@ -44,17 +55,19 @@ STATUS_COLOR = {
 
 
 def encode_path(path: str) -> str:
-    """Путь проекта → имя папки в ~/.claude/projects (замена / и . на -)."""
+    """Путь проекта → имя папки в ~/.claude/projects (/ и . → -)."""
     return path.replace('/', '-').replace('.', '-')
 
 
 def decode_dir_name(name: str) -> str:
-    """Грубый фолбэк: имя папки → путь (лоссово, только если нет cwd)."""
+    """Грубый фолбэк: имя папки → путь (лоссово, если нет cwd)."""
     return '/' + name.lstrip('-').replace('-', '/')
 
 
 def _probe_session(path: str, max_lines: int = 50) -> 'tuple[str | None, str | None]':
-    """Дёшево достать (cwd, entrypoint) из начала файла, не парся его целиком."""
+    """Дёшево достать (cwd, entrypoint) из начала файла, не
+    парся его целиком.
+    """
     cwd = ep = None
     try:
         with open(path, encoding='utf-8', errors='replace') as fh:
@@ -91,10 +104,11 @@ def _pid_alive(pid: int) -> bool:
 
 
 def running_sessions() -> 'dict[str, dict]':
-    """Реально запущенные сейчас сессии {sessionId: {status, cwd, name, ...}}.
+    """Реально запущенные сессии: {sessionId: {status, cwd, ...}}.
 
-    Источник — реестр ~/.claude/sessions/<pid>.json, который Claude Code ведёт для
-    каждого живого процесса; протухшие записи отфильтрованы по живости pid.
+    Источник — реестр ~/.claude/sessions/<pid>.json, который Claude
+    Code ведёт для каждого живого процесса; протухшие записи
+    отфильтрованы по живости pid.
     """
     result = {}
     try:
@@ -116,6 +130,7 @@ def running_sessions() -> 'dict[str, dict]':
             'waitingFor': data.get('waitingFor'),
             'cwd': data.get('cwd'),
             'name': data.get('name'),
+            'kind': data.get('kind'),
             'pid': pid,
         }
     return result
@@ -124,8 +139,9 @@ def running_sessions() -> 'dict[str, dict]':
 def scan_projects() -> list[dict]:
     """Сырой список проектов с пробами сессий (file, entrypoint, mtime).
 
-    Фильтрация по entrypoint делается позже (в handler'е), чтобы переключать без
-    повторного скана. Внутренние папки Claude (~/.claude/...) отсеиваются.
+    Фильтрация по entrypoint делается позже (в handler'е), чтобы
+    переключать без повторного скана. Внутренние папки Claude
+    (~/.claude/...) отсеиваются.
     """
     projects = []
     try:
@@ -158,7 +174,8 @@ def scan_projects() -> list[dict]:
             continue
         if path is None:
             path = decode_dir_name(name)
-        # сравнение с разделителем: соседний ~/.claude-backup — не внутренняя папка
+        # сравнение с разделителем: соседний ~/.claude-backup — не
+        # внутренняя папка
         if path == claude_dir or path.startswith(claude_dir + os.sep):
             continue
 
@@ -174,13 +191,17 @@ def scan_projects() -> list[dict]:
 
 
 def is_interactive(entrypoint: 'str | None') -> bool:
-    """cli или старые сессии без поля — интерактивные; sdk-cli и прочее — нет."""
+    """cli или старые сессии без поля — интерактивные; sdk-cli и
+    прочее — нет.
+    """
     return entrypoint in (None, 'cli')
 
 
 def build_projects(all_projects: list, running_ids: set, show_all: bool) -> list:
-    """Видимый список проектов из сырого скана: фильтр по entrypoint, агрегаты
-    (count/mtime/active) и признак текущего каталога; сортировка по свежести."""
+    """Видимый список проектов из сырого скана: фильтр по entrypoint,
+    агрегаты (count/mtime/active) и признак текущего каталога;
+    сортировка по свежести.
+    """
     cwd = os.path.realpath(os.getcwd())
     enc = encode_path(cwd)
     res = []
@@ -202,8 +223,9 @@ def build_projects(all_projects: list, running_ids: set, show_all: bool) -> list
             'count': len(files),
             'mtime': max(pr['mtime'] for pr in probes),
             'active': len(ids & running_ids),
-            # текущий проект: совпало закодированное имя папки ЛИБО реальный
-            # путь проекта (надёжнее — не зависит от кодировки спецсимволов).
+            # текущий проект: совпало закодированное имя папки ЛИБО
+            # реальный путь проекта (надёжнее — не зависит от
+            # кодировки спецсимволов).
             'is_current': (p['dir_name'] == enc
                            or os.path.realpath(p['path'].rstrip('/')) == cwd),
         })
@@ -212,7 +234,9 @@ def build_projects(all_projects: list, running_ids: set, show_all: bool) -> list
 
 
 def _user_text(record):
-    """Достать текст из user-записи (content может быть строкой или списком блоков)."""
+    """Достать текст из user-записи (content — строка или список
+    блоков).
+    """
     msg = record.get('message', {})
     content = msg.get('content')
     if isinstance(content, str):
@@ -226,21 +250,28 @@ def _user_text(record):
     return ''
 
 
-# Служебные блоки-обёртки первого сообщения: caveat/stdout — чистый шум, а
-# command-message дублирует имя команды — целиком выкидываем.
+# Служебные блоки в user-записи: caveat/stdout — чистый шум,
+# command-message дублирует имя команды, task-notification — отчёт
+# фоновой задачи (килобайты JSON, которые пользователь не писал).
+# Выкидываем целиком.
 _DROP_BLOCK_RE = re.compile(
-    r'<(local-command-caveat|local-command-stdout|command-message)>.*?</\1>', re.S)
+    r'<(local-command-caveat|local-command-stdout|command-message'
+    r'|task-notification)>.*?</\1>', re.S)
 _CMD_NAME_RE = re.compile(r'<command-name>\s*(.*?)\s*</command-name>', re.S)
 _CMD_ARGS_RE = re.compile(r'<command-args>\s*(.*?)\s*</command-args>', re.S)
 _KNOWN_TAG_RE = re.compile(
     r'</?(?:command-name|command-args|command-contents|system-reminder)>')
+# Напоминания системы приходят внутри user-записи, но пользователь
+# их не писал.
+_REMINDER_RE = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
 
 
-def _clean_first_human(text: str) -> str:
-    """Осмысленный заголовок из первого сообщения: у слэш-команд — `/cmd args`,
-    служебные обёртки убраны. Возвращает '' для шумовых сообщений (caveat).
+def user_display(text: str) -> str:
+    """Реплика пользователя без служебных обёрток: у слэш-команд —
+    `/cmd args`.
+    Возвращает '' для чисто шумовых сообщений (caveat, system-reminder).
     """
-    text = _DROP_BLOCK_RE.sub('', text).strip()
+    text = _REMINDER_RE.sub('', _DROP_BLOCK_RE.sub('', text)).strip()
     if not text:
         return ''
     name = _CMD_NAME_RE.search(text)
@@ -248,12 +279,19 @@ def _clean_first_human(text: str) -> str:
         args = _CMD_ARGS_RE.search(text)
         arg = args.group(1).strip() if args else ''
         return f'{name.group(1).strip()} {arg}'.strip()
-    return ' '.join(_KNOWN_TAG_RE.sub(' ', text).split())
+    # тег замещаем пробелом, не пустотой: «слово<тег>слово»
+    # не должно склеиться
+    return _KNOWN_TAG_RE.sub(' ', text).strip()
 
 
-# Записи без этих маркеров (progress, snapshots и т.п.) метаданных не несут —
-# их можно пропустить без json.loads. Подстроки с кавычками устойчивы к пробелам
-# после двоеточия и не зависят от порядка ключей.
+def _clean_first_human(text: str) -> str:
+    return ' '.join(user_display(text).split())
+
+
+# Записи без этих маркеров (progress, snapshots и т.п.) метаданных
+# не несут — их можно пропустить без json.loads. Подстроки с
+# кавычками устойчивы к пробелам после двоеточия и не зависят от
+# порядка ключей.
 _META_MARKERS = ('"user"', '"assistant"', '"custom-title"', '"ai-title"',
                  '"gitBranch"', '"cwd"')
 
@@ -315,13 +353,16 @@ def load_session_meta(path: str) -> dict:
 
 
 def append_custom_title(path: str, session_id: str, name: str) -> bool:
-    """Дописать в jsonl запись custom-title — так же, как это делает /rename."""
+    """Дописать в jsonl запись custom-title — как это делает
+    /rename.
+    """
     rec = json.dumps(
         {'type': 'custom-title', 'customTitle': name, 'sessionId': session_id},
         ensure_ascii=False,
     )
     # бинарный режим: в текстовом арифметика с tell() не определена
-    # (seek принимает только непрозрачные cookie), не-ASCII хвост ломал бы позицию
+    # (seek принимает только непрозрачные cookie), не-ASCII хвост
+    # ломал бы позицию
     try:
         with open(path, 'rb+') as f:
             f.seek(0, os.SEEK_END)
@@ -335,8 +376,9 @@ def append_custom_title(path: str, session_id: str, name: str) -> bool:
         return False
 
 
-# Кэш метаданных сессий: parse jsonl-файлов (бывают десятки МБ) не повторяется,
-# пока файл не изменился. Ключ инвалидируется по (mtime, size).
+# Кэш метаданных сессий: parse jsonl-файлов (бывают десятки МБ) не
+# повторяется, пока файл не изменился. Ключ инвалидируется по
+# (mtime, size).
 _meta_cache: 'dict[str, tuple[tuple[float, int], dict]]' = {}
 
 
@@ -356,7 +398,7 @@ def _cached_meta(path: str) -> 'dict | None':
 
 
 def load_sessions(project: dict) -> list[dict]:
-    """Сессии проекта, отсортированные по времени изменения (свежие сверху)."""
+    """Сессии проекта, свежие сверху (сортировка по времени)."""
     sessions = []
     for f in project['files']:
         meta = _cached_meta(f)
@@ -378,21 +420,158 @@ def load_sessions(project: dict) -> list[dict]:
     return sessions
 
 
-def _tool_result_text(block):
+class Entry(NamedTuple):
+    """Одна запись диалога: реплика, вызов инструмента или его вывод.
+
+    Блоки thinking не разбираем: Claude Code пишет в jsonl только
+    их подпись, текста размышлений в файле нет.
+    """
+
+    kind: str                       # user | assistant | tool | result | attach
+    text: str = ''
+    name: str = ''                  # имя инструмента (kind='tool' и его 'result')
+    tool_input: 'dict | None' = None
+    error: bool = False             # kind='result', из is_error
+    patch: tuple = ()               # правка файла: (номер строки, знак, текст)
+    patch_stat: tuple = ()          # (добавлено, удалено) по ВСЕМУ патчу:
+                                    # patch обрезан по MAX_RESULT_LINES
+    summary: str = ''               # чем заменить вывод, пока он свёрнут
+
+
+# Вывод инструмента бывает в десятки мегабайт (дампы, логи).
+# Держать его целиком незачем: раскрытый блок всё равно листается,
+# а память жрут все записи разом.
+MAX_RESULT_LINES = 200
+MAX_RESULT_CHARS = 20_000
+
+
+def _content_text(block: dict) -> str:
     c = block.get('content')
     if isinstance(c, str):
-        s = c
-    elif isinstance(c, list):
-        s = ' '.join(x.get('text', '') for x in c
-                     if isinstance(x, dict) and x.get('type') == 'text')
-    else:
-        s = ''
-    return ' '.join(_sanitize(s).split())[:200]
+        return c
+    if isinstance(c, list):
+        return '\n'.join(x.get('text', '') for x in c
+                         if isinstance(x, dict) and x.get('type') == 'text')
+    return ''
 
 
-def load_conversation(path: str) -> list:
-    """Список записей диалога [(kind, text)], kind ∈ {user, assistant, tool}."""
+def _patch_lines(patch: list) -> 'tuple[tuple, tuple[int, int]]':
+    """structuredPatch (хунки Claude Code) → строки и статистика.
+
+    Строка: (номер, знак, текст); номер берётся из нового файла,
+    у удалённых строк — из старого: так же нумерует сам Claude Code.
+    Строк не больше MAX_RESULT_LINES, но счётчики (добавлено, удалено)
+    — по всему патчу: их показывает сводка свёрнутой правки.
+    """
+    rows = []
+    added = removed = 0
+    for hunk in patch:
+        if not isinstance(hunk, dict):
+            continue
+        old = hunk.get('oldStart', 0)
+        new = hunk.get('newStart', 0)
+        for raw in hunk.get('lines', []):
+            if not isinstance(raw, str) or not raw:
+                continue
+            sign, text = raw[0], _sanitize(raw[1:]).rstrip()
+            if sign == '-':
+                row = (old, '-', text)
+                removed += 1
+                old += 1
+            elif sign == '+':
+                row = (new, '+', text)
+                added += 1
+                new += 1
+            else:
+                row = (new, ' ', text)
+                old += 1
+                new += 1
+            if len(rows) < MAX_RESULT_LINES:
+                rows.append(row)
+    return tuple(rows), (added, removed)
+
+
+def _tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f'{n / 1_000_000:.1f}M'
+    return f'{n / 1000:.1f}k' if n >= 1000 else str(n)
+
+
+def _duration(ms: int) -> str:
+    sec = round(ms / 1000)
+    if sec < 60:
+        return f'{sec}s'
+    minutes, sec = divmod(sec, 60)
+    return f'{minutes}m {sec}s' if sec else f'{minutes}m'
+
+
+# Отчёт субагента: «Done (1 tool use · 25.5k tokens · 18s)» —
+# сводка Claude Code.
+_AGENT_TOOLS = frozenset({'Agent', 'Task'})
+
+
+def _agent_summary(tur: dict) -> str:
+    status = tur.get('status')
+    head = 'Done' if status == 'completed' else str(status or 'done').capitalize()
+    parts = []
+    if isinstance(tur.get('totalToolUseCount'), int):
+        parts.append(plural(tur['totalToolUseCount'], 'tool use'))
+    if isinstance(tur.get('totalTokens'), int):
+        parts.append(f'{_tokens(tur["totalTokens"])} tokens')
+    if isinstance(tur.get('totalDurationMs'), int):
+        parts.append(_duration(tur['totalDurationMs']))
+    return f'{head} ({" · ".join(parts)})' if parts else head
+
+
+def _result_summary(name: str, tur: 'dict | None') -> str:
+    """Строка, которой Claude Code подменяет свёрнутый вывод
+    («Read 402 lines»).
+    """
+    if not isinstance(tur, dict):
+        return ''
+    if name in _AGENT_TOOLS:
+        return _agent_summary(tur)
+    if name != 'Read':
+        return ''
+    info = tur.get('file')
+    n = info.get('numLines') if isinstance(info, dict) else None
+    if not isinstance(n, int):
+        return ''
+    return f'Read {plural(n, "line")}'
+
+
+_TOOL_ERR_RE = re.compile(r'</?tool_use_error>')
+
+
+def _result_text(block: dict) -> str:
+    raw = _TOOL_ERR_RE.sub('', _content_text(block)[:MAX_RESULT_CHARS])
+    lines = _sanitize(raw).split('\n')
+    del lines[MAX_RESULT_LINES:]
+    return '\n'.join(ln.rstrip() for ln in lines).strip('\n')
+
+
+# Служебная запись (isMeta) вида «[Image: source: …/12.png]» — так
+# Claude Code протоколирует вложение предыдущей реплики; её номер —
+# имя файла.
+_IMAGE_META_RE = re.compile(r'\[Image: source: (.+?)\]')
+
+
+def _meta_attachments(text: str) -> list[Entry]:
+    """isMeta-запись → вложения реплики; всё прочее (caveat) — шум."""
+    return [Entry('attach', f'[Image #{os.path.splitext(os.path.basename(m))[0]}]')
+            for m in _IMAGE_META_RE.findall(text)]
+
+
+def load_conversation(path: str) -> list[Entry]:
+    """Записи диалога сессии в порядке появления в файле.
+
+    Исключение — вывод инструмента: он встаёт сразу за своим
+    вызовом, а не по порядку файла (при параллельных вызовах
+    результаты приходят пачкой после всех tool_use и по соседству
+    легли бы под чужие заголовки).
+    """
     entries = []
+    calls = {}   # tool_use_id → (имя, input, позиция вызова в entries)
     try:
         with open(path, encoding='utf-8', errors='replace') as fh:
             for line in fh:
@@ -407,25 +586,59 @@ def load_conversation(path: str) -> list:
                 if t not in ('user', 'assistant'):
                     continue
                 c = o.get('message', {}).get('content')
+                if o.get('isMeta'):
+                    entries += _meta_attachments(_user_text(o))
+                    continue
                 if isinstance(c, str):
-                    txt = _sanitize(c).strip()
+                    txt = _entry_text(t, c)
                     if txt:
-                        entries.append((t, txt))
+                        entries.append(Entry(t, txt))
                 elif isinstance(c, list):
+                    tur = o.get('toolUseResult')
                     for b in c:
-                        if not isinstance(b, dict):
-                            continue
-                        bt = b.get('type')
-                        if bt == 'text':
-                            txt = _sanitize(b.get('text', '')).strip()
-                            if txt:
-                                entries.append((t, txt))
-                        elif bt == 'tool_use':
-                            entries.append(('tool', f'→ {b.get("name", "tool")}'))
-                        elif bt == 'tool_result':
-                            txt = _tool_result_text(b)
-                            if txt:
-                                entries.append(('tool', f'‹result› {txt}'))
+                        if isinstance(b, dict):
+                            _append_block(entries, t, b, calls, tur)
     except OSError:
         pass
     return entries
+
+
+def _entry_text(kind: str, raw: str) -> str:
+    txt = _sanitize(raw).strip()
+    return user_display(txt) if kind == 'user' else txt
+
+
+def _append_block(entries: list, kind: str, block: dict, calls: dict,
+                  tur: 'dict | None' = None) -> None:
+    bt = block.get('type')
+    if bt == 'text':
+        txt = _entry_text(kind, block.get('text', ''))
+        if txt:
+            entries.append(Entry(kind, txt))
+    elif bt == 'tool_use':
+        inp = block.get('input')
+        inp = inp if isinstance(inp, dict) else None
+        name = block.get('name', 'tool')
+        if block.get('id'):
+            calls[block['id']] = (name, inp, len(entries))
+        entries.append(Entry('tool', name=name, tool_input=inp))
+    elif bt == 'tool_result':
+        txt = _result_text(block)
+        tid = block.get('tool_use_id')
+        name, inp, pos = calls.pop(tid, ('', None, None)) if tid else ('', None, None)
+        patch, stat = (), ()
+        if isinstance(tur, dict) and isinstance(tur.get('structuredPatch'), list):
+            patch, stat = _patch_lines(tur['structuredPatch'])
+        if txt or inp is not None:
+            entry = Entry('result', txt, name=name, tool_input=inp,
+                          error=bool(block.get('is_error')), patch=patch,
+                          patch_stat=stat, summary=_result_summary(name, tur))
+            if pos is None:
+                entries.append(entry)
+            else:
+                entries.insert(pos + 1, entry)
+                # вызовы после точки вставки сдвинулись —
+                # обновить их позиции
+                for k, (n, i, p) in calls.items():
+                    if p > pos:
+                        calls[k] = (n, i, p + 1)

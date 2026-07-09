@@ -120,7 +120,8 @@ class GitRepoTest(unittest.TestCase):
         self.assertEqual(items['renamed.txt']['orig'], 'a.txt')
 
     def test_staged_rename_in_subdir_keeps_stat(self):
-        # numstat даёт "dir/{b.txt => c.txt}" — путь должен совпасть с name-status
+        # numstat даёт "dir/{b.txt => c.txt}" — путь должен
+        # совпасть с name-status
         self._git('mv', 'dir/b.txt', 'dir/c.txt')
         self.write('dir/c.txt', 'b1\nb2\n')
         self._git('add', 'dir/c.txt')
@@ -164,8 +165,9 @@ class GitRepoTest(unittest.TestCase):
         self.assertEqual(items['a.txt']['kind'], 'modified')
 
     def test_branch_diff_ignores_base_own_progress(self):
-        # main ушёл вперёд после ответвления — его коммиты не должны отражаться
-        # «обратными» изменениями ветки (дифф против merge-base, не против main)
+        # main ушёл вперёд после ответвления — его коммиты не
+        # должны отражаться «обратными» изменениями ветки
+        # (дифф против merge-base, не против main)
         self._git('checkout', '-b', 'feature')
         self.write('feat.txt', 'f\n')
         self._git('add', '-A')

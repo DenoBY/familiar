@@ -141,7 +141,8 @@ class SessionsResultTest(unittest.TestCase):
         self.assertEqual(boss.calls[0][1][:2], ('launch', '--type=overlay'))
 
     def test_claude_in_background_also_splits(self):
-        # claude запустил дочерний процесс — сам claude ушёл в background
+        # claude запустил дочерний процесс — сам claude ушёл
+        # в background
         win = FakeWindow(FakeChild(foreground=[{'cmdline': ['/bin/bash', '-c', 'ls']}],
                                    background=[{'cmdline': ['claude']}]))
         boss = boss_with_window(win)

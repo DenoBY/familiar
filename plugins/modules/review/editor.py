@@ -1,8 +1,8 @@
 """Выбор редактора для «открыть файл на строке» из review-кита.
 
-Чистая детекция без TUI: нужна обоим процессам — kitten (GUI-редактор запускаем
-не закрывая оверлей) и kitty (терминальный редактор открывается в новом табе
-через handle_result).
+Чистая детекция без TUI: нужна обоим процессам — kitten (GUI-редактор
+запускаем не закрывая оверлей) и kitty (терминальный редактор
+открывается в новом табе через handle_result).
 """
 
 import os
@@ -14,7 +14,8 @@ import shutil
 # терминальные — в новом табе kitty.
 _GUI_EDITORS = {'code', 'code-insiders', 'codium', 'cursor', 'windsurf', 'subl', 'zed'}
 
-# JetBrains: shell-лаунчеры (если стоит command-line launcher) и .app в /Applications.
+# JetBrains: shell-лаунчеры (если стоит command-line launcher)
+# и .app в /Applications.
 _JETBRAINS_CLI = ('phpstorm', 'idea', 'pycharm', 'webstorm', 'goland', 'rubymine',
                   'clion', 'rider', 'datagrip', 'idea-ce', 'pycharm-ce')
 _JETBRAINS_APPS = ('PhpStorm', 'IntelliJ IDEA', 'IntelliJ IDEA CE', 'PyCharm',
@@ -23,11 +24,13 @@ _JETBRAINS_APPS = ('PhpStorm', 'IntelliJ IDEA', 'IntelliJ IDEA CE', 'PyCharm',
 
 
 def editor_command(project: str, path: str, line: int) -> 'tuple[list[str], bool]':
-    """(argv, gui) — чем открыть файл на строке. Приоритет: IDE по конфигам проекта
-    (открываем со всем проектом), иначе $VISUAL/$EDITOR, иначе vim.
+    """(argv, gui) — чем открыть файл на строке. Приоритет: IDE по
+    конфигам проекта (открываем со всем проектом), иначе
+    $VISUAL/$EDITOR, иначе vim.
     """
     j = os.path.join
-    # 1) JetBrains — по .idea/ (открывает файл в проекте, к которому он принадлежит)
+    # 1) JetBrains — по .idea/ (открывает файл в проекте, к которому
+    # он принадлежит)
     if os.path.isdir(j(project, '.idea')):
         for launcher in _JETBRAINS_CLI:
             if shutil.which(launcher):
@@ -36,7 +39,8 @@ def editor_command(project: str, path: str, line: int) -> 'tuple[list[str], bool
             ap = f'/Applications/{app}.app'
             if os.path.isdir(ap):
                 return (['open', '-na', ap, '--args', '--line', str(line), path], True)
-    # 2) VS Code / Cursor — по .vscode/ или .cursor/ (открываем папку проекта + файл:строка)
+    # 2) VS Code / Cursor — по .vscode/ или .cursor/ (открываем папку
+    # проекта + файл:строка)
     if os.path.isdir(j(project, '.vscode')) or os.path.isdir(j(project, '.cursor')):
         cursor = os.path.isdir(j(project, '.cursor'))
         clis = ('cursor',) if cursor else ('code', 'codium', 'code-insiders')

@@ -37,6 +37,8 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_data.py` | парсинг сессий/проектов, реестр живых pid, `append_custom_title` (на временных каталогах) |
 | `test_review_handler.py` | `ReviewHandler`: дерево, навигация, scope, фильтр, фокус/курсор, гэпы, поиск, аннотации, `_editor_command` |
 | `test_log_handler.py` | `CommitLogHandler`: список коммитов, фильтр, режим ветка/`--all`, открытие коммита, дифф, копирование, мышь |
+| `test_sessions_transcript.py` | `modules.session.transcript`: метки инструментов, вывод `⎿`, diff правок, планы, сворачивание, ширина |
+| `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |
 | `test_result_handlers.py` | `handle_result` обоих китов — построение команды remote-control (сторона процесса kitty) |
 

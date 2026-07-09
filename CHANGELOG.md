@@ -5,6 +5,63 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-07-09
+
+### Added
+
+- session: the conversation preview is now a Claude Code-style transcript — tool
+  calls show their argument (`⏺ Bash(git status)`) and the output follows on `⎿`
+  lines. Paths inside the project are shown relative to it. Your own turns are
+  marked with `>` on a full-width background, so questions stand out from answers.
+- session preview: file edits render like Claude Code — `⏺ Update(tests/x.py)`, a
+  `Added N lines, removed M lines` summary and a diff with line numbers, taken
+  from the record's `structuredPatch` (the raw "file updated successfully" text
+  is replaced); changed lines get the same background the `review` diff uses,
+  word-diff highlights what exactly changed inside a line, the diff is never
+  folded away, and `Write` reports the number of lines written.
+- session preview: Claude's answers render markdown — bold, italic, inline code,
+  headings, lists, and fenced code blocks with syntax highlighting (the same
+  lexer the diff panes use, now shared as `modules.highlight`).
+- session preview: markdown tables render as framed tables (box-drawing rules
+  between every row, cells wrapped to fit) instead of collapsing into a
+  paragraph of pipes.
+- session preview: leaving plan mode renders as `⏺ Updated plan` with the plan
+  itself in a frame (markdown, syntax-highlighted code), followed by `⎿ Plan
+  approved` / `⎿ Plan rejected`; a file read collapses to `⎿ Read 402 lines`, and
+  a subagent run to `⎿ Done (1 tool use · 25.5k tokens · 18s)`.
+- session preview: long tool output, plans and file contents are folded and say
+  so (`… +121 lines (ctrl+o to expand)`) — click a folded line to expand that
+  one entry, or press `Ctrl+o` / `Enter` to expand all folded output at once.
+- session preview: select text with the mouse (a span within a line, or whole
+  lines across them) and copy it with `⌘c`.
+- session preview: `[` / `]` jump to the previous / next user turn — the prompts
+  are the table of contents of a long conversation.
+- session: background agents (`kind: bg` in the live-process registry) are marked
+  with `◆` and a `bg idle` / `bg busy` status. Claude Code refuses to attach to a
+  live agent, so `o` / `Enter` on such a session no longer starts a `claude
+  --resume` that is bound to fail; it suggests stopping the agent, attaching via
+  `claude agents`, or forking the conversation (`f` still works — a live process
+  does not block a fork).
+
+### Fixed
+
+- session preview: a failed tool call is no longer indistinguishable from a
+  successful one — errors are shown in red, and the output is no longer cut to
+  200 characters on a single line.
+- session preview: user turns no longer show internal wrappers
+  (`<local-command-caveat>`, `<system-reminder>`, command tags) nor background
+  task reports (`<task-notification>` — kilobytes of JSON the user never typed).
+- session preview: pasted images are no longer shown as a separate turn holding
+  a cache path — they hang under their prompt as `⎿ [Image #13]`, like in Claude
+  Code.
+- review/log: mouse drag selection within a line now includes the character
+  under the cursor — the last character is no longer dropped from the copy.
+- review/log/session: shortcuts with modifiers (`Ctrl+c`, `Ctrl+d` / `Ctrl+u`,
+  `⌘c`, `⌘⇧c`) now work on the Russian keyboard layout. They were matched by the
+  literal character, so on ЙЦУКЕН `⌘с` (Cyrillic „с“) did nothing; the layout is
+  now mapped in the shared `modules.keylayout.chord`, which also compares the
+  full set of modifiers — `⌘c` no longer fires on `⌘⇧c`.
+
 ## [0.2.1] — 2026-07-09
 
 ### Changed

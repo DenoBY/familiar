@@ -34,22 +34,26 @@ class TestPureHelpers(unittest.TestCase):
                                      {'type': 'text', 'text': 'b'}]}}), 'a b')
         self.assertEqual(Dt._user_text({'message': {'content': 42}}), '')
 
-    def test_tool_result_text_truncates(self):
-        long = 'x ' * 300
-        r = Dt._tool_result_text({'content': long})
-        self.assertLessEqual(len(r), 200)
-        self.assertEqual(Dt._tool_result_text(
-            {'content': [{'type': 'text', 'text': '  a  b  '}]}), 'a b')
+    def test_result_text_caps_chars(self):
+        long = 'x ' * 20_000
+        self.assertLessEqual(len(Dt._result_text({'content': long})),
+                             Dt.MAX_RESULT_CHARS)
+
+    def test_result_text_trims_trailing_space(self):
+        self.assertEqual(Dt._result_text(
+            {'content': [{'type': 'text', 'text': 'a  \nb  '}]}), 'a\nb')
 
     def test_sanitize_strips_ansi_and_control(self):
         # сырой вывод TUI: очистка экрана, alt-screen, цвет
         dirty = '\x1b[2J\x1b[?1049h\x1b[H\x1b[39;1mHello\x1b[0m\x08 world\x1b7'
         self.assertEqual(Dt._sanitize(dirty), 'Hello world')
-        self.assertEqual(Dt._sanitize('plain\ttext\nok'), 'plain\ttext\nok')  # \t\n целы
+        # \n цел; \t раскрыт в пробелы (терминал раздул бы его до 8
+        # колонок, а truncate/выделение считают символы)
+        self.assertEqual(Dt._sanitize('plain\ttext\nok'), 'plain   text\nok')
 
-    def test_tool_result_strips_ansi(self):
+    def test_result_strips_ansi(self):
         raw = '\x1b[?25l\x1b[2Jsome output\x1b[0m'
-        r = Dt._tool_result_text({'content': raw})
+        r = Dt._result_text({'content': raw})
         self.assertNotIn('\x1b', r)
         self.assertEqual(r, 'some output')
 
@@ -152,17 +156,210 @@ class TestConversation(TmpDirTest):
         write_jsonl(p, [
             {'type': 'user', 'message': {'content': 'hello'}},
             {'type': 'assistant', 'message': {'content': [
-                {'type': 'text', 'text': 'hi'}, {'type': 'tool_use', 'name': 'Bash'}]}},
-            {'type': 'assistant', 'message': {'content': [
+                {'type': 'text', 'text': 'hi'},
+                {'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]}},
+            {'type': 'user', 'message': {'content': [
                 {'type': 'tool_result', 'content': [{'type': 'text', 'text': '  out  '}]}]}},
             {'type': 'system', 'message': {'content': 'ignored'}},
         ])
         self.assertEqual(Dt.load_conversation(p), [
-            ('user', 'hello'),
-            ('assistant', 'hi'),
-            ('tool', '→ Bash'),
-            ('tool', '‹result› out'),
+            Dt.Entry('user', 'hello'),
+            Dt.Entry('assistant', 'hi'),
+            Dt.Entry('tool', name='Bash', tool_input={'command': 'ls'}),
+            Dt.Entry('result', '  out'),   # отступ вывода сохраняем, хвост режем
         ])
+
+    def test_user_wrappers_stripped(self):
+        p = self.path('w.jsonl')
+        blob = ('<system-reminder>внутреннее</system-reminder>вопрос'
+                '<local-command-caveat>шум</local-command-caveat>')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': blob}}])
+        self.assertEqual(Dt.load_conversation(p), [Dt.Entry('user', 'вопрос')])
+
+    def test_task_notification_is_dropped(self):
+        # отчёт фоновой задачи — килобайты JSON,
+        # которые пользователь не писал
+        p = self.path('tn.jsonl')
+        blob = ('<task-notification>\n<task-id>a1</task-id>\n'
+                '<result>{"findings": []}</result>\n</task-notification>\n'
+                'продолжай')
+        write_jsonl(p, [
+            {'type': 'user', 'message': {'content': blob}},
+            {'type': 'user', 'message': {'content':
+                '<task-notification>\n<status>ok</status>\n</task-notification>'}},
+        ])
+        # от смешанной записи остаётся речь, чисто
+        # служебная пропадает целиком
+        self.assertEqual(Dt.load_conversation(p), [Dt.Entry('user', 'продолжай')])
+
+    def test_image_meta_becomes_an_attachment(self):
+        # isMeta-запись «[Image: source: …/13.png]» — не реплика,
+        # а вложение предыдущей: Claude Code показывает её как
+        # ⎿ [Image #13]
+        p = self.path('img.jsonl')
+        cache = '/Users/x/.claude/image-cache/abc'
+        write_jsonl(p, [
+            {'type': 'user', 'message': {'content': [
+                {'type': 'text', 'text': 'смотри [Image #13]'},
+                {'type': 'image', 'source': {'type': 'base64', 'data': '…'}}]}},
+            {'type': 'user', 'isMeta': True, 'message': {'content': [
+                {'type': 'text', 'text': f'[Image: source: {cache}/13.png]'},
+                {'type': 'text', 'text': f'[Image: source: {cache}/14.png]'}]}},
+        ])
+        self.assertEqual(Dt.load_conversation(p), [
+            Dt.Entry('user', 'смотри [Image #13]'),
+            Dt.Entry('attach', '[Image #13]'),
+            Dt.Entry('attach', '[Image #14]'),
+        ])
+
+    def test_non_image_meta_is_dropped(self):
+        p = self.path('meta.jsonl')
+        write_jsonl(p, [{'type': 'user', 'isMeta': True, 'message': {'content':
+            '<local-command-caveat>шум</local-command-caveat>'}}])
+        self.assertEqual(Dt.load_conversation(p), [])
+
+    def test_tool_use_error_tags_stripped(self):
+        p = self.path('te.jsonl')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'content': '<tool_use_error>bad</tool_use_error>',
+             'is_error': True}]}}])
+        self.assertEqual(Dt.load_conversation(p)[0].text, 'bad')
+
+    def test_result_is_linked_to_its_call(self):
+        p = self.path('link.jsonl')
+        write_jsonl(p, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'tu_1', 'name': 'Edit',
+                 'input': {'file_path': '/a/b.py'}}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'tu_1', 'content': 'ok'}]}},
+        ])
+        result = Dt.load_conversation(p)[1]
+        self.assertEqual(result.kind, 'result')
+        self.assertEqual(result.name, 'Edit')
+        self.assertEqual(result.tool_input, {'file_path': '/a/b.py'})
+
+    def test_structured_patch_becomes_numbered_rows(self):
+        p = self.path('patch.jsonl')
+        write_jsonl(p, [{
+            'type': 'user',
+            'toolUseResult': {'structuredPatch': [
+                {'oldStart': 10, 'newStart': 10,
+                 'lines': [' ctx', '-old', '+new', '+extra']},
+            ]},
+            'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'x', 'content': 'ok'}]},
+        }])
+        self.assertEqual(Dt.load_conversation(p)[0].patch, (
+            (10, ' ', 'ctx'),
+            (11, '-', 'old'),      # удалённая — номер старого файла
+            (11, '+', 'new'),      # добавленные — номера нового
+            (12, '+', 'extra'),
+        ))
+
+    def test_read_result_gets_summary(self):
+        p = self.path('read.jsonl')
+        write_jsonl(p, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'r1', 'name': 'Read',
+                 'input': {'file_path': '/a.py'}}]}},
+            {'type': 'user',
+             'toolUseResult': {'file': {'numLines': 402, 'totalLines': 402}},
+             'message': {'content': [
+                 {'type': 'tool_result', 'tool_use_id': 'r1', 'content': 'body'}]}},
+        ])
+        self.assertEqual(Dt.load_conversation(p)[1].summary, 'Read 402 lines')
+
+    def test_summary_is_empty_for_other_tools(self):
+        p = self.path('bash.jsonl')
+        write_jsonl(p, [{'type': 'user',
+                         'toolUseResult': {'stdout': 'x'},
+                         'message': {'content': [
+                             {'type': 'tool_result', 'content': 'x'}]}}])
+        self.assertEqual(Dt.load_conversation(p)[0].summary, '')
+
+    def test_agent_result_gets_a_done_summary(self):
+        # Claude Code сворачивает отчёт субагента в «Done (…)» — данные
+        # из toolUseResult, а не из текста ответа
+        p = self.path('agent.jsonl')
+        write_jsonl(p, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'a1', 'name': 'Agent',
+                 'input': {'description': 'Count files'}}]}},
+            {'type': 'user',
+             'toolUseResult': {'status': 'completed', 'totalToolUseCount': 1,
+                               'totalTokens': 25532, 'totalDurationMs': 18049},
+             'message': {'content': [
+                 {'type': 'tool_result', 'tool_use_id': 'a1', 'content': '28'}]}},
+        ])
+        self.assertEqual(Dt.load_conversation(p)[1].summary,
+                         'Done (1 tool use · 25.5k tokens · 18s)')
+
+    def test_agent_summary_formats_and_degrades(self):
+        self.assertEqual(
+            Dt._agent_summary({'status': 'completed', 'totalToolUseCount': 9,
+                               'totalTokens': 906, 'totalDurationMs': 95_400}),
+            'Done (9 tool uses · 906 tokens · 1m 35s)')
+        self.assertEqual(
+            Dt._agent_summary({'status': 'failed', 'totalTokens': 1_250_000}),
+            'Failed (1.2M tokens)')
+        self.assertEqual(Dt._agent_summary({'status': 'completed'}), 'Done')
+
+    def test_result_without_id_is_not_linked(self):
+        p = self.path('nolink.jsonl')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'content': 'ok'}]}}])
+        self.assertEqual(Dt.load_conversation(p), [Dt.Entry('result', 'ok')])
+
+    def test_parallel_results_follow_their_calls(self):
+        # батч из двух tool_use: результаты приходят пачкой после
+        # всех вызовов, но каждый должен встать под своим, а не
+        # по порядку файла
+        p = self.path('par.jsonl')
+        write_jsonl(p, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'a', 'name': 'Bash',
+                 'input': {'command': 'ls'}},
+                {'type': 'tool_use', 'id': 'b', 'name': 'Grep',
+                 'input': {'pattern': 'x'}}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'a', 'content': 'bash out'}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'b', 'content': 'grep out'}]}},
+        ])
+        kinds = [(e.kind, e.name) for e in Dt.load_conversation(p)]
+        self.assertEqual(kinds, [('tool', 'Bash'), ('result', 'Bash'),
+                                 ('tool', 'Grep'), ('result', 'Grep')])
+
+    def test_patch_stat_counts_beyond_cap(self):
+        p = self.path('bigpatch.jsonl')
+        n = Dt.MAX_RESULT_LINES + 50
+        write_jsonl(p, [{
+            'type': 'user',
+            'toolUseResult': {'structuredPatch': [
+                {'oldStart': 1, 'newStart': 1, 'lines': ['+x'] * n}]},
+            'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'x', 'content': 'ok'}]},
+        }])
+        e = Dt.load_conversation(p)[0]
+        self.assertEqual(len(e.patch), Dt.MAX_RESULT_LINES)   # строки обрезаны
+        self.assertEqual(e.patch_stat, (n, 0))                # счётчики честные
+
+    def test_result_keeps_newlines_and_error_flag(self):
+        p = self.path('e.jsonl')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'content': 'a\nb', 'is_error': True}]}}])
+        e = Dt.load_conversation(p)[0]
+        self.assertEqual(e.text, 'a\nb')
+        self.assertTrue(e.error)
+
+    def test_huge_result_is_capped(self):
+        p = self.path('big.jsonl')
+        body = '\n'.join(f'line {i}' for i in range(Dt.MAX_RESULT_LINES + 50))
+        write_jsonl(p, [{'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'content': body}]}}])
+        e = Dt.load_conversation(p)[0]
+        self.assertEqual(len(e.text.split('\n')), Dt.MAX_RESULT_LINES)
 
 
 class TestAppendCustomTitle(TmpDirTest):

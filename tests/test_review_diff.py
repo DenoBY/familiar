@@ -29,7 +29,8 @@ class TestFgMap(unittest.TestCase):
 
 class TestRenderCode(unittest.TestCase):
     def test_returns_full_text(self):
-        # styled — тождество в моке, поэтому результат = исходный код целиком
+        # styled — тождество в моке, поэтому
+        # результат = исходный код целиком
         code = 'def f(): return "a" # c'
         self.assertEqual(D.render_code(code, '.py'), code)
         self.assertEqual(D.render_code(code, '.py', 22, {0, 1, 2}, 28), code)
@@ -37,13 +38,13 @@ class TestRenderCode(unittest.TestCase):
 
 class TestWordRanges(unittest.TestCase):
     def test_replace_marks_changed_words(self):
-        dset, aset, ratio = D._word_ranges('foo bar baz', 'foo qux baz')
+        dset, aset, ratio = D.word_ranges('foo bar baz', 'foo qux baz')
         self.assertEqual(dset, {4, 5, 6})
         self.assertEqual(aset, {4, 5, 6})
         self.assertAlmostEqual(ratio, 0.8)
 
     def test_identical_full_ratio(self):
-        dset, aset, ratio = D._word_ranges('same', 'same')
+        dset, aset, ratio = D.word_ranges('same', 'same')
         self.assertEqual(dset, set())
         self.assertEqual(aset, set())
         self.assertEqual(ratio, 1.0)
@@ -109,7 +110,8 @@ class TestUnifiedRows(unittest.TestCase):
         self.assertIn('def foo():', scopes)
 
     def test_vis_tracks_hscroll_plains_stay_full(self):
-        # plains — полный текст (поиск/копирование), vis — видимый срез по hscroll
+        # plains — полный текст (поиск/копирование),
+        # vis — видимый срез по hscroll
         before, after = 'x\n', 'x0123456789abcdef\n'
         r0 = unified(before, after, '.py', 40, hscroll=0)
         r5 = unified(before, after, '.py', 40, hscroll=5)
@@ -123,7 +125,8 @@ class TestUnifiedRows(unittest.TestCase):
         self.assertNotIn('0123456789abcdef', addv5)   # hscroll=5 — начало ушло влево
 
     def test_max_hscroll_caps_at_longest_line(self):
-        # два столбца: gutter_w=10, codew=width-12; предел = longest - codew
+        # два столбца: gutter_w=10, codew=width-12;
+        # предел = longest - codew
         self.assertEqual(D.max_hscroll(D.DiffSource('short\n', 'x' * 50 + '\n'), 40), 22)
         # короткие строки целиком видны → скроллить вправо некуда
         self.assertEqual(D.max_hscroll(D.DiffSource('a\n', 'b\n'), 40), 0)
@@ -157,7 +160,10 @@ class TestBuildTree(unittest.TestCase):
 
 
 class DiffCellTest(unittest.TestCase):
-    """Общее ядро отрисовки строки диффа (styled в моке — тождество, маркеры видны)."""
+    """Общее ядро отрисовки строки диффа.
+
+    styled в моке — тождество, маркеры видны.
+    """
 
     def _arrays(self):
         return dict(
@@ -180,7 +186,8 @@ class DiffCellTest(unittest.TestCase):
         self.assertEqual(D.render_match('hello', 3, 'zzz'), 'he…')
 
     def test_render_match_returns_text_with_hit(self):
-        # styled=тождество, поэтому подсветка невидима, но текст сохранён целиком
+        # styled=тождество, поэтому подсветка невидима,
+        # но текст сохранён целиком
         self.assertEqual(D.render_match('abcabc', 100, 'bc'), 'abcabc')
 
     def test_cell_plain_when_not_focused(self):
@@ -206,7 +213,8 @@ class DiffCellTest(unittest.TestCase):
         self.assertIn('add', out)
 
     def test_cell_search_match(self):
-        # подсвечивается только текущая строка-совпадение (cur_match), не все
+        # подсвечивается только текущая строка-совпадение
+        # (cur_match), не все
         a = self._arrays()
         a['cur_match'] = 1
         a['query'] = 'add'
@@ -214,7 +222,8 @@ class DiffCellTest(unittest.TestCase):
         self.assertIn('add', out)
 
     def test_cell_non_current_match_not_highlighted(self):
-        # строка с совпадением, но не в фокусе (cur_match != di) — обычная строка
+        # строка с совпадением, но не в фокусе
+        # (cur_match != di) — обычная строка
         a = self._arrays()
         a['cur_match'] = 0
         a['query'] = 'add'
@@ -222,14 +231,16 @@ class DiffCellTest(unittest.TestCase):
         self.assertEqual(out, 'row-add')
 
     def test_cell_char_selection_from_plain(self):
-        # char_sel рисует строку из plains (с подсветкой куска), а не готовую rows[di]
+        # char_sel рисует строку из plains (с подсветкой
+        # куска), а не готовую rows[di]
         out = D.render_diff_cell(0, 40, True, 0, None, False, char_sel=(0, 6, 9),
                                  **self._arrays())
         self.assertIn('ctx', out)                 # текст из plain
         self.assertNotEqual(out.strip(), 'row-ctx')
 
     def test_cell_cursor_uses_vis_not_plains(self):
-        # фон курсора рисуется по видимому тексту (vis), чтобы ехать с hscroll
+        # фон курсора рисуется по видимому тексту (vis),
+        # чтобы ехать с hscroll
         a = self._arrays()
         a['vis'] = ['  1   VISIBLE', '  2 + add']
         out = D.render_diff_cell(0, 40, True, 0, None, False, **a)

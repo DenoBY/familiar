@@ -2,12 +2,15 @@
 """
 review — kitten для kitty.
 
-Двухпанельный оверлей для ревью незакоммиченных правок git: слева дерево изменённых
-файлов (в стиле IDE, со сворачиванием папок), справа — unified diff выделенного файла
-с подсветкой синтаксиса, word-diff, поиском и прыжками по изменениям, вживую.
+Двухпанельный оверлей для ревью незакоммиченных правок git:
+слева дерево изменённых файлов (в стиле IDE, со сворачиванием
+папок), справа — unified diff выделенного файла с подсветкой
+синтаксиса, word-diff, поиском и прыжками по изменениям,
+вживую.
 
-Двухпанельная diff-механика — общий базовый класс modules.vcs.view.DiffTreeView; здесь
-только review-специфика: скоупы working/staged/branch (modules.review.git), аннотации к
+Двухпанельная diff-механика — общий базовый класс
+modules.vcs.view.DiffTreeView; здесь только review-специфика:
+скоупы working/staged/branch (modules.review.git), аннотации к
 строкам, живой refresh и открытие файла в редакторе.
 
 Подключение в ~/.config/kitty/kitty.conf:
@@ -24,9 +27,10 @@ from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
 
-# Пакет modules лежит рядом с этим файлом. При запуске через `kitten path.py`
-# (CLI/автодополнение) kitty не добавляет его папку в sys.path; при штатном launch
-# папка и так в sys.path на время загрузки, но __file__ там отсутствует.
+# Пакет modules лежит рядом с этим файлом. При запуске через
+# `kitten path.py` (CLI/автодополнение) kitty не добавляет его
+# папку в sys.path; при штатном launch папка и так в sys.path
+# на время загрузки, но __file__ там отсутствует.
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -34,7 +38,7 @@ from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import detect_base, scan_changes
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
-from modules.vcs.util import short_path, to_latin, truncate
+from modules.vcs.util import chord, short_path, to_latin, truncate
 from modules.vcs.view import DiffTreeView
 
 
@@ -112,7 +116,8 @@ class ReviewHandler(DiffTreeView):
         self.items = scan_changes(self.root, self.scope, self.base)
         for it in self.items:
             it['rel'] = it['path']
-        # пустой список из-за ошибки git — показать её, а не «no changes»
+        # пустой список из-за ошибки git — показать её,
+        # а не «no changes»
         self.status = '' if self.items else last_error()
 
     def cycle_scope(self):
@@ -131,8 +136,9 @@ class ReviewHandler(DiffTreeView):
         self.load_diff()
 
     def refresh(self):
-        """Пересканировать изменения, сохранив фильтр, сворачивание, выделение и позицию
-        скролла диффа (не прыгать на начало) — удобно пока агент дописывает код.
+        """Пересканировать изменения, сохранив фильтр,
+        сворачивание, выделение и позицию скролла диффа (не
+        прыгать на начало) — удобно пока агент дописывает код.
         """
         off, hs = self.diff_offset, self.hscroll
         self._reload_items()
@@ -197,7 +203,9 @@ class ReviewHandler(DiffTreeView):
     # --- аннотации (комментарии к строкам → markdown в буфер) ---
 
     def jump_annot(self, direction):
-        """Прыжок курсора между строками с аннотациями (●) в текущем файле, по кругу."""
+        """Прыжок курсора между строками с аннотациями (●) в
+        текущем файле, по кругу.
+        """
         cur = self.current_item()
         if not cur or not self.annots:
             return
@@ -271,8 +279,10 @@ class ReviewHandler(DiffTreeView):
     # --- открытие файла в редакторе ---
 
     def open_editor(self):
-        """Открыть текущий файл на видимой сверху строке. GUI-редактор (IDE) запускаем
-        тут же, не закрывая оверлей; терминальный ($EDITOR=vim) — выходим и открываем в табе.
+        """Открыть текущий файл на видимой сверху строке.
+        GUI-редактор (IDE) запускаем тут же, не закрывая
+        оверлей; терминальный ($EDITOR=vim) — выходим и
+        открываем в табе.
         """
         it = self.current_item()
         if not it:
@@ -284,7 +294,8 @@ class ReviewHandler(DiffTreeView):
         project = self.root or os.path.dirname(path)
         cmd, gui = editor_command(project, path, line)
         if gui:
-            # start_new_session: жизнь редактора не должна зависеть от процесса оверлея
+            # start_new_session: жизнь редактора не должна
+            # зависеть от процесса оверлея
             try:
                 subprocess.Popen(cmd, cwd=project, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, start_new_session=True)
@@ -293,7 +304,8 @@ class ReviewHandler(DiffTreeView):
                 self.flash = f'editor failed: {e}'
             self.draw_screen()
             return
-        # терминальный редактор — открываем в новом табе kitty (через handle_result)
+        # терминальный редактор — открываем в новом табе kitty
+        # (через handle_result)
         self.action = {'action': 'edit', 'path': path, 'line': line, 'cwd': project}
         self.quit_loop(0)
 
@@ -351,23 +363,23 @@ class ReviewHandler(DiffTreeView):
     def on_key(self, key_event):
         if key_event.type == EventType.RELEASE:
             return
-        if key_event.matches('ctrl+c'):
+        if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
             return
-        if key_event.matches('ctrl+d'):
+        if chord(key_event, 'ctrl', 'd'):
             self.diff_scroll(self.visible_rows() // 2)
             return
-        if key_event.matches('ctrl+u'):
+        if chord(key_event, 'ctrl', 'u'):
             self.diff_scroll(-self.visible_rows() // 2)
             return
         k = key_event.key
         if self.input_key(k):
             return
-        if key_event.matches('cmd+c'):
-            self.smart_copy()
-            return
-        if key_event.matches('cmd+shift+c'):
+        if chord(key_event, 'super+shift', 'c'):
             self.smart_copy_location()
+            return
+        if chord(key_event, 'super', 'c'):
+            self.smart_copy()
             return
         if k == 'TAB':
             self.toggle_focus()
@@ -481,7 +493,8 @@ class ReviewHandler(DiffTreeView):
         self.quit_loop(0)
 
     def on_eot(self):
-        # Ctrl+D — скролл диффа на полстраницы вниз, а НЕ закрытие оверлея.
+        # Ctrl+D — скролл диффа на полстраницы вниз, а НЕ
+        # закрытие оверлея.
         self.diff_scroll(self.visible_rows() // 2)
 
 

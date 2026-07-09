@@ -121,7 +121,8 @@ class LogHandlerTest(unittest.TestCase):
             [('origin/PP-1', 'remote'), ('v1.0', 'tag')])  # без локальной — как есть
 
     def test_commit_row_columns_aligned(self):
-        # автор/дата — фикс-колонки: у строк разной длины хвост начинается одинаково
+        # автор/дата — фикс-колонки: у строк разной длины
+        # хвост начинается одинаково
         c1 = dict(self.h.commits[0], subject='x', refs=[])
         c2 = dict(self.h.commits[0], subject='y' * 60, refs=[])
         r1 = self.h._commit_row(c1, 100, False)
@@ -142,7 +143,8 @@ class LogHandlerTest(unittest.TestCase):
     def test_diff_shows_changed_lines(self):
         self.h.sel = 0
         self.h.open_commit()
-        # выбрать a.txt (модифицирован) — в диффе есть новая версия строки
+        # выбрать a.txt (модифицирован) — в диффе
+        # есть новая версия строки
         self.h.tsel = next(i for i, r in enumerate(self.h.rows)
                            if r['type'] == 'file' and r['name'] == 'a.txt')
         self.h.load_diff()

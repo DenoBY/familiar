@@ -37,6 +37,8 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_data.py` | parsing of sessions/projects, registry of live pids, `append_custom_title` (on temporary directories) |
 | `test_review_handler.py` | `ReviewHandler`: tree, navigation, scope, filter, focus/cursor, gaps, search, comments, `_editor_command` |
 | `test_log_handler.py` | `CommitLogHandler`: commit list, filter, branch/`--all` mode, opening a commit, diff, copy, mouse |
+| `test_sessions_transcript.py` | `modules.session.transcript`: tool labels, `⎿` output, edit diffs, plans, folding, widths |
+| `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |
 | `test_result_handlers.py` | `handle_result` of both kittens — building the remote-control command (the kitty-process side) |
 

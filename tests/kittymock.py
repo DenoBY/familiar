@@ -1,9 +1,10 @@
 """Мок окружения kitty для запуска тестов вне самого kitty.
 
-Импорт этого модуля регистрирует поддельные пакеты kittens.*/kitty.* в sys.modules
-и добавляет папку plugins/ в sys.path — после этого review/session и modules.*
-импортируются обычным образом. styled здесь — тождество (возвращает текст как есть),
-поэтому вывод хендлеров детерминирован и его можно проверять по подстрокам.
+Импорт этого модуля регистрирует поддельные пакеты kittens.*/kitty.*
+в sys.modules и добавляет папку plugins/ в sys.path — после этого
+review/session и modules.* импортируются обычным образом. styled
+здесь — тождество (возвращает текст как есть), поэтому вывод
+хендлеров детерминирован и его можно проверять по подстрокам.
 """
 
 import os
@@ -43,9 +44,13 @@ class Loop:
 
 
 class MouseButton:
-    WHEEL_UP = 'WHEEL_UP'
-    WHEEL_DOWN = 'WHEEL_DOWN'
-    LEFT = 'LEFT'
+    # значения как в kitty 0.47 (kittens.tui.loop.MouseButton):
+    # LEFT — битовый флаг, колёса — отрицательные
+    LEFT = 1
+    WHEEL_UP = -1
+    WHEEL_DOWN = -2
+    WHEEL_LEFT = -4
+    WHEEL_RIGHT = -8
 
 
 class MouseTracking:
@@ -120,8 +125,10 @@ class NoopCmd:
 
 
 class ImmediateLoop:
-    """asyncio_loop для тестов: call_later выполняет колбэк сразу — отложенная
-    загрузка диффа (debounce прокрутки) в тестах остаётся синхронной."""
+    """asyncio_loop для тестов: call_later выполняет колбэк сразу —
+    отложенная загрузка диффа (debounce прокрутки) в тестах остаётся
+    синхронной.
+    """
 
     class _Timer:
         def cancel(self):
@@ -133,24 +140,32 @@ class ImmediateLoop:
 
 
 class KeyEvent:
-    def __init__(self, key=None, type=EventType.PRESS, matches=()):
+    def __init__(self, key=None, type=EventType.PRESS, matches=(),
+                 ctrl=False, super=False, shift=False, alt=False):
         self.key = key
         self.type = type
         self._matches = set(matches)
+        self.ctrl = ctrl
+        self.super = super
+        self.shift = shift
+        self.alt = alt
 
     def matches(self, spec):
         return spec in self._matches
 
 
 class MouseEvent:
-    def __init__(self, cell_x=0, cell_y=0, buttons=None):
+    def __init__(self, cell_x=0, cell_y=0, buttons=0, type=EventType.PRESS):
         self.cell_x = cell_x
         self.cell_y = cell_y
         self.buttons = buttons
+        self.type = type
 
 
 def wire(handler, rows=40, cols=120):
-    """Подключить к хендлеру мок-экран/вывод: screen_size, cmd, буфер print, quit_loop."""
+    """Подключить к хендлеру мок-экран/вывод: screen_size, cmd,
+    буфер print, quit_loop.
+    """
     handler.screen_size = Size(rows, cols)
     handler.cmd = NoopCmd()
     handler.out = []
@@ -162,5 +177,7 @@ def wire(handler, rows=40, cols=120):
 
 
 def draw_text(handler):
-    """Весь текст, «нарисованный» через print, одной строкой — для проверок по подстроке."""
+    """Весь текст, «нарисованный» через print, одной строкой —
+    для проверок по подстроке.
+    """
     return '\n'.join(str(x) for x in handler.out)

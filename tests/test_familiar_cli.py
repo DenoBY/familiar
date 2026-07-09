@@ -190,7 +190,9 @@ class ConfigDirTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
-    """enable → status → disable → restore на временном каталоге конфига."""
+    """enable → status → disable → restore на временном
+    каталоге конфига.
+    """
 
     ORIGINAL = "font_size 14\nmap cmd+t new_tab\n"
 
@@ -257,7 +259,8 @@ class EndToEndTests(unittest.TestCase):
 
     def test_status_terminal_detection_needs_exact_include_line(self):
         _run(["enable", "session"])
-        # Упоминание terminal.conf в комментарии не должно давать terminal: yes.
+        # Упоминание terminal.conf в комментарии не должно
+        # давать terminal: yes.
         with open(self.generated, "a", encoding="utf-8") as f:
             f.write("# include is described in config/terminal.conf\n")
         self.assertIn("terminal:   no", _run(["status"]))

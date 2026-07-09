@@ -1,7 +1,8 @@
-"""Git-слой log-кита: список коммитов и изменения внутри выбранного коммита.
+"""Git-слой log-кита: список коммитов и изменения коммита.
 
-Тонкие обёртки над общими примитивами из modules.vcs.git: `git log` для списка и
-разбор изменений коммита (name-status + numstat + содержимое blob'ов). Без TUI.
+Тонкие обёртки над общими примитивами из modules.vcs.git:
+`git log` для списка и разбор изменений коммита (name-status +
+numstat + содержимое blob'ов). Без TUI.
 """
 
 from modules.vcs.git import (
@@ -13,18 +14,20 @@ from modules.vcs.git import (
 )
 
 
-# US (\x1f) между полями, \n между записями. %P — хеши родителей (для пометки merge),
-# %D — ref-names (ветки/теги/HEAD). %ad — дата автора (абсолютная, формат ниже).
+# US (\x1f) между полями, \n между записями. %P — хеши
+# родителей (для пометки merge), %D — ref-names (ветки/теги/HEAD).
+# %ad — дата автора (абсолютная, формат ниже).
 _LOG_FMT = '%H%x1f%h%x1f%an%x1f%ad%x1f%P%x1f%D%x1f%s'
 _DATE_FMT = '--date=format:%d.%m.%y, %H:%M'   # 30.06.26, 22:58 — как в IDE
 _LOG_FIELDS = ('sha', 'short', 'author', 'date', 'parents', 'refs', 'subject')
 
 
 def parse_refs(s: str) -> list[tuple[str, str]]:
-    """`%D` (с --decorate=full) → [(имя, тип)], тип ∈ head|branch|remote|tag.
+    """`%D` (--decorate=full) → [(имя, тип: head|branch|remote|tag)].
 
-    Полные пути refs/heads|remotes|tags надёжно различают локальную ветку и удалённую
-    (важно для веток со слэшем, напр. feature/x — по одному слэшу их не отличить).
+    Полные пути refs/heads|remotes|tags надёжно различают
+    локальную ветку и удалённую (важно для веток со слэшем,
+    напр. feature/x — по одному слэшу их не отличить).
     """
     out = []
     for part in s.split(', '):
@@ -54,8 +57,10 @@ def parse_refs(s: str) -> list[tuple[str, str]]:
 
 
 def display_refs(refs: 'list[tuple[str, str]]') -> 'list[tuple[str, str]]':
-    """[(имя, тип)] → компактные метки для показа: локальную ветку с одноимённой
-    удалённой схлопываем в «origin & name» (как в IDE); одиночные remote/tag — как есть.
+    """[(имя, тип)] → компактные метки для показа:
+    локальную ветку с одноимённой удалённой схлопываем в
+    «origin & name» (как в IDE); одиночные remote/tag —
+    как есть.
     """
     local_names = {n for n, k in refs if k in ('branch', 'head')}
     out = []
@@ -74,20 +79,26 @@ def display_refs(refs: 'list[tuple[str, str]]') -> 'list[tuple[str, str]]':
 
 def load_commits(root: str, all_branches: bool = False,
                  limit: int = 200, skip: int = 0) -> list[dict]:
-    """Список коммитов: текущая ветка (HEAD) или все ветки (all_branches → --all).
+    """Список коммитов: текущая ветка (HEAD) или все ветки
+    (all_branches → --all).
 
-    Каждый элемент: sha/short/author/date/subject + merge (True, если родителей > 1 —
-    дифф такого коммита показываем к первому родителю) + refs ([(имя, тип)] веток/тегов).
+    Каждый элемент: sha/short/author/date/subject + merge
+    (True, если родителей > 1 — дифф такого коммита
+    показываем к первому родителю) + refs ([(имя, тип)]
+    веток/тегов).
     """
-    # --topo-order: потомок всегда раньше родителя — иначе граф лейнов путается,
-    # если у коммитов совпадают даты (без него git log идёт по дате).
-    # --decorate=full: полные пути ссылок в %D — чтобы отличать локальные ветки со
-    # слэшем (feature/x) от удалённых (origin/feature/x).
+    # --topo-order: потомок всегда раньше родителя — иначе
+    # граф лейнов путается, если у коммитов совпадают даты
+    # (без него git log идёт по дате).
+    # --decorate=full: полные пути ссылок в %D — чтобы
+    # отличать локальные ветки со слэшем (feature/x) от
+    # удалённых (origin/feature/x).
     args = ['log', '--no-color', '--topo-order', '--decorate=full', _DATE_FMT,
             f'--skip={skip}', f'--max-count={limit}', f'--pretty=format:{_LOG_FMT}']
     if all_branches:
-        # --all включает refs/stash (коммиты «WIP on …»/«index on …») — исключаем;
-        # --exclude должен идти перед --all.
+        # --all включает refs/stash (коммиты «WIP on …»/
+        # «index on …») — исключаем; --exclude должен идти
+        # перед --all.
         args.insert(1, '--all')
         args.insert(1, '--exclude=refs/stash')
     out = run_git(root, *args)
@@ -109,15 +120,20 @@ def load_commits(root: str, all_branches: bool = False,
 
 
 def fetch(root: str) -> bool:
-    """git fetch --all --prune (сеть, поэтому увеличенный таймаут). True при успехе."""
+    """git fetch --all --prune (сеть, поэтому увеличенный
+    таймаут). True при успехе.
+    """
     return run_git(root, 'fetch', '--all', '--prune', timeout=60) is not None
 
 
 def unpushed_shas(root: str) -> set[str]:
-    """SHA локальных коммитов, которых нет ни в одной remote-ветке (не запушены).
+    """SHA локальных коммитов, которых нет ни в одной
+    remote-ветке (не запушены).
 
-    Без настроенных удалёнок пушить некуда — возвращаем пусто, чтобы не красить всю
-    историю. `--branches` покрывает все локальные ветки, `HEAD` — ещё и detached-случай.
+    Без настроенных удалёнок пушить некуда — возвращаем
+    пусто, чтобы не красить всю историю. `--branches`
+    покрывает все локальные ветки, `HEAD` — ещё и
+    detached-случай.
     """
     if not run_git(root, 'remote'):
         return set()
@@ -126,12 +142,15 @@ def unpushed_shas(root: str) -> set[str]:
 
 
 def commit_detail(root: str, sha: str) -> dict:
-    """Подробности коммита для панели: полное сообщение, email автора, коммитер и его
-    email, список веток, содержащих коммит. Отдельные git-вызовы (тяжеловато для списка —
-    зовём лениво по выбранному коммиту).
+    """Подробности коммита для панели: полное сообщение,
+    email автора, коммитер и его email, список веток,
+    содержащих коммит. Отдельные git-вызовы (тяжеловато
+    для списка — зовём лениво по выбранному коммиту).
     """
-    # %B многострочное → ставим первым, разделитель \x1e только между остальными полями;
-    # rsplit — тело коммита само может содержать \x1e, гарантированы лишь три последних
+    # %B многострочное → ставим первым, разделитель \x1e
+    # только между остальными полями; rsplit — тело
+    # коммита само может содержать \x1e, гарантированы
+    # лишь три последних
     raw = run_git(root, 'show', '-s', '--format=%B%x1e%ae%x1e%cn%x1e%ce', sha)
     body = a_email = committer = c_email = ''
     if raw:
@@ -152,16 +171,20 @@ def commit_detail(root: str, sha: str) -> dict:
 
 
 def first_parent(root: str, sha: str) -> str:
-    """Первый родитель коммита; для корневого (без родителя) — пустое дерево."""
+    """Первый родитель коммита; для корневого (без
+    родителя) — пустое дерево.
+    """
     out = run_git(root, 'rev-parse', '--verify', '-q', f'{sha}^')
     return out.strip() if out else EMPTY_TREE
 
 
 def commit_files(root: str, sha: str, parent: 'str | None' = None) -> list[dict]:
-    """Изменённые файлы коммита (vs первый родитель) со статистикой +/− и полем 'rel'.
+    """Изменённые файлы коммита (vs первый родитель) со
+    статистикой +/− и полем 'rel'.
 
-    parent — заранее вычисленный первый родитель (иначе считается сам): позволяет не
-    дёргать rev-parse повторно для того же коммита.
+    parent — заранее вычисленный первый родитель (иначе
+    считается сам): позволяет не дёргать rev-parse
+    повторно для того же коммита.
     """
     if parent is None:
         parent = first_parent(root, sha)
@@ -177,7 +200,9 @@ def commit_files(root: str, sha: str, parent: 'str | None' = None) -> list[dict]
 
 def commit_contents(root: str, sha: str, it: dict,
                     parent: 'str | None' = None) -> tuple[str, str]:
-    """(before, after) для файла коммита: содержимое у родителя и в самом коммите."""
+    """(before, after) для файла коммита: содержимое у
+    родителя и в самом коммите.
+    """
     if parent is None:
         parent = first_parent(root, sha)
     path = it['path']

@@ -3,6 +3,7 @@ import unittest
 
 import kittymock  # noqa: F401  (регистрирует мок kitty и путь к модулям кита)
 import modules.vcs.util as U
+from kittymock import KeyEvent
 
 
 class TestTruncate(unittest.TestCase):
@@ -93,6 +94,30 @@ class TestStatusStyle(unittest.TestCase):
         self.assertEqual(U.STATUS_STYLE['added'], ('A', 'green'))
         self.assertEqual(U.STATUS_STYLE['deleted'], ('D', 'gray'))
         self.assertEqual(U.STATUS_STYLE['untracked'], ('?', 'red'))
+
+
+class TestChord(unittest.TestCase):
+    def test_matches_modifier_and_letter(self):
+        self.assertTrue(U.chord(KeyEvent(key='c', ctrl=True), 'ctrl', 'c'))
+
+    def test_cyrillic_layout(self):
+        # физическая клавиша o на ЙЦУКЕН даёт «щ»
+        self.assertTrue(U.chord(KeyEvent(key='щ', ctrl=True), 'ctrl', 'o'))
+
+    def test_extra_modifier_rejected(self):
+        # ctrl+alt+c — не ctrl+c: лишний модификатор закрывал кит
+        self.assertFalse(U.chord(KeyEvent(key='c', ctrl=True, alt=True),
+                                 'ctrl', 'c'))
+        self.assertFalse(U.chord(KeyEvent(key='c', ctrl=True, super=True),
+                                 'ctrl', 'c'))
+
+    def test_multi_modifier_spec(self):
+        ev = KeyEvent(key='c', super=True, shift=True)
+        self.assertTrue(U.chord(ev, 'super+shift', 'c'))
+        self.assertFalse(U.chord(ev, 'super', 'c'))
+
+    def test_wrong_letter(self):
+        self.assertFalse(U.chord(KeyEvent(key='x', ctrl=True), 'ctrl', 'c'))
 
 
 if __name__ == '__main__':

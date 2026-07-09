@@ -1,9 +1,10 @@
-"""Общие git-примитивы: запуск git через subprocess и разбор его вывода.
+"""Общие git-примитивы: запуск git и разбор его вывода.
 
-Source-agnostic слой без зависимостей от TUI и от конкретного плагина: обёртка
-`run_git`, чтение содержимого blob'ов и парсеры `git diff --name-status`/`--numstat`,
-параметризованные произвольными ref'ами. Используется и review (рабочее дерево), и
-log (коммиты).
+Source-agnostic слой без зависимостей от TUI и от конкретного
+плагина: обёртка `run_git` поверх subprocess, чтение содержимого
+blob'ов и парсеры `git diff --name-status`/`--numstat`,
+параметризованные произвольными ref'ами. Используется и review
+(рабочее дерево), и log (коммиты).
 """
 
 import subprocess
@@ -13,10 +14,10 @@ _last_error = ''
 
 
 def last_error() -> str:
-    """stderr последнего неудачного вызова git; пусто после успешного вызова.
+    """stderr последнего неудачного вызова git; иначе пусто.
 
-    Для хендлеров: «список пуст из-за ошибки git» (index.lock, битый репозиторий)
-    иначе неотличим от честного «изменений нет».
+    Для хендлеров: «список пуст из-за ошибки git» (index.lock,
+    битый репозиторий) иначе неотличим от честного «изменений нет».
     """
     return _last_error
 
@@ -32,7 +33,8 @@ def run_git(root: str, *args: str, binary: bool = False,
         return None
     if out.returncode != 0:
         err = out.stderr.decode('utf-8', 'replace').strip()
-        # тихие пробы (--verify -q) падают без stderr — прежнюю ошибку не затираем
+        # тихие пробы (--verify -q) падают без stderr —
+        # прежнюю ошибку не затираем
         if err:
             _last_error = err.splitlines()[0]
         return None
@@ -55,8 +57,9 @@ EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 
 def read_text(path: str) -> str:
-    # git-сторона диффа декодируется как utf-8 (run_git/git_blob) — читаем диск
-    # так же, иначе при LANG=C стороны разъедутся и появятся ложные изменения.
+    # git-сторона диффа декодируется как utf-8 (run_git/git_blob) —
+    # читаем диск так же, иначе при LANG=C стороны разъедутся и
+    # появятся ложные изменения.
     try:
         with open(path, encoding='utf-8', errors='replace') as f:
             return f.read()
@@ -65,7 +68,10 @@ def read_text(path: str) -> str:
 
 
 def git_blob(root: str, ref: str, path: str) -> str:
-    """Содержимое файла из git-объекта: ref='' → индекс (:path), иначе <ref>:path."""
+    """Содержимое файла из git-объекта.
+
+    ref='' → индекс (:path), иначе <ref>:path.
+    """
     b = run_git(root, 'show', f'{ref}:{path}', binary=True)
     return b.decode('utf-8', 'replace') if b else ''
 
@@ -91,10 +97,11 @@ def count_lines(path: str) -> int:
 
 
 def git_numstat(root: str, *args: str) -> 'dict[str, tuple[int | None, int | None]]':
-    """path → (added, deleted) из `git diff --numstat -z <args>` (бинарники → (None, None)).
+    """path → (added, deleted) из `git diff --numstat -z <args>`.
 
-    -z вместо разбора фигурной записи "dir/{old => new}/f": у переименования пути
-    идут отдельными NUL-токенами (old, new), ключом становится new — тот же путь,
+    Бинарники → (None, None). -z вместо разбора фигурной записи
+    "dir/{old => new}/f": у переименования пути идут отдельными
+    NUL-токенами (old, new), ключом становится new — тот же путь,
     что отдаёт diff_name_status.
     """
     out = run_git(root, 'diff', '--numstat', '-z', *args)
@@ -122,7 +129,10 @@ _NAME_STATUS = {'M': 'modified', 'A': 'added', 'D': 'deleted', 'T': 'modified'}
 
 
 def diff_name_status(root: str, *args: str) -> list[dict]:
-    """items из `git diff --name-status -z <args>` (staged / vs ветка / коммит)."""
+    """items из `git diff --name-status -z <args>`.
+
+    staged / vs ветка / коммит.
+    """
     raw = run_git(root, 'diff', '--name-status', '-z', *args)
     if raw is None:
         return []

@@ -1,14 +1,17 @@
-"""Строковый ввод в TUI (фильтр/поиск/комментарий/…), общий для всех китов.
+"""Строковый ввод в TUI (фильтр/поиск/комментарий/…), общий китам.
 
-Миксин к Handler: владеет input_mode/input_buffer и разбирает Enter/Esc/Backspace
-и печатаемый текст. Раньше эта машинерия жила копиями в review/session/log, а
-базовый DiffTreeView лез в неё через getattr — теперь состояние принадлежит миксину.
+Миксин к Handler: владеет input_mode/input_buffer и разбирает
+Enter/Esc/Backspace и печатаемый текст. Раньше эта машинерия
+жила копиями в review/session/log, а базовый DiffTreeView
+лез в неё через getattr — теперь состояние принадлежит миксину.
 
 Хуки подкласса:
-- _input_live() — применить ввод вживую (после каждого символа/Backspace);
+- _input_live() — применить ввод вживую (после каждого
+  символа/Backspace);
   по умолчанию просто перерисовка;
 - commit_input() — Enter; по умолчанию выйти из режима;
-- _input_cancelled(mode) — откат состояния после Esc (режим/буфер уже сброшены).
+- _input_cancelled(mode) — откат состояния после Esc
+  (режим/буфер уже сброшены).
 """
 
 
@@ -41,7 +44,10 @@ class InputLine:
         self.draw_screen()
 
     def input_key(self, key: str) -> bool:
-        """Обработать клавишу в режиме ввода; False — режим не активен."""
+        """Обработать клавишу в режиме ввода.
+
+        False — режим не активен.
+        """
         if not self.input_mode:
             return False
         if key == 'ENTER':
@@ -54,7 +60,10 @@ class InputLine:
         return True
 
     def input_text(self, text: str) -> bool:
-        """Дописать печатаемый текст в буфер; False — режим не активен."""
+        """Дописать печатаемый текст в буфер.
+
+        False — режим не активен.
+        """
         if not self.input_mode:
             return False
         self.input_buffer += ''.join(ch for ch in text if ch.isprintable())

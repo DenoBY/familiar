@@ -1,13 +1,17 @@
 """Утилиты vcs-китов: форматирование строк по ширине, статусы, IDE-шум.
 
-Модуль без состояния и без зависимостей от git — только преобразования строк
-и таблицы констант для отрисовки. Раскладка и текстовые примитивы — общие,
-из modules.keylayout / modules.text.
+Модуль без состояния и без зависимостей от git — только преобразования
+строк и таблицы констант для отрисовки. Раскладка и текстовые примитивы
+— общие, из modules.keylayout / modules.text.
 """
 
 from kittens.tui.operations import styled
 
-from modules.keylayout import LAYOUT, to_latin  # noqa: F401  (ре-экспорт для review/log)
+from modules.keylayout import (  # noqa: F401  (ре-экспорт для review/log)
+    LAYOUT,
+    chord,
+    to_latin,
+)
 from modules.text import HOME, pad, short_path, truncate  # noqa: F401
 
 
@@ -20,7 +24,8 @@ STATUS_STYLE = {
     'untracked': ('?', 'red'),
 }
 
-# Папки/файлы, скрытые по умолчанию (как «ignored» в IDE). Переключаются клавишей u.
+# Папки/файлы, скрытые по умолчанию (как «ignored» в IDE).
+# Переключаются клавишей u.
 NOISE_DIRS = {
     '.idea', '.vscode', '.git', '.DS_Store', 'node_modules', '__pycache__',
     '.venv', 'venv', 'dist', 'build', 'target', 'vendor', '.next', '.nuxt',

@@ -27,7 +27,8 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('dir/sub.txt', 'sub original\n')
         self._git('add', '-A')
         self._git('commit', '-m', 'init')
-        # рабочие правки: модификация в середине большого файла, правка в подпапке, новый файл
+        # рабочие правки: модификация в середине большого файла,
+        # правка в подпапке, новый файл
         self.write('big.txt', ''.join((f'line {i}\n' if i != 15 else 'line CHANGED\n')
                                       for i in range(30)))
         self.write('dir/sub.txt', 'sub edited\n')
@@ -130,7 +131,8 @@ class ReviewHandlerTest(unittest.TestCase):
 
         self.h.cmd = RecordingCmd()
         self.h.draw_screen()
-        # кадр обёрнут в synchronized update (mode 2026) — иначе панели мигают
+        # кадр обёрнут в synchronized update (mode 2026) —
+        # иначе панели мигают
         self.assertEqual(calls[0], 'set_mode')
         self.assertEqual(calls[-1], 'reset_mode')
         self.assertIn('clear_screen', calls)
@@ -293,7 +295,8 @@ class ReviewHandlerTest(unittest.TestCase):
 
         self.h.out = []
         self.h.export_review()
-        # flash гаснет к концу draw_screen, но текст и OSC52 уже попали в вывод
+        # flash гаснет к концу draw_screen, но текст и OSC52
+        # уже попали в вывод
         self.assertIn('copied', draw_text(self.h))
         self.assertTrue(any('\x1b]52;c;' in str(x) for x in self.h.out))  # OSC52 в буфер
 
@@ -359,7 +362,9 @@ class EditorCommandTest(unittest.TestCase):
 
 
 class YankTest(unittest.TestCase):
-    """Сборка payload для копирования кода из диффа — чистая логика без git."""
+    """Сборка payload для копирования кода из диффа —
+    чистая логика без git.
+    """
 
     def setUp(self):
         self.h = R.ReviewHandler([], '/repo', '/repo', 'main')
@@ -388,7 +393,8 @@ class YankTest(unittest.TestCase):
         self.assertEqual(code, 'l1\nl2\nl3\nl4')
 
     def test_range_skips_gap_rows(self):
-        # диапазон [1..3] включает гэп (индекс 2), номера строк 2 и 3 → код l2..l3
+        # диапазон [1..3] включает гэп (индекс 2), номера
+        # строк 2 и 3 → код l2..l3
         code, a, b = self.h._yank_code(1, 3)
         self.assertEqual((a, b), (2, 3))
         self.assertEqual(code, 'l2\nl3')

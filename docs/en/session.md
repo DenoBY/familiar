@@ -20,7 +20,9 @@ The three screens — a project's sessions, the projects list, and the conversat
   is marked `(here)`.
 - **Live activity.** Shows which sessions are running **right now** and their
   status (`busy` / `idle` / `waiting: permission prompt`) — the data source is
-  reliable, from the registry of live processes, not from file timestamps.
+  reliable, from the registry of live processes, not from file timestamps. Background
+  agents are marked separately (`◆`, `bg idle`): they cannot be resumed while they
+  run — see [How activity is determined](#how-activity-is-determined).
 - **Resume / fork.** `o` (or `Enter`) — a new tab with `claude --resume <id>` in the
   project folder; `f` — the same, but `--fork-session` (fork the conversation without
   touching the original session).
@@ -34,8 +36,14 @@ The three screens — a project's sessions, the projects list, and the conversat
 - **Worktree.** `w` — `claude --worktree <name>`: create an isolated git worktree and
   start a session in it (parallel work without touching the main working tree). The name
   is asked for in the input line; if empty, Claude generates it itself.
-- **Conversation preview** with a transcript (`▌ You` / `▌ Claude` / tool calls)
-  and text search (`/`, jump with `n` / `N`, matches highlighted).
+- **Conversation preview** as a Claude Code-style transcript: turns (`>` / `⏺`), tool
+  calls with their argument (`⏺ Bash(git status)`) and output (`⎿`), errors in red.
+  File edits show as `⏺ Update(tests/x.py)` with a summary and a coloured diff, a file
+  read as `⎿ Read 402 lines`, and leaving plan mode as `⏺ Updated plan` with the plan
+  in a frame.
+  Claude's answers render markdown (bold, italic, inline code, headings, lists,
+  tables) with syntax-highlighted code blocks. Long output is folded (`… +N lines`);
+  `Enter` expands all of it. Plus text search (`/`, jump with `n` / `N`, highlighted).
 - **Renaming** a session (`r`). Writes a `custom-title` entry into the session file — the
   same thing the `/rename` command does in Claude Code, so the name shows up both there
   and here.
@@ -93,7 +101,13 @@ project / preview the session).
 
 | Key | Action |
 |---|---|
-| `↑/↓`, `PgUp`/`PgDn`, `g`/`G`, `Home`/`End` | scroll |
+| `↑/↓`, `PgUp`/`PgDn`, mouse wheel | scroll |
+| `g` / `Home`, `G` / `End` | jump to the start / end of the history |
+| `[` / `]` | jump to the previous / next user turn |
+| click a folded line | expand / collapse it (output, plan, file contents) |
+| `Ctrl+o`, `Enter` | expand all folded output (press again to collapse) |
+| drag with the mouse | select: within a line — a span, across lines — whole lines |
+| `⌘c` | copy the selection |
 | `/` | search the conversation text |
 | `n` / `N` | next / previous match |
 | `o` | resume |
@@ -104,9 +118,15 @@ project / preview the session).
 ## How activity is determined
 
 Claude Code keeps a registry of live processes in `~/.claude/sessions/<pid>.json`
-(`sessionId`, `cwd`, `status`, `waitingFor`). The plugin reads it and checks that the
+(`sessionId`, `cwd`, `status`, `waitingFor`, `kind`). The plugin reads it and checks that the
 `pid` is alive — so active sessions are detected precisely, with a real status, not by
 mtime.
+
+Entries with `kind: bg` are background agents. Claude Code refuses to attach to a live
+agent (`claude --resume` answers "stop it there first to resume here"), so such sessions
+are marked with `◆` and a `bg <status>` label, and `o`/`Enter` does not start a resume on
+them. The options: stop the agent, attach to it via `claude agents`, or fork the
+conversation (`f`) — a live process does not block a fork.
 
 ## Data sources
 

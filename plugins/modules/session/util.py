@@ -1,10 +1,19 @@
-"""Утилиты session-кита: возраст сессии; обрезка и перенос строк — из modules.text.
+"""Утилиты session-кита: возраст сессии; обрезка и перенос
+строк — из modules.text.
 
-Без состояния и без обращения к диску. Раскладка клавиш — общая, из modules.keylayout.
+Без состояния и без обращения к диску. Раскладка клавиш —
+общая, из modules.keylayout.
 """
 
 from modules.keylayout import LAYOUT, to_latin  # noqa: F401  (ре-экспорт для session)
-from modules.text import HOME, short_path, truncate, wrap_text  # noqa: F401
+from modules.text import (  # noqa: F401  (ре-экспорт для session)
+    HOME,
+    pad,
+    plural,
+    short_path,
+    truncate,
+    wrap_text,
+)
 
 
 def human_age(seconds: float) -> str:

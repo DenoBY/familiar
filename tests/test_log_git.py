@@ -197,7 +197,8 @@ class LogGitTest(unittest.TestCase):
         self.assertNotIn('->', ' '.join(d['branches']))    # без символической origin/HEAD
 
     def test_commit_detail_body_with_separator_char(self):
-        # \x1e в теле коммита не должен ломать разбор полей (rsplit по трём последним)
+        # \x1e в теле коммита не должен ломать разбор полей
+        # (rsplit по трём последним)
         self.write('sep.txt', 's\n')
         self._git('add', '-A')
         self._commit('subject\n\nbody with \x1e inside')
