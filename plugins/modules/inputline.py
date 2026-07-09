@@ -11,14 +11,22 @@ Enter/Esc/Backspace и печатаемый текст. Раньше эта ма
   по умолчанию просто перерисовка;
 - commit_input() — Enter; по умолчанию выйти из режима;
 - _input_cancelled(mode) — откат состояния после Esc
-  (режим/буфер уже сброшены).
+  (режим/буфер уже сброшены);
+- multiline_modes — режимы, где Shift+Enter даёт перенос строки,
+  а длинный текст переносится по словам.
 """
+
+from modules.text import wrap_text
+
+
+CURSOR = '▏'
 
 
 class InputLine:
 
     input_mode: 'str | None' = None
     input_buffer: str = ''
+    multiline_modes: tuple = ()
 
     def start_input(self, mode: str, initial: str = '') -> None:
         self.input_mode = mode
@@ -43,7 +51,46 @@ class InputLine:
             self._input_cancelled(mode)
         self.draw_screen()
 
-    def input_key(self, key: str) -> bool:
+    def input_lines(self, width: int) -> 'list[str]':
+        """Буфер как визуальные строки: жёсткие переносы по \\n плюс
+        мягкий перенос по словам. Последняя несёт курсор.
+        """
+        prefix = f' {self.input_mode}: '
+        indent = ' ' * len(prefix)
+        w = max(1, width - len(prefix) - len(CURSOR))
+        out = []
+        for i, logical in enumerate(self.input_buffer.split('\n')):
+            for j, vis in enumerate(wrap_text(logical, w)):
+                out.append((prefix if i == 0 and j == 0 else indent) + vis)
+        out[-1] += CURSOR
+        return out
+
+    def input_kill_word(self) -> None:
+        """Граница слова — пробел или перенос строки: на \\n стирание
+        останавливается, чтобы не съесть предыдущую строку
+        комментария целиком.
+        """
+        buf = self.input_buffer.rstrip(' ')
+        cut = max(buf.rfind(' '), buf.rfind('\n'))
+        self.input_buffer = buf[:cut + 1]
+        self._input_live()
+
+    def input_kill_all(self) -> None:
+        """Ctrl+U — стереть весь буфер. В readline это «до начала
+        строки», но у многострочного комментария полезнее снести
+        сразу всё: последнюю строку и так добирают Ctrl+W.
+        """
+        self.input_buffer = ''
+        self._input_live()
+
+    def input_newline(self) -> bool:
+        if self.input_mode not in self.multiline_modes:
+            return False
+        self.input_buffer += '\n'
+        self._input_live()
+        return True
+
+    def input_key(self, key: str, shift: bool = False) -> bool:
         """Обработать клавишу в режиме ввода.
 
         False — режим не активен.
@@ -51,7 +98,8 @@ class InputLine:
         if not self.input_mode:
             return False
         if key == 'ENTER':
-            self.commit_input()
+            if not (shift and self.input_newline()):
+                self.commit_input()
         elif key == 'ESCAPE':
             self.cancel_input()
         elif key == 'BACKSPACE':
@@ -66,6 +114,8 @@ class InputLine:
         """
         if not self.input_mode:
             return False
-        self.input_buffer += ''.join(ch for ch in text if ch.isprintable())
+        multi = self.input_mode in self.multiline_modes
+        self.input_buffer += ''.join(
+            ch for ch in text if ch.isprintable() or (multi and ch == '\n'))
         self._input_live()
         return True

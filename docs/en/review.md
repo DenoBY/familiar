@@ -27,11 +27,19 @@ Two view modes — the whole file, or just the changed hunks:
   expanded, with changes marked inline.
 - **Jump between changes** (`[` / `]`) — across edit blocks within the diff (in both modes).
 - **Per-file line stats** in the tree (`+added −removed`), like in an IDE/GitHub.
+- **Unversioned Files** — untracked files are gathered into their own group at the bottom
+  of the tree, collapsed by default, so a pile of new files doesn't bury the changes you
+  came to review.
+- **Stage from the tree** (`+`) — `git add` the file under the cursor, a whole folder, or
+  every untracked file at once (`+` on the group node).
 - **Sticky header**: while scrolling, the enclosing function/class is pinned at the top.
 - **Horizontal scroll** for long lines (`h` / `l`).
-- **Comments → markdown** — you comment on lines right in the diff; pressing `w` collects all
-  comments into markdown and copies them to the clipboard to feed back to Claude
-  ("here are the comments, fix them"). Closes the review → edit loop.
+- **Scrollbars** in both panes; the mouse wheel scrolls the pane it's over, without
+  moving the selection.
+- **Comments → markdown** — you comment on lines right in the diff (multi-line: `Shift+Enter`);
+  pressing `w` collects all comments into markdown, copies them to the clipboard to feed
+  back to Claude ("here are the comments, fix them") and clears them. Closes the
+  review → edit loop.
 - **Refresh** (`r`) — rescan changes without reopening the overlay (handy while Claude
   is still editing files).
 - **Open in editor** (`e`) — open the current file at the visible line. The editor is chosen
@@ -83,6 +91,7 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `g` / `G` | first / last file |
 | `Enter` `Space` | collapse/expand folder |
 | `→` `Tab` | go to the diff (cursor over lines) |
+| `+` | `git add` the file / folder / all Unversioned Files under the cursor |
 | `s` | git scope: working → staged → vs branch |
 | `r` | rescan changes (refresh) |
 | `u` | show/hide noisy folders (`.idea`, `node_modules`, `__pycache__`, …) |
@@ -98,9 +107,19 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `Enter` | on the `┈` separator — reveal hidden context lines |
 | `Enter` / `c` | comment on the line under the cursor (empty — delete one) |
 | `{` / `}` | jump to the previous / next comment (`●`) |
-| `w` | collect all comments into markdown and copy to the clipboard |
+| `w` | collect all comments into markdown, copy to the clipboard and clear them |
 | `x` | delete all comments |
 | `[` / `]` | previous / next change |
+
+**While typing** (comment / filter / search)
+
+| Key | Action |
+|---|---|
+| `Enter` | save (in a comment: an empty text deletes it) |
+| `Shift+Enter` | new line — comments are multi-line and wrap by words |
+| `Ctrl+W` | erase the word before the cursor |
+| `Ctrl+U` | erase the whole text |
+| `Esc` | cancel |
 
 **Common (in both focus areas)**
 
@@ -110,25 +129,33 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `h` / `l` | horizontal scroll of the diff (long lines) |
 | `a` | view mode: hunks only ↔ whole file |
 | `/` `n`/`N` | search the diff and jump between matches |
-| `⌘c` | copy: in the tree — the file path, in the diff — the selection / line under the cursor |
-| `⌘shift+c` | copy `path:line` (in the tree — the file path) |
+| `⌘c` | copy: in the tree — `@path` of the file/folder, in the diff — the selection / line under the cursor |
+| `⌘shift+c` | copy `@path#L42` (in the tree — `@path`) |
 | `e` | open the file in the project IDE (`.idea`/`.vscode`/`.cursor`/`.zed`) or `$EDITOR` |
 
 File statuses (colored as in an IDE): `A` added — green, `M` modified — blue,
 `D` deleted — red, `R` renamed — cyan, `?` untracked (new, not yet in git) —
 **red** (the file is shown but marked as not added to git).
 
+Untracked files are gathered into an **Unversioned Files** group at the bottom of the
+tree, collapsed by default. `+` on the group node stages all of them at once; `+` on a
+file or a folder stages just that. The hint only shows up when there is actually
+something to add — an already staged file offers nothing.
+
 Noisy IDE folders (`.idea`, `.vscode`, `node_modules`, `__pycache__`, `dist`, `venv`,
-etc.) are hidden by default — as in an IDE; `u` shows them.
+etc.) are hidden by default — as in an IDE; `u` shows them (and says how many). They are
+never staged by `+` while hidden.
 
 ## Working with Claude Code
 
 ### Comments back to Claude
 
 1. `Tab` — go to the diff, `↑/↓` — land on a line.
-2. `Enter` or `c` — write a comment (a `●` appears next to the line).
+2. `Enter` or `c` — write a comment (a `●` appears next to the line). `Shift+Enter` —
+   a new line; the text wraps by words, `Ctrl+W` / `Ctrl+U` erase a word / everything.
 3. Go through all the spots, across different files.
-4. `w` — all comments are collected into markdown and **copied to the clipboard**:
+4. `w` — all comments are collected into markdown, **copied to the clipboard** and
+   cleared from the diff:
 
    ```markdown
    # Review comments
@@ -143,15 +170,18 @@ etc.) are hidden by default — as in an IDE; `u` shows them.
 ### Paths and lines
 
 Besides collecting comments, the diff is a quick way to point Claude Code at a specific
-spot in the code:
+spot in the code. Both keys copy an **@-mention** with a path relative to the repository
+root — the form Claude Code expects:
 
-- `⌘c` copies the **absolute path** of the selected file (tree focus) or the
-  **selection / line under the cursor** (diff focus).
-- `⌘shift+c` copies `path:line` — the absolute path with the line number under the cursor.
+- `⌘c` copies `@path/to/file.py` of the selected file, or `@path/to/dir/` of a folder
+  (tree focus); in the diff it copies the **selection / line under the cursor** as code.
+- `⌘shift+c` copies `@path/to/file.py#L42`, or `@path/to/file.py#L42-58` when a range of
+  lines is selected with the mouse.
 
-Claude Code reads `path/to/file.py:42` as an exact reference and opens/edits that very
-spot — no need to describe it in words ("in such-and-such file, somewhere near that
-function"). Land on a line in the diff → `⌘shift+c` → `Cmd+V` into the prompt.
+Claude Code resolves `@path` against the directory it was started in, so this works when
+you run `claude` from the project root. Land on a line in the diff → `⌘shift+c` → `Cmd+V`
+into the prompt — no need to describe the spot in words ("in such-and-such file, somewhere
+near that function").
 
 ## Git scopes (what's compared with what)
 

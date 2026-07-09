@@ -158,6 +158,32 @@ class TestBuildTree(unittest.TestCase):
         self.assertTrue(rows[0]['collapsed'])
         self.assertEqual(rows[1]['name'], 'd.py')
 
+    def _grouped(self):
+        return self._items() + [{'rel': 'a/g.py', 'kind': 'untracked',
+                                 'stat': (1, 0), 'group': 'Unversioned Files'}]
+
+    def test_group_node_last_and_namespaced(self):
+        rows = D.build_tree(self._grouped(), set())
+        grp = rows[4]
+        self.assertEqual((grp['type'], grp['name'], grp['count'], grp['depth']),
+                         ('dir', 'Unversioned Files', 1, 0))
+        self.assertIsNone(grp['path'])
+        inner = rows[5]
+        self.assertEqual((inner['name'], inner['depth'], inner['path']), ('a', 1, 'a'))
+        self.assertNotEqual(inner['key'], rows[0]['key'])
+        self.assertEqual(rows[6]['name'], 'g.py')
+
+    def test_group_collapsed_hides_children(self):
+        rows = D.build_tree(self._grouped(), {D.group_key('Unversioned Files')})
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(rows[4]['collapsed'])
+
+    def test_collapsing_group_leaves_namesake_dir_outside_expanded(self):
+        rows = D.build_tree(self._grouped(), {D.group_key('Unversioned Files')})
+        dir_a = rows[0]
+        self.assertEqual(dir_a['name'], 'a')
+        self.assertFalse(dir_a['collapsed'])
+
 
 class DiffCellTest(unittest.TestCase):
     """Общее ядро отрисовки строки диффа.

@@ -36,17 +36,25 @@ if '__file__' in globals():
 
 from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
-from modules.review.git import detect_base, scan_changes
+from modules.review.git import detect_base, scan_changes, stage_paths
+from modules.text import plural
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
+from modules.vcs.diff import group_key
 from modules.vcs.util import chord, short_path, to_latin, truncate
 from modules.vcs.view import DiffTreeView
 
 
+UNVERSIONED = 'Unversioned Files'
+
+
 class ReviewHandler(DiffTreeView):
+
+    multiline_modes = ('comment',)
 
     def __init__(self, args: list, cwd: str, root: 'str | None',
                  base: str = 'main') -> None:
         super().__init__(root)
+        self.collapsed.add(group_key(UNVERSIONED))
         self.cli_args = args
         self.cwd = cwd
         self.base = base             # базовая ветка для scope 'branch'
@@ -116,6 +124,8 @@ class ReviewHandler(DiffTreeView):
         self.items = scan_changes(self.root, self.scope, self.base)
         for it in self.items:
             it['rel'] = it['path']
+            if it.get('untracked'):
+                it['group'] = UNVERSIONED
         # пустой список из-за ошибки git — показать её,
         # а не «no changes»
         self.status = '' if self.items else last_error()
@@ -174,9 +184,10 @@ class ReviewHandler(DiffTreeView):
 
     def _footer(self):
         if self.input_mode == 'comment':
-            return ' Enter — save   Esc — cancel   (empty = delete)'
+            return (' Enter — save   Shift+Enter — new line   ⌃w erase word'
+                    '   ⌃u erase all   Esc — cancel   (empty = delete)')
         if self.input_mode:
-            return ' Enter — keep   Esc — clear'
+            return ' Enter — keep   ⌃w erase word   ⌃u erase all   Esc — clear'
         if self.flash:
             return ' ' + self.flash
         exp = 'a full-file' if not self.expand else 'a hunks'
@@ -190,15 +201,58 @@ class ReviewHandler(DiffTreeView):
                         f' · [ ] hunk · h/l scroll · {exp} · w export · ←/Tab tree · e edit')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c path · {exp} · s scope'
-                    f' · e edit · r refresh · / search · f filter · {u} · q')
+            stage = ' · + stage' if self._selected_paths() else ''
+            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {exp} · s scope'
+                    f'{stage} · e edit · r refresh · / search · f filter · {u} · q')
         if self.annots:
-            base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy · x clear)'
+            base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy+clear · x clear)'
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'
         if self.search_matches:
             base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
         return base
+
+    # --- git add ---
+
+    @staticmethod
+    def _stageable(it):
+        """Есть ли что добавлять в индекс: вторая буква статуса git —
+        рабочее дерево. Полностью staged файл ('M ', 'A ') повторный
+        git add не изменит, untracked ('??') — изменит.
+        """
+        xy = it.get('xy') or ''
+        return len(xy) > 1 and xy[1] != ' '
+
+    def _selected_paths(self):
+        """Пути под курсором дерева, готовые к git add: у файла — он
+        сам, у папки (и у узла Unversioned Files) — все её файлы.
+        Скрытые фильтром и noise-каталоги не попадают: добавляем
+        ровно то, что видно.
+        """
+        if not self.rows or not (0 <= self.tsel < len(self.rows)):
+            return []
+        row = self.rows[self.tsel]
+        if row['type'] == 'file':
+            it = self.filtered[row['idx']]
+            return [it['path']] if self._stageable(it) else []
+        prefix = row['path'] + '/' if row.get('path') else ''
+        return [it['path'] for it in self.filtered
+                if it.get('group') == row.get('group') and it['rel'].startswith(prefix)
+                and self._stageable(it)]
+
+    def stage_selected(self):
+        if not self.root:
+            return
+        paths = self._selected_paths()
+        if not paths:
+            self.flash = 'nothing to stage here'
+            self.draw_screen()
+            return
+        if stage_paths(self.root, paths):
+            self.flash = f'staged {plural(len(paths), "file")}'
+        else:
+            self.flash = f'git add failed: {last_error()}'
+        self.refresh()
 
     # --- аннотации (комментарии к строкам → markdown в буфер) ---
 
@@ -262,10 +316,15 @@ class ReviewHandler(DiffTreeView):
             for line, v in sorted(by_file[rel]):
                 code = v['code'].strip()
                 out.append(f'- **L{line}** `{code}`' if code else f'- **L{line}**')
-                out.append(f'  {v["text"]}')
+                out += [f'  {ln}' if ln else '' for ln in v['text'].split('\n')]
             out.append('')
         self._copy_clipboard('\n'.join(out))
-        self.flash = f'copied {len(self.annots)} comments to clipboard'
+        n = len(self.annots)
+        # выгруженное ревью живёт дальше в буфере обмена; держать
+        # его ещё и на строках диффа незачем — маркеры ● только
+        # мешают следующему проходу
+        self.annots = {}
+        self.flash = f'copied {plural(n, "comment")} to clipboard — cleared'
         self.draw_screen()
 
     def clear_annotations(self):
@@ -366,14 +425,23 @@ class ReviewHandler(DiffTreeView):
         if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
             return
-        if chord(key_event, 'ctrl', 'd'):
+        # пока пишем в строку ввода, ⌃u/⌃w правят текст, а не
+        # скроллят дифф: скроллить всё равно незачем
+        if self.input_mode:
+            if chord(key_event, 'ctrl', 'w'):
+                self.input_kill_word()
+                return
+            if chord(key_event, 'ctrl', 'u'):
+                self.input_kill_all()
+                return
+        elif chord(key_event, 'ctrl', 'd'):
             self.diff_scroll(self.visible_rows() // 2)
             return
-        if chord(key_event, 'ctrl', 'u'):
+        elif chord(key_event, 'ctrl', 'u'):
             self.diff_scroll(-self.visible_rows() // 2)
             return
         k = key_event.key
-        if self.input_key(k):
+        if self.input_key(k, shift=bool(getattr(key_event, 'shift', False))):
             return
         if chord(key_event, 'super+shift', 'c'):
             self.smart_copy_location()
@@ -392,11 +460,11 @@ class ReviewHandler(DiffTreeView):
         elif k == 'PAGE_DOWN':
             self.diff_scroll(self.visible_rows())
         elif k == 'HOME':
-            self.tsel = 0
+            self.set_tsel(0)
             self.load_diff()
             self.draw_screen()
         elif k == 'END':
-            self.tsel = max(0, len(self.rows) - 1)
+            self.set_tsel(len(self.rows) - 1)
             self.load_diff()
             self.draw_screen()
         elif k == 'ENTER':
@@ -482,6 +550,8 @@ class ReviewHandler(DiffTreeView):
                 self.clear_annotations()
             elif c in ('u', 'U'):
                 self.toggle_noise()
+            elif ch == '+':
+                self.stage_selected()
             elif ch == ' ':
                 self.toggle_fold()
 

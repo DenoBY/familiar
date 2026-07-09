@@ -5,6 +5,43 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-07-10
+
+### Added
+
+- review: untracked files are gathered into an **Unversioned Files** group at the bottom
+  of the tree, collapsed by default — a pile of new files no longer buries the changes
+  you opened the review for.
+- review: `+` stages what's under the cursor — a file, a whole folder, or every
+  untracked file at once (`+` on the group node). The hint only appears when `git add`
+  would actually do something; hidden noisy folders are never staged.
+- review, log: **scrollbars** in both panes. The wheel now scrolls the pane it's over
+  instead of moving the selection (and no longer reloads the diff on every notch);
+  the arrows keep moving the selection and pull the view back to the cursor.
+- review: **multi-line comments** — `Shift+Enter` inserts a line break, long text wraps
+  by words, and the input area grows up to a third of the screen.
+- review, log: `Ctrl+W` erases the word before the cursor and `Ctrl+U` erases the whole
+  text while typing (readline habits). While the input is open they no longer scroll the
+  diff.
+- review: `u` reports how many ignored files it showed or hid — useful when they all end
+  up inside the collapsed Unversioned Files group.
+
+### Changed
+
+- review, log: `⌘c` and `⌘shift+c` now copy an **@-mention relative to the repository
+  root** (`@plugins/review.py`, `@plugins/review.py#L42`, `@plugins/review.py#L42-58` for
+  a selected range, `@plugins/` for a folder) instead of an absolute `path:line`. This is
+  the form Claude Code expects; it resolves `@path` against the directory it was started
+  in.
+- review: `w` now clears the comments after copying them to the clipboard — the exported
+  review lives in the clipboard, and the `●` markers only got in the way of the next pass.
+
+### Fixed
+
+- review, log: the file counter in the header counted tree *rows*, so files inside
+  collapsed folders (and inside the new Unversioned Files group) were missing from it.
+  Pressing `u` on a project whose ignored files are all untracked looked like a no-op.
+
 ## [0.4.0] — 2026-07-09
 
 ### Added

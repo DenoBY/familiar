@@ -61,6 +61,13 @@ def git_changes(root: str) -> list[dict]:
     return items
 
 
+def stage_paths(root: str, paths: list[str]) -> bool:
+    """False — git отказал; причина в last_error()."""
+    if not paths:
+        return False
+    return run_git(root, 'add', '--', *paths) is not None
+
+
 def detect_base(root: str) -> str:
     """Базовая ветка для scope 'branch'.
 

@@ -381,7 +381,7 @@ class CommitLogHandler(DiffTreeView):
                         f' · [ ] hunk · h/l scroll · {exp} · ←/Tab tree · Esc back')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c path · {exp}'
+            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {exp}'
                     f' · / search · {u} · Esc back')
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'

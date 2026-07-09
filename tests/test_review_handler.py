@@ -7,7 +7,7 @@ import unittest
 import kittymock  # noqa: F401
 import review as R
 from kittymock import draw_text, wire
-from modules.vcs.diff import DiffSource
+from modules.vcs.diff import DiffSource, group_key
 
 
 _ENV = {
@@ -56,12 +56,18 @@ class ReviewHandlerTest(unittest.TestCase):
         with open(p, 'w') as f:
             f.write(content)
 
+    def _expand_unversioned(self):
+        self.h.collapsed.discard(group_key(R.UNVERSIONED))
+        self.h.rebuild_tree()
+
     def _select_file(self, basename):
-        for i, r in enumerate(self.h.rows):
-            if r['type'] == 'file' and r['name'] == basename:
-                self.h.tsel = i
-                self.h.load_diff()
-                return
+        for _ in range(2):
+            for i, r in enumerate(self.h.rows):
+                if r['type'] == 'file' and r['name'] == basename:
+                    self.h.tsel = i
+                    self.h.load_diff()
+                    return
+            self._expand_unversioned()
         self.fail(f'файл {basename} не найден в дереве')
 
     # --- дерево и источник ---
@@ -69,14 +75,117 @@ class ReviewHandlerTest(unittest.TestCase):
     def test_tree_built(self):
         names = [r['name'] for r in self.h.rows]
         self.assertIn('big.txt', names)
-        self.assertIn('new.txt', names)
         self.assertIn('dir', names)                 # папка-узел
-        self.assertEqual(self.h.n_files, 3)
         self.assertIsNotNone(self.h.current_item())
+
+    def test_file_count_includes_files_hidden_in_collapsed_group(self):
+        visible_files = sum(1 for r in self.h.rows if r['type'] == 'file')
+        self.assertEqual(visible_files, 2)          # new.txt свёрнут в группе
+        self.assertEqual(self.h.n_files, 3)
+
+    def test_untracked_grouped_and_collapsed(self):
+        grp = [r for r in self.h.rows if r.get('group')]
+        self.assertEqual(len(grp), 1)
+        self.assertEqual(grp[0]['name'], R.UNVERSIONED)
+        self.assertTrue(grp[0]['collapsed'])
+        self.assertEqual(grp[0]['count'], 1)
+        self.assertEqual(grp[0]['depth'], 0)
+        self.assertNotIn('new.txt', [r['name'] for r in self.h.rows])
+        self._expand_unversioned()
+        self.assertIn('new.txt', [r['name'] for r in self.h.rows])
+
+    def test_unversioned_group_node_is_not_a_path(self):
+        self.h.tsel = next(i for i, r in enumerate(self.h.rows) if r.get('group_root'))
+        self.assertIsNone(self.h._current_rel())
 
     def test_untracked_marked(self):
         self._select_file('new.txt')
         self.assertEqual(self.h.current_item()['kind'], 'untracked')
+
+    # --- git add из дерева ---
+
+    def _status(self):
+        out = subprocess.run(['git', '-C', self.repo, 'status', '--porcelain', '-uall'],
+                             capture_output=True, text=True, env=os.environ).stdout
+        return dict((ln[3:], ln[:2]) for ln in out.splitlines())
+
+    def _select_row(self, pred):
+        self.h.tsel = next(i for i, r in enumerate(self.h.rows) if pred(r))
+
+    def test_stage_file(self):
+        self._select_file('new.txt')
+        self.h.stage_selected()
+        self.assertEqual(self._status()['new.txt'], 'A ')
+
+    def test_stage_folder_takes_all_its_files(self):
+        self.write('dir/second.txt', 'исходный\n')
+        self._git('add', 'dir/second.txt')     # только он, правки setUp остаются рабочими
+        self._git('commit', '-m', 'second')
+        self.write('dir/second.txt', 'правка\n')
+        self.h.refresh()
+        self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
+        self.assertEqual(sorted(self.h._selected_paths()),
+                         ['dir/second.txt', 'dir/sub.txt'])
+        self.h.stage_selected()
+        st = self._status()
+        self.assertEqual((st['dir/sub.txt'], st['dir/second.txt']), ('M ', 'M '))
+
+    def test_stage_unversioned_group_node(self):
+        self.write('another.txt', 'ещё\n')
+        self.h.refresh()
+        self._select_row(lambda r: r.get('group_root'))
+        self.assertEqual(sorted(self.h._selected_paths()), ['another.txt', 'new.txt'])
+        self.h.stage_selected()
+        st = self._status()
+        self.assertEqual((st['new.txt'], st['another.txt']), ('A ', 'A '))
+
+    def test_stage_skips_hidden_noise(self):
+        self.write('node_modules/junk.js', 'x\n')
+        self.h.refresh()
+        self._select_row(lambda r: r.get('group_root'))
+        self.assertNotIn('node_modules/junk.js', self.h._selected_paths())
+
+    def test_nothing_to_stage_outside_working_scope(self):
+        self.h.scope = 'staged'
+        self.h.load_source()
+        staged = []
+        self.h.refresh = lambda: staged.append(1)
+        self.h.out = []
+        self.h.stage_selected()
+        self.assertEqual(staged, [])
+        self.assertIn('nothing to stage', draw_text(self.h))  # flash гаснет после отрисовки
+
+    def test_already_staged_file_offers_nothing(self):
+        self._select_file('new.txt')
+        self.h.stage_selected()
+        self._select_file('new.txt')
+        self.assertEqual(self.h._selected_paths(), [])
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertNotIn('+ stage', draw_text(self.h))
+
+    def test_stage_hint_shown_when_there_is_something_to_add(self):
+        self._select_file('big.txt')      # изменён в setUp
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('+ stage', draw_text(self.h))
+
+    def test_folder_offers_stage_only_while_it_holds_unstaged_files(self):
+        self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
+        self.assertEqual(self.h._selected_paths(), ['dir/sub.txt'])
+        self.h.stage_selected()
+        self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
+        self.assertEqual(self.h._selected_paths(), [])
+
+    def test_folder_inside_group_does_not_grab_namesake_outside(self):
+        self.write('dir/fresh.txt', 'новый в отслеживаемой папке\n')
+        self.h.refresh()
+        self._expand_unversioned()
+        inside = [r for r in self.h.rows
+                  if r['type'] == 'dir' and r['name'] == 'dir' and r.get('group')]
+        self.assertEqual(len(inside), 1)
+        self.h.tsel = self.h.rows.index(inside[0])
+        self.assertEqual(self.h._selected_paths(), ['dir/fresh.txt'])
 
     # --- навигация ---
 
@@ -86,6 +195,82 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(self.h.tsel, 0)
         self.h.tree_move(999)
         self.assertEqual(self.h.tsel, len(self.h.rows) - 1)
+
+    # --- скролл дерева (колесо) и полоса прокрутки ---
+
+    def _cramped(self):
+        """Окно ниже дерева: видимых строк меньше, чем строк дерева
+        (иначе скроллить нечего и полосы нет).
+        """
+        wire(self.h, rows=2 + 3, cols=120)   # 3 строки съедают шапка и футер
+        self._expand_unversioned()
+        self.h.tsel = 0
+
+    def test_no_scrollbar_when_tree_fits(self):
+        self.assertIsNone(self.h._scrollbar())
+
+    def test_wheel_scrolls_tree_without_moving_selection_or_reloading_diff(self):
+        self._cramped()
+        diff_loads = []
+        self.h.load_diff = lambda: diff_loads.append(1)
+        self.h.tree_scroll(1)
+        self.assertEqual((self.h.left_offset, self.h.tsel), (1, 0))
+        self.assertEqual(diff_loads, [])
+
+    def test_tree_scroll_is_bounded_and_thumb_reaches_bottom(self):
+        self._cramped()
+        vis = self.h.visible_rows()
+        self.h.tree_scroll(999)
+        self.assertEqual(self.h.left_offset, len(self.h.rows) - vis)
+        pos, size = self.h._scrollbar()
+        self.assertEqual(pos + size, vis)
+        self.h.tree_scroll(-999)
+        self.assertEqual(self.h.left_offset, 0)
+        self.assertEqual(self.h._scrollbar()[0], 0)
+
+    def test_arrow_pulls_scroll_back_to_cursor(self):
+        self._cramped()
+        self.h.tree_scroll(999)
+        self.h.tree_move(1)
+        self.assertEqual(self.h.tsel, 1)
+        self.assertLessEqual(self.h.left_offset, self.h.tsel)
+        self.assertLess(self.h.tsel, self.h.left_offset + self.h.visible_rows())
+
+    def test_diff_pane_has_its_own_thumb(self):
+        self._select_file('big.txt')
+        self.h.expand = True
+        self.h.build_diff_rows()
+        wire(self.h, rows=8, cols=80)
+        self.h.build_diff_rows()
+        vis = self.h.visible_rows()
+        self.assertGreater(len(self.h.diff_rows), vis)
+        top = self.h._thumb(0, len(self.h.diff_rows), vis)
+        self.assertEqual(top[0], 0)
+        self.h.diff_scroll(999)
+        bottom = self.h._thumb(self.h.diff_offset, len(self.h.diff_rows), vis)
+        self.assertEqual(bottom[0] + bottom[1], vis)
+
+    def test_thumb_column_is_reserved_in_both_panes(self):
+        separator, diff_thumb = 3, 1     # ползунок дерева живёт внутри left_width()
+        self.assertEqual(
+            self.h.left_width() + separator + self.h.diff_width() + diff_thumb,
+            self.h.screen_size.cols)
+
+    def test_wheel_over_tree_scrolls_wheel_over_diff_scrolls_diff(self):
+        self._cramped()
+        calls = []
+        self.h.tree_scroll = lambda d: calls.append(('tree', d))
+        self.h.diff_scroll = lambda d: calls.append(('diff', d))
+
+        class Ev:
+            buttons = kittymock.MouseButton.WHEEL_DOWN
+            cell_x = 0
+            cell_y = 5
+
+        self.h.on_mouse_event(Ev())
+        Ev.cell_x = self.h.left_width() + 5
+        self.h.on_mouse_event(Ev())
+        self.assertEqual(calls, [('tree', 3), ('diff', 3)])
 
     def test_fast_tree_scroll_defers_diff_load(self):
         scheduled = []
@@ -300,8 +485,116 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertIn('copied', draw_text(self.h))
         self.assertTrue(any('\x1b]52;c;' in str(x) for x in self.h.out))  # OSC52 в буфер
 
-        self.h.clear_annotations()
+    def test_export_without_comments_keeps_hint(self):
+        self.h.out = []
+        self.h.export_review()
+        self.assertIn('no comments', draw_text(self.h))
+        self.assertFalse(any('\x1b]52;c;' in str(x) for x in self.h.out))
+
+    def test_export_clears_annotations_and_markers(self):
+        self._start_comment()
+        self.h.input_buffer = 'первый'
+        self.h.commit_input()
+        rel = self.h.current_item()['rel']
+        di = self.h._first_commentable(0)
+        self.assertTrue(self.h._diff_annotated(di, rel))
+        copied = []
+        self.h._copy_clipboard = copied.append
+        self.h.export_review()
+        self.assertIn('первый', copied[0])
         self.assertEqual(self.h.annots, {})
+        self.assertFalse(self.h._diff_annotated(di, rel))
+
+    def _start_comment(self):
+        self._select_file('big.txt')
+        self.h.set_focus('diff')
+        self.h.diff_cur = self.h._first_commentable(0)
+        self.h.start_comment()
+
+    def test_shift_enter_adds_newline_plain_enter_saves(self):
+        self._start_comment()
+        self.h.input_text('первая')
+        self.h.input_key('ENTER', shift=True)
+        self.h.input_text('вторая')
+        self.assertEqual(self.h.input_mode, 'comment')
+        self.h.input_key('ENTER')
+        self.assertIsNone(self.h.input_mode)
+        self.assertEqual(next(iter(self.h.annots.values()))['text'], 'первая\nвторая')
+
+    def test_shift_enter_saves_in_single_line_modes(self):
+        self.h.start_filter()
+        self.h.input_text('abc')
+        self.h.input_key('ENTER', shift=True)
+        self.assertIsNone(self.h.input_mode)
+        self.assertEqual(self.h.filter_query, 'abc')
+
+    def test_long_comment_wraps_and_grows_input_area(self):
+        self._start_comment()
+        rows_before = self.h.visible_rows()
+        self.h.input_buffer = 'слово ' * 60
+        lines = self.h.input_lines(self.h.screen_size.cols)
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(len(ln) <= self.h.screen_size.cols for ln in lines))
+        self.assertLess(self.h.visible_rows(), rows_before)
+
+    def test_input_area_capped_at_third_of_screen(self):
+        self._start_comment()
+        self.h.input_buffer = 'x\n' * 200
+        self.assertEqual(self.h.input_rows(), self.h.screen_size.rows // 3)
+
+    def test_kill_word_and_kill_all(self):
+        self._start_comment()
+        self.h.input_text('нужен рефактор этой функции')
+        self.h.input_kill_word()
+        self.assertEqual(self.h.input_buffer, 'нужен рефактор этой ')
+        self.h.input_kill_word()
+        self.assertEqual(self.h.input_buffer, 'нужен рефактор ')
+        self.h.input_kill_all()
+        self.assertEqual(self.h.input_buffer, '')
+
+    def test_kill_word_on_empty_buffer_is_noop(self):
+        self._start_comment()
+        self.h.input_kill_word()
+        self.assertEqual(self.h.input_buffer, '')
+
+    def test_kill_word_stops_at_newline(self):
+        self._start_comment()
+        self.h.input_buffer = 'первая\nвторая строка'
+        self.h.input_kill_word()
+        self.assertEqual(self.h.input_buffer, 'первая\nвторая ')
+        self.h.input_kill_word()
+        self.assertEqual(self.h.input_buffer, 'первая\n')
+
+    def test_ctrl_u_erases_text_while_typing(self):
+        self._start_comment()
+        self.h.input_text('текст')
+        scrolls = []
+        self.h.diff_scroll = lambda d: scrolls.append(d)
+        self.h.on_key(kittymock.KeyEvent('u', ctrl=True))
+        self.assertEqual((self.h.input_buffer, scrolls), ('', []))
+
+    def test_ctrl_u_scrolls_diff_outside_input(self):
+        scrolls = []
+        self.h.diff_scroll = lambda d: scrolls.append(d)
+        self.h.on_key(kittymock.KeyEvent('u', ctrl=True))
+        self.assertEqual(len(scrolls), 1)
+
+    def test_ctrl_w_erases_word_and_does_not_leak_to_hotkeys(self):
+        self._start_comment()
+        self.h.input_text('раз два')
+        exported = []
+        self.h.export_review = lambda: exported.append(1)
+        self.h.on_key(kittymock.KeyEvent('w', ctrl=True))
+        self.assertEqual((self.h.input_buffer, exported), ('раз ', []))
+
+    def test_multiline_comment_exported_with_indent(self):
+        self._start_comment()
+        self.h.input_buffer = 'первая\nвторая'
+        self.h.commit_input()
+        copied = []
+        self.h._copy_clipboard = copied.append
+        self.h.export_review()
+        self.assertIn('\n  первая\n  вторая', copied[0])
 
     def test_empty_comment_deletes(self):
         self._select_file('big.txt')
@@ -465,10 +758,15 @@ class YankTest(unittest.TestCase):
         self.assertEqual(self._copied(), 'l1')
         self.assertEqual(self.h.focus, 'diff')
 
-    def test_copy_location_writes_path_line(self):
+    def test_copy_location_writes_mention_with_line(self):
         self.h.diff_cur = 3                     # lineno 3
         self.h.copy_location()
-        self.assertEqual(self._copied(), '/repo/a/b.py:3')
+        self.assertEqual(self._copied(), '@a/b.py#L3')
+
+    def test_copy_location_writes_line_range_when_selected(self):
+        self.h.diff_sel = (0, 3)
+        self.h.copy_location()
+        self.assertEqual(self._copied(), '@a/b.py#L1-3')
 
     def test_copy_char_selection_substring(self):
         # выделение куска внутри строки → копируется ровно подстрока
@@ -490,14 +788,14 @@ class YankTest(unittest.TestCase):
         out = self.h._diff_cell(0, 80, None, -1)
         self.assertIn('plain-content-xyz', out)   # из vis, а не готовой строки rows[0]
 
-    def test_copy_path_writes_abspath(self):
+    def test_copy_path_writes_mention(self):
         self.h.copy_path()
-        self.assertEqual(self._copied(), '/repo/a/b.py')
+        self.assertEqual(self._copied(), '@a/b.py')
 
     def test_smart_copy_tree_copies_path(self):
         self.h.focus = 'tree'
         self.h.smart_copy()
-        self.assertEqual(self._copied(), '/repo/a/b.py')
+        self.assertEqual(self._copied(), '@a/b.py')
 
     def test_smart_copy_diff_copies_code(self):
         self.h.focus = 'diff'
@@ -509,12 +807,12 @@ class YankTest(unittest.TestCase):
         self.h.focus = 'diff'
         self.h.diff_cur = 0
         self.h.smart_copy_location()
-        self.assertEqual(self._copied(), '/repo/a/b.py:1')
+        self.assertEqual(self._copied(), '@a/b.py#L1')
 
     def test_smart_copy_location_tree_copies_path(self):
         self.h.focus = 'tree'
         self.h.smart_copy_location()
-        self.assertEqual(self._copied(), '/repo/a/b.py')
+        self.assertEqual(self._copied(), '@a/b.py')
 
 
 if __name__ == '__main__':

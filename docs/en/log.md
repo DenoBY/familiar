@@ -80,7 +80,7 @@ overlay.
 | `Enter` `Space` | collapse/expand folder |
 | `→` `Tab` | go to diff |
 | `u` | show/hide "noisy" folders (`.idea`, `node_modules`, …) |
-| `⌘c` | copy file path |
+| `⌘c` | copy `@path` of the file/folder |
 | `←` `Esc` | back to commit list |
 
 **Commit diff** (`→`/`Tab` from the tree)
@@ -96,12 +96,13 @@ overlay.
 | `a` | view mode: hunks only ↔ the whole file |
 | `/` `n`/`N` | search the diff and jump between matches |
 | `⌘c` | copy the selection (or the line under the cursor) |
-| `⌘shift+c` | copy `path:line` |
+| `⌘shift+c` | copy `@path#L42` (`#L42-58` for a selected range) |
 | `←` `Tab` | back to the tree |
 | `Esc` | clear selection/search → back to the tree → back to the list |
 
 **Mouse**: click a commit to select, click again to open; wheel scrolls the list.
 In the diff — as in review (click to place the cursor, click on `┈` to expand, select with `Shift` held).
+Both panes have a scrollbar; the wheel scrolls the pane it's over, without moving the selection.
 
 File statuses and "noisy" folders — as in [review](./review.md). Unlike review, log is
 **read-only**: no comments, scopes, refresh, or opening in an editor.
@@ -110,11 +111,11 @@ File statuses and "noisy" folders — as in [review](./review.md). Unlike review
 
 From history it's easy to point Claude Code at a specific spot in the code:
 
-- `⌘c` copies the **commit hash** (in the list), the **absolute path** of a file (in the
-  tree), or the **selection / line under the cursor** (in the diff).
-- `⌘shift+c` in the diff copies `path:line` — the absolute path with the line number under
-  the cursor.
+- `⌘c` copies the **commit hash** (in the list), the **@-mention** `@path/to/file.py` of a
+  file (in the tree), or the **selection / line under the cursor** (in the diff).
+- `⌘shift+c` in the diff copies `@path/to/file.py#L42`, or `#L42-58` when a range of lines
+  is selected with the mouse.
 
-Claude Code reads `path/to/file.py:42` as an exact reference and opens/edits that very
-spot — no need to describe where to look in words. Land on a line in the diff →
-`⌘shift+c` → `Cmd+V` into the prompt.
+Paths are relative to the repository root, the way Claude Code expects them — it resolves
+`@path` against the directory it was started in. Land on a line in the diff →
+`⌘shift+c` → `Cmd+V` into the prompt, no need to describe where to look in words.

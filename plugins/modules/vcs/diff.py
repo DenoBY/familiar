@@ -341,34 +341,63 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
 
 # ─────────────────────── дерево файлов ───────────────────────
 
+def _new_node() -> dict:
+    return {'dirs': {}, 'files': [], 'count': 0}
+
+
 def build_tree(items: list[dict], collapsed: set) -> list[dict]:
     """items (с полем 'rel') → плоский список строк дерева
-    (dir/file) со сворачиванием.
+    (dir/file) со сворачиванием; элементы с полем 'group' — под
+    одноимённый узел в конце дерева.
+
+    У строки-папки 'key' (ключ сворачивания) и 'path' (путь на
+    диске) расходятся: у узла группы пути нет, а ключи её подпапок
+    неймспейснуты именем группы — иначе свёрнутая папка внутри
+    группы схлопнула бы одноимённую снаружи.
     """
-    root = {'dirs': {}, 'files': [], 'count': 0}
+    plain = _new_node()
+    groups: dict[str, dict] = {}
     for idx, it in enumerate(items):
+        group = it.get('group')
+        node = plain if group is None else groups.setdefault(group, _new_node())
         parts = it['rel'].split('/')
-        node = root
         node['count'] += 1
         for p in parts[:-1]:
-            node = node['dirs'].setdefault(p, {'dirs': {}, 'files': [], 'count': 0})
+            node = node['dirs'].setdefault(p, _new_node())
             node['count'] += 1
         node['files'].append((parts[-1], idx))
     rows = []
 
-    def walk(node, depth, keypath):
+    def walk(node, depth, keypath, pathpath, group):
         for name in sorted(node['dirs']):
             key = f'{keypath}/{name}' if keypath else name
+            path = f'{pathpath}/{name}' if pathpath else name
             child = node['dirs'][name]
             is_collapsed = key in collapsed
             rows.append({'type': 'dir', 'depth': depth, 'name': name,
-                         'key': key, 'count': child['count'], 'collapsed': is_collapsed})
+                         'key': key, 'path': path, 'count': child['count'],
+                         'collapsed': is_collapsed, 'group': group})
             if not is_collapsed:
-                walk(child, depth + 1, key)
+                walk(child, depth + 1, key, path, group)
         for fname, idx in sorted(node['files']):
             rows.append({'type': 'file', 'depth': depth, 'name': fname,
                          'idx': idx, 'kind': items[idx]['kind'],
                          'stat': items[idx].get('stat')})
 
-    walk(root, 0, '')
+    walk(plain, 0, '', '', None)
+    for name in sorted(groups):
+        key = group_key(name)
+        is_collapsed = key in collapsed
+        rows.append({'type': 'dir', 'depth': 0, 'name': name, 'key': key,
+                     'path': None, 'count': groups[name]['count'],
+                     'collapsed': is_collapsed, 'group': name, 'group_root': True})
+        if not is_collapsed:
+            walk(groups[name], 1, key, '', name)
     return rows
+
+
+def group_key(name: str) -> str:
+    """Ключ сворачивания узла-группы. Слэш в начале не может
+    встретиться у ключа реальной папки (rel-пути относительные).
+    """
+    return f'/{name}'
