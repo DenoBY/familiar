@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import tempfile
 import unittest
 
@@ -21,6 +22,18 @@ def _run(argv):
     with contextlib.redirect_stdout(out):
         familiar.main(argv)
     return out.getvalue()
+
+
+class VersionTests(unittest.TestCase):
+    def test_cli_version_matches_formula_tag(self):
+        """Формулу при релизе бампят, а VERSION в CLI забывают —
+        тогда brew ставит 0.5.0, а `familiar --version` врёт.
+        """
+        formula = os.path.join(os.path.dirname(_TESTS), "Formula", "familiar.rb")
+        with open(formula) as f:
+            url = re.search(r'url ".*/tags/v([\d.]+)\.tar\.gz"', f.read())
+        self.assertIsNotNone(url, "в формуле не нашёлся url релизного тега")
+        self.assertEqual(familiar.VERSION, url.group(1))
 
 
 class RenderTests(unittest.TestCase):
