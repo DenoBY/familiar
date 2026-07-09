@@ -16,6 +16,12 @@ from modules.text import (  # noqa: F401  (ре-экспорт для session)
 )
 
 
+# Вопрос пользователю: у отклонённого (Esc) вызова своё имя — общий
+# заголовок «User answered …» о нём соврал бы.
+ASK_TOOL = 'AskUserQuestion'
+ASK_REJECTED = 'AskUserQuestionRejected'
+
+
 def human_age(seconds: float) -> str:
     m = seconds / 60
     if m < 1:

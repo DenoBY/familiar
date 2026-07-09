@@ -5,6 +5,27 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-07-09
+
+### Added
+
+- session: exploration (searching, reading, listing) collapses into a summary line
+  ("Searched for 2 patterns, read 1 file, listed 1 directory"), the way Claude Code
+  does it; click it or press `Ctrl+o` to expand. Commands, file edits, plans and calls
+  whose output is an error always stay visible in full.
+- session: a question to the user (`AskUserQuestion`) renders the way Claude Code does —
+  "User answered Claude's questions:" with "· question → answer" lines instead of the raw
+  tool_result blob; a question dismissed with `Esc` shows "User rejected Claude's
+  questions".
+
+### Fixed
+
+- session: the preview now shows only the active branch of the conversation. A session
+  file is a tree: a prompt cancelled with `Esc` or edited afterwards stayed in it as a
+  dead branch, and the kitten drew every draft in a row.
+- session: `Enter` in the preview no longer expands all folded output — while reading a
+  transcript it only got in the way; `Ctrl+o` still does it.
+
 ## [0.3.0] — 2026-07-09
 
 ### Added

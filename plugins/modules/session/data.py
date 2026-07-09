@@ -12,6 +12,7 @@ import re
 from typing import NamedTuple
 
 from ..text import plural
+from .util import ASK_REJECTED, ASK_TOOL
 
 
 # Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs:
@@ -550,6 +551,27 @@ def _result_text(block: dict) -> str:
     return '\n'.join(ln.rstrip() for ln in lines).strip('\n')
 
 
+def _answers_text(tur: object) -> str:
+    """Ответы на AskUserQuestion: «· вопрос → ответ».
+
+    Сам tool_result — простыня с пересказом вопроса и превью
+    выбранного варианта; читателю нужен только выбор.
+    """
+    answers = tur.get('answers') if isinstance(tur, dict) else None
+    if not isinstance(answers, dict):
+        return ''
+    return '\n'.join(f'· {_sanitize(q).strip()} → {_sanitize(str(a)).strip()}'
+                     for q, a in answers.items())
+
+
+def _is_rejected(block: dict, tur: object) -> bool:
+    """Отказ отвечать (Esc), а не «ответы не разобрались»: неизвестный
+    формат toolUseResult не должен выдавать ответ за отказ.
+    """
+    return bool(block.get('is_error')) or (
+        isinstance(tur, str) and tur.startswith('User rejected'))
+
+
 # Служебная запись (isMeta) вида «[Image: source: …/12.png]» — так
 # Claude Code протоколирует вложение предыдущей реплики; её номер —
 # имя файла.
@@ -562,8 +584,48 @@ def _meta_attachments(text: str) -> list[Entry]:
             for m in _IMAGE_META_RE.findall(text)]
 
 
+def _active_chain(objs: list) -> set:
+    """uuid записей на пути от последнего листа к корню.
+
+    Файл сессии — дерево, а не лог: отменённый (Esc) или
+    отредактированный промпт остаётся веткой-тупиком. Claude Code
+    показывает только актуальную ветку — от последнего листа вверх
+    по parentUuid.
+    """
+    parent = {}
+    leaf = None
+    for o in objs:
+        uid = o.get('uuid')
+        if not uid:
+            continue
+        parent[uid] = o.get('parentUuid')
+        leaf = uid
+    chain = set()
+    while leaf and leaf not in chain:
+        chain.add(leaf)
+        leaf = parent.get(leaf)
+    return chain
+
+
+def _read_objs(path: str) -> list:
+    objs = []
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    objs.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return objs
+
+
 def load_conversation(path: str) -> list[Entry]:
-    """Записи диалога сессии в порядке появления в файле.
+    """Записи актуальной ветки диалога в порядке появления в файле.
 
     Исключение — вывод инструмента: он встаёт сразу за своим
     вызовом, а не по порядку файла (при параллельных вызовах
@@ -572,34 +634,27 @@ def load_conversation(path: str) -> list[Entry]:
     """
     entries = []
     calls = {}   # tool_use_id → (имя, input, позиция вызова в entries)
-    try:
-        with open(path, encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except ValueError:
-                    continue
-                t = o.get('type')
-                if t not in ('user', 'assistant'):
-                    continue
-                c = o.get('message', {}).get('content')
-                if o.get('isMeta'):
-                    entries += _meta_attachments(_user_text(o))
-                    continue
-                if isinstance(c, str):
-                    txt = _entry_text(t, c)
-                    if txt:
-                        entries.append(Entry(t, txt))
-                elif isinstance(c, list):
-                    tur = o.get('toolUseResult')
-                    for b in c:
-                        if isinstance(b, dict):
-                            _append_block(entries, t, b, calls, tur)
-    except OSError:
-        pass
+    objs = _read_objs(path)
+    chain = _active_chain(objs)
+    for o in objs:
+        t = o.get('type')
+        if t not in ('user', 'assistant'):
+            continue
+        if chain and o.get('uuid') not in chain:
+            continue
+        c = o.get('message', {}).get('content')
+        if o.get('isMeta'):
+            entries += _meta_attachments(_user_text(o))
+            continue
+        if isinstance(c, str):
+            txt = _entry_text(t, c)
+            if txt:
+                entries.append(Entry(t, txt))
+        elif isinstance(c, list):
+            tur = o.get('toolUseResult')
+            for b in c:
+                if isinstance(b, dict):
+                    _append_block(entries, t, b, calls, tur)
     return entries
 
 
@@ -623,9 +678,17 @@ def _append_block(entries: list, kind: str, block: dict, calls: dict,
             calls[block['id']] = (name, inp, len(entries))
         entries.append(Entry('tool', name=name, tool_input=inp))
     elif bt == 'tool_result':
-        txt = _result_text(block)
         tid = block.get('tool_use_id')
         name, inp, pos = calls.pop(tid, ('', None, None)) if tid else ('', None, None)
+        txt = _result_text(block)
+        if name == ASK_TOOL:
+            if _is_rejected(block, tur):
+                name = ASK_REJECTED
+                txt = ''
+                if pos is not None:
+                    entries[pos] = entries[pos]._replace(name=name)
+            else:
+                txt = _answers_text(tur) or txt
         patch, stat = (), ()
         if isinstance(tur, dict) and isinstance(tur.get('structuredPatch'), list):
             patch, stat = _patch_lines(tur['structuredPatch'])

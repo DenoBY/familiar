@@ -43,7 +43,10 @@ The three screens — a project's sessions, the projects list, and the conversat
   in a frame.
   Claude's answers render markdown (bold, italic, inline code, headings, lists,
   tables) with syntax-highlighted code blocks. Long output is folded (`… +N lines`);
-  `Enter` expands all of it. Plus text search (`/`, jump with `n` / `N`, highlighted).
+  `Ctrl+o` expands all of it. Exploration calls — searching, reading, listing — collapse
+  into a summary line (`Searched for 2 patterns, read 1 file`); commands, file edits,
+  plans and failed calls always stay visible.
+  Plus text search (`/`, jump with `n` / `N`, highlighted).
 - **Renaming** a session (`r`). Writes a `custom-title` entry into the session file — the
   same thing the `/rename` command does in Claude Code, so the name shows up both there
   and here.
@@ -104,8 +107,8 @@ project / preview the session).
 | `↑/↓`, `PgUp`/`PgDn`, mouse wheel | scroll |
 | `g` / `Home`, `G` / `End` | jump to the start / end of the history |
 | `[` / `]` | jump to the previous / next user turn |
-| click a folded line | expand / collapse it (output, plan, file contents) |
-| `Ctrl+o`, `Enter` | expand all folded output (press again to collapse) |
+| click a folded line | expand / collapse it (output, plan, file contents, tool summary) |
+| `Ctrl+o` | expand all folded output (press again to collapse) |
 | drag with the mouse | select: within a line — a span, across lines — whole lines |
 | `⌘c` | copy the selection |
 | `/` | search the conversation text |

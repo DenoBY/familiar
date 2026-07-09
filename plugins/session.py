@@ -476,7 +476,7 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
         # а не начало диалога
         self.preview_offset = self._preview_limit()
 
-    def build_preview_lines(self):
+    def _render_lines(self, expanded):
         width = max(10, self.screen_size.cols)
         if (width != self._preview_cache_width
                 or self.preview_entries is not self._preview_cache_entries):
@@ -484,9 +484,11 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
             self._preview_cache_width = width
             self._preview_cache_entries = self.preview_entries
         root = (self.preview_session or {}).get('cwd') or ''
-        self.preview_lines = transcript_lines(self.preview_entries, width,
-                                              self.preview_expanded, root,
-                                              cache=self._preview_cache)
+        return transcript_lines(self.preview_entries, width, expanded, root,
+                                cache=self._preview_cache)
+
+    def build_preview_lines(self):
+        self.preview_lines = self._render_lines(self.preview_expanded)
 
     def _preview_limit(self):
         return max(0, len(self.preview_lines) - self.visible_rows())
@@ -541,14 +543,24 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
         self.preview_expanded ^= {idx}
         self._rebuild_after_fold()
 
-    def _foldable(self):
-        return {ln.entry for ln in self.preview_lines if ln.entry >= 0}
+    def _all_foldable(self):
+        """Свёрнутая группа прячет свои строки, поэтому одного прохода
+        мало: раскрытая группа обнажает вложенный свёрнутый вывод.
+        Идём до неподвижной точки.
+        """
+        ids = set()
+        while True:
+            new = {ln.entry for ln in self._render_lines(ids)
+                   if ln.entry >= 0} - ids
+            if not new:
+                return ids
+            ids |= new
 
     def expand_all(self):
-        """Ctrl+o / Enter: раскрыть ВЕСЬ свёрнутый вывод разом
+        """Ctrl+o: раскрыть ВЕСЬ свёрнутый вывод разом
         (как в Claude Code); когда раскрыто всё — свернуть обратно.
         """
-        foldable = self._foldable()
+        foldable = self._all_foldable()
         if not foldable:
             self.status = 'nothing to expand'
             self.draw_screen()
@@ -799,8 +811,6 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
                 self.preview_jump(False)
             elif k == 'END':
                 self.preview_jump(True)
-            elif k == 'ENTER':
-                self.expand_all()
             elif k in ('ESCAPE', 'LEFT'):
                 self.go_back()
             return

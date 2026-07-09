@@ -274,9 +274,9 @@ class TestTranscriptLines(unittest.TestCase):
 
     def test_tool_line_carries_render(self):
         lines = T.transcript_lines(
-            [Entry('tool', name='Bash', tool_input={'command': 'ls -la'})], W)
+            [Entry('tool', name='Bash', tool_input={'command': 'git status'})], W)
         head = lines[0]
-        self.assertEqual(head.text, '⏺ Bash(ls -la)')
+        self.assertEqual(head.text, '⏺ Bash(git status)')
         self.assertIsNotNone(head.render)
 
     def test_long_result_is_folded(self):
@@ -334,6 +334,104 @@ class TestTranscriptLines(unittest.TestCase):
             [Entry('result', 'ok', name='Edit',
                    patch=((1, '+', 'x'),), patch_stat=(500, 0))], W)
         self.assertEqual(lines[0].text, '  ⎿  Added 500 lines')
+
+
+def _tool(name, **inp):
+    return Entry('tool', name=name, tool_input=inp)
+
+
+class TestAskUserQuestion(unittest.TestCase):
+    def test_answers_render_under_the_head(self):
+        entries = [Entry('tool', name='AskUserQuestion', tool_input={'questions': []}),
+                   Entry('result', '· Порог? → От трёх', name='AskUserQuestion')]
+        lines = texts(T.transcript_lines(entries, W))
+        self.assertEqual(lines[0], "⏺ User answered Claude's questions:")
+        self.assertEqual(lines[1], '  ⎿  · Порог? → От трёх')
+
+    def test_rejected_has_no_output(self):
+        entries = [Entry('tool', name='AskUserQuestionRejected', tool_input={}),
+                   Entry('result', '', name='AskUserQuestionRejected', error=True)]
+        lines = texts(T.transcript_lines(entries, W))
+        self.assertEqual(lines[0], "⏺ User rejected Claude's questions")
+        self.assertNotIn('⎿', ''.join(lines))
+
+
+class TestToolGroup(unittest.TestCase):
+    SERIES = [
+        _tool('Bash', command='ls /p'),
+        Entry('result', 'a.py'),
+        _tool('Bash', command='grep -rn enter x.py'),
+        _tool('Grep', pattern='ENTER'),
+        _tool('Read', file_path='/p/x.py'),
+        _tool('Read', file_path='/p/x.py'),
+    ]
+
+    def test_series_collapses_to_a_summary(self):
+        lines = T.transcript_lines(self.SERIES, W, root='/p')
+        self.assertEqual(texts(lines)[0],
+                         '  Searched for 2 patterns, read 1 file,'
+                         ' listed 1 directory' + T.EXPAND_HINT)
+
+    def test_summary_is_clickable_and_expands(self):
+        gid = T.group_id(self.SERIES, 0)
+        lines = T.transcript_lines(self.SERIES, W, expanded={gid}, root='/p')
+        self.assertEqual(lines[0].entry, gid)
+        self.assertNotIn(T.EXPAND_HINT, lines[0].text)
+        self.assertIn('⏺ Grep(ENTER)', texts(lines))
+
+    def test_single_search_is_summarized(self):
+        lines = T.transcript_lines([_tool('Grep', pattern='ENTER')], W)
+        self.assertEqual(lines[0].text, '  Searched for 1 pattern' + T.EXPAND_HINT)
+
+    def test_single_command_keeps_its_output(self):
+        entries = [_tool('Bash', command='python3 -m unittest'),
+                   Entry('result', 'OK')]
+        lines = texts(T.transcript_lines(entries, W))
+        self.assertEqual(lines[0], '⏺ Bash(python3 -m unittest)')
+        self.assertIn('  ⎿  OK', lines)
+
+    def test_edit_breaks_the_series(self):
+        # правка не сворачивается — значит и её дифф всегда виден
+        entries = [_tool('Read', file_path='/p/a.py'),
+                   _tool('Edit', file_path='/p/a.py'),
+                   _tool('Read', file_path='/p/b.py')]
+        lines = texts(T.transcript_lines(entries, W, root='/p'))
+        self.assertEqual(lines, ['  Read 1 file' + T.EXPAND_HINT, '',
+                                 '⏺ Update(a.py)', '',
+                                 '  Read 1 file' + T.EXPAND_HINT, ''])
+
+    def test_failed_call_stays_visible(self):
+        entries = [_tool('Bash', command='ruff check'),
+                   Entry('result', 'command not found', error=True),
+                   _tool('Read', file_path='/p/a.py'),
+                   _tool('Read', file_path='/p/b.py')]
+        lines = texts(T.transcript_lines(entries, W, root='/p'))
+        self.assertEqual(lines[0], '⏺ Bash(ruff check)')
+        self.assertIn('  ⎿  Error: command not found', lines)
+        self.assertIn('  Read 2 files' + T.EXPAND_HINT, lines)
+
+    def test_bash_category_by_command_name(self):
+        self.assertEqual(T.bash_category('/usr/bin/ls -la'), 'list')
+        self.assertEqual(T.bash_category('rg pattern'), 'search')
+        self.assertEqual(T.bash_category('python3 -m unittest'), 'command')
+        self.assertEqual(T.bash_category(''), 'command')
+
+    def test_bash_category_skips_cd_and_env(self):
+        self.assertEqual(T.bash_category('cd /p && grep -rn "x" .'), 'search')
+        self.assertEqual(T.bash_category('cd /p && python3 -m unittest'), 'command')
+        self.assertEqual(T.bash_category('LC_ALL=C grep x f'), 'search')
+        self.assertEqual(T.bash_category('grep "a\\|b" f | head'), 'search')
+
+    def test_commands_are_never_summarized(self):
+        # серия команд остаётся в транскрипте: их вывод — часть рассказа
+        entries = [_tool('Bash', command='python3 -m unittest'),
+                   Entry('result', 'OK'),
+                   _tool('Bash', command='git status'),
+                   _tool('Weird', q='a')]
+        lines = texts(T.transcript_lines(entries, W))
+        self.assertEqual([ln for ln in lines if ln.startswith('⏺')],
+                         ['⏺ Bash(python3 -m unittest)', '⏺ Bash(git status)',
+                          '⏺ Weird(a)'])
 
 
 if __name__ == '__main__':

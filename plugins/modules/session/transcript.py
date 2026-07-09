@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 from typing import NamedTuple
 
 from kittens.tui.operations import styled
@@ -18,7 +19,7 @@ from ..highlight import (
     word_ranges,
 )
 from .markdown import markdown_lines
-from .util import pad, plural, short_path, truncate, wrap_text
+from .util import ASK_REJECTED, ASK_TOOL, pad, plural, short_path, truncate, wrap_text
 
 
 class Line(NamedTuple):
@@ -74,11 +75,54 @@ _ARG_KEY = {
 _PATH_KEYS = frozenset({'file_path', 'notebook_path', 'path'})
 
 # Claude Code называет правку файла Update — держим ту же терминологию.
-_DISPLAY_NAME = {'Edit': 'Update', 'ExitPlanMode': 'Updated plan'}
+_DISPLAY_NAME = {'Edit': 'Update', 'ExitPlanMode': 'Updated plan',
+                 ASK_TOOL: "User answered Claude's questions:",
+                 ASK_REJECTED: "User rejected Claude's questions"}
 
 # Вызовы, у которых аргумент в скобках не пишут: он либо огромный
 # (план), либо пуст.
 _NO_ARG = frozenset({'ExitPlanMode'})
+
+# Вопросы к пользователю: смысл несёт не вызов, а ответ в выводе.
+_HEAD_ONLY = frozenset({ASK_TOOL, ASK_REJECTED})
+
+# Разведка — чтение, поиск, обзор папки: результат нужен модели, а не
+# читателю. Только она и сворачивается в сводку. Всё прочее (команды,
+# правки, планы, субагенты) остаётся в транскрипте: без вывода тестов
+# или diff'а правки не понять, что сессия делала.
+_CATEGORY = {
+    'Grep': 'search',
+    'Glob': 'search',
+    'WebSearch': 'search',
+    'Read': 'read',
+    'WebFetch': 'fetch',
+}
+_BASH_CATEGORY = {
+    'grep': 'search', 'rg': 'search', 'ag': 'search', 'ack': 'search',
+    'find': 'search', 'fd': 'search',
+    'ls': 'list', 'tree': 'list',
+}
+_CMD_SEP_RE = re.compile(r'[;&|\n]+')
+
+# `cd dir && grep …`: до самой команды сегмент ничего не говорит.
+_CMD_PREFIX = frozenset({'cd'})
+
+class _Phrase(NamedTuple):
+    category: str
+    verb: str
+    one: str
+    many: str
+
+
+# Порядок фраз в сводке фиксирован, а не следует порядку вызовов:
+# «Searched …, read …, listed …» читается одинаково у любой группы.
+_SUMMARY_PHRASE = (
+    _Phrase('search', 'searched for', 'pattern', 'patterns'),
+    _Phrase('read', 'read', 'file', 'files'),
+    _Phrase('list', 'listed', 'directory', 'directories'),
+    _Phrase('fetch', 'fetched', 'URL', 'URLs'),
+)
+_SUMMARIZED = frozenset(p.category for p in _SUMMARY_PHRASE)
 
 
 def display_name(name: str) -> str:
@@ -114,6 +158,75 @@ def tool_label(name: str, tool_input: 'dict | None', root: str = '') -> str:
     return f'{display_name(name)}({arg})'
 
 
+def bash_category(command: str) -> str:
+    """Смысл bash-вызова по имени команды: `ls` — обзор папки,
+    `grep` — поиск. Всё прочее — просто выполненная команда.
+    """
+    for part in _CMD_SEP_RE.split(command.strip()):
+        for word in part.split():
+            if '=' in word.split('/')[0]:   # VAR=1 перед командой
+                continue
+            if os.path.basename(word) in _CMD_PREFIX:
+                break
+            return _BASH_CATEGORY.get(os.path.basename(word), 'command')
+    return 'command'
+
+
+def tool_category(entry) -> str:
+    if entry.name == 'Bash':
+        return bash_category((entry.tool_input or {}).get('command', ''))
+    return _CATEGORY.get(entry.name, 'command')
+
+
+def summarize_tools(tools: list, root: str = '') -> str:
+    """«Searched for 2 patterns, read 1 file, listed 1 directory».
+
+    Считаем разные цели, а не вызовы: три Read одного файла —
+    один прочитанный файл (так же считает Claude Code).
+    """
+    seen = {}
+    for e in tools:
+        cat = tool_category(e)
+        seen.setdefault(cat, set()).add(tool_arg(e.name, e.tool_input, root))
+    parts = []
+    for p in _SUMMARY_PHRASE:
+        if p.category in seen:
+            n = len(seen[p.category])
+            parts.append(f'{p.verb} {n} {p.one if n == 1 else p.many}')
+    text = ', '.join(parts)
+    return text[:1].upper() + text[1:]
+
+
+def _failed(entries: list, i: int) -> bool:
+    nxt = entries[i + 1] if i + 1 < len(entries) else None
+    return bool(nxt) and nxt.kind == 'result' and nxt.error
+
+
+def _summarizable(entries: list, i: int) -> bool:
+    """Упавший вызов из сводки не прячем: красный вывод — ровно то,
+    ради чего в транскрипт и заглядывают.
+    """
+    e = entries[i]
+    return (e.kind == 'tool' and tool_category(e) in _SUMMARIZED
+            and not _failed(entries, i))
+
+
+def tool_group(entries: list, i: int) -> int:
+    """Конец группы подряд идущих сворачиваемых вызовов; i, если ни
+    одного нет (одиночный вызов — тоже группа).
+
+    Вывод инструмента (`result`) входит в группу — он часть вызова.
+    """
+    j, calls = i, 0
+    while j < len(entries):
+        if _summarizable(entries, j):
+            calls += 1
+        elif not (entries[j].kind == 'result' and calls):
+            break
+        j += 1
+    return j if calls else i
+
+
 def transcript_lines(entries: list, width: int,
                      expanded: 'set | frozenset' = frozenset(),
                      root: str = '',
@@ -123,7 +236,19 @@ def transcript_lines(entries: list, width: int,
     """
     width = max(20, width)
     lines: list[Line] = []
-    for i, e in enumerate(entries):
+    i, open_until = 0, 0
+    while i < len(entries):
+        end = tool_group(entries, i) if i >= open_until else i
+        if end > i:
+            gid = group_id(entries, i)
+            lines += _group_head(entries[i:end], gid, width, root,
+                                 gid in expanded)
+            if gid not in expanded:
+                lines.append(Line(''))
+                i = end
+                continue
+            open_until = end
+        e = entries[i]
         key = (i, i in expanded)
         block = cache.get(key) if cache is not None else None
         if block is None:
@@ -131,14 +256,30 @@ def transcript_lines(entries: list, width: int,
             if cache is not None and block is not None:
                 cache[key] = block
         if block is None:
+            i += 1
             continue
         lines += block
         nxt = _next_kind(entries, i)
         # вывод примыкает к своему вызову, вложение — к своей реплике
-        if (e.kind == 'tool' and nxt == 'result') or nxt == 'attach':
-            continue
-        lines.append(Line(''))
+        if not ((e.kind == 'tool' and nxt == 'result') or nxt == 'attach'):
+            lines.append(Line(''))
+        i += 1
     return lines
+
+
+def group_id(entries: list, start: int) -> int:
+    """Идентификатор группы для expanded/клика: индексы записей заняты,
+    поэтому группы живут за концом списка.
+    """
+    return len(entries) + start
+
+
+def _group_head(tools: list, gid: int, width: int, root: str,
+                is_open: bool) -> list[Line]:
+    text = summarize_tools([e for e in tools if e.kind == 'tool'], root)
+    if not is_open:
+        text += EXPAND_HINT
+    return [Line('  ' + truncate(text, width - 2), color=DIM, entry=gid)]
 
 
 def _entry_block(e, i: int, width: int, root: str,
@@ -150,7 +291,8 @@ def _entry_block(e, i: int, width: int, root: str,
     if e.kind == 'tool':
         return _tool(e, i, width, root, is_open)
     if e.kind == 'result':
-        return _result(e, i, width, is_open)
+        # отказ отвечать уже сказан заголовком вызова
+        return [] if e.name == ASK_REJECTED else _result(e, i, width, is_open)
     if e.kind == 'attach':
         return [Line('  ⎿  ' + truncate(e.text, width - 5), color=DIM)]
     return None
@@ -218,6 +360,9 @@ def _tool(entry, idx: int, width: int, root: str = '',
     name = display_name(entry.name)
     if entry.name in _NO_ARG:
         return _plan(entry, idx, name, width, is_open)
+    if entry.name in _HEAD_ONLY:
+        return [Line(truncate(f'⏺ {name}', width),
+                     render=styled('⏺', fg='green') + ' ' + styled(name, bold=True))]
 
     head = f'⏺ {name}('
     rows = tool_arg(entry.name, entry.tool_input, root).split('\n')[:ARG_LINES + 1]

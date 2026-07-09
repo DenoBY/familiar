@@ -6,6 +6,7 @@ import unittest
 
 import kittymock  # noqa: F401
 import modules.session.data as Dt
+import modules.session.util as Ut
 
 
 def write_jsonl(path, records):
@@ -211,6 +212,66 @@ class TestConversation(TmpDirTest):
             Dt.Entry('attach', '[Image #13]'),
             Dt.Entry('attach', '[Image #14]'),
         ])
+
+    def test_abandoned_branch_is_dropped(self):
+        # промпт, отменённый по Esc, остаётся в файле веткой-тупиком
+        p = self.path('branch.jsonl')
+        write_jsonl(p, [
+            {'type': 'user', 'uuid': 'a', 'parentUuid': None,
+             'message': {'content': 'черновик'}},
+            {'type': 'user', 'uuid': 'b', 'parentUuid': None,
+             'message': {'content': 'вопрос'}},
+            {'type': 'assistant', 'uuid': 'c', 'parentUuid': 'b',
+             'message': {'content': [{'type': 'text', 'text': 'ответ'}]}},
+        ])
+        self.assertEqual(Dt.load_conversation(p), [
+            Dt.Entry('user', 'вопрос'),
+            Dt.Entry('assistant', 'ответ'),
+        ])
+
+    def _ask_jsonl(self, name, result, tur):
+        p = self.path(name)
+        write_jsonl(p, [
+            {'type': 'assistant', 'uuid': 'a', 'parentUuid': None,
+             'message': {'content': [
+                 {'type': 'tool_use', 'id': 'q1', 'name': 'AskUserQuestion',
+                  'input': {'questions': [{'question': 'Порог?'}]}}]}},
+            {'type': 'user', 'uuid': 'b', 'parentUuid': 'a',
+             'toolUseResult': tur,
+             'message': {'content': [dict(result, type='tool_result',
+                                          tool_use_id='q1')]}},
+        ])
+        return p
+
+    def test_ask_user_question_keeps_only_the_answers(self):
+        p = self._ask_jsonl('ask.jsonl',
+                            {'content': 'Your questions have been answered: …'},
+                            {'answers': {'Порог?': 'От трёх'}})
+        self.assertEqual(Dt.load_conversation(p)[1].text, '· Порог? → От трёх')
+
+    def test_unknown_result_shape_is_not_a_rejection(self):
+        # ответы не разобрались — показываем вывод, а не «отказ»
+        p = self._ask_jsonl('shape.jsonl', {'content': 'Answered: От трёх'},
+                            {'unexpected': 1})
+        entries = Dt.load_conversation(p)
+        self.assertEqual([e.name for e in entries], [Ut.ASK_TOOL, Ut.ASK_TOOL])
+        self.assertEqual(entries[1].text, 'Answered: От трёх')
+
+    def test_rejected_question_is_renamed(self):
+        p = self._ask_jsonl('reject.jsonl',
+                            {'content': "The user doesn't want to proceed"},
+                            'User rejected tool use')
+        entries = Dt.load_conversation(p)
+        self.assertEqual([e.name for e in entries],
+                         [Ut.ASK_REJECTED, Ut.ASK_REJECTED])
+
+    def test_error_result_is_a_rejection(self):
+        p = self._ask_jsonl('err.jsonl',
+                            {'content': 'Interrupted', 'is_error': True}, None)
+        entries = Dt.load_conversation(p)
+        self.assertEqual([e.name for e in entries],
+                         [Ut.ASK_REJECTED, Ut.ASK_REJECTED])
+        self.assertEqual(entries[1].text, '')
 
     def test_non_image_meta_is_dropped(self):
         p = self.path('meta.jsonl')
