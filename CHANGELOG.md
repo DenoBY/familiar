@@ -5,6 +5,40 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.12.0] — 2026-07-10
+
+### Added
+
+- **Mouse pointer shapes.** In the diff viewer (review, log) and the session preview the
+  pointer now reflects what is under it: a text (I-beam) cursor over code and other
+  selectable text, and a hand over the clickable spots — folders in the file tree and the
+  collapsed-context gaps in the diff (review, log), foldable entries in the session preview.
+  Everywhere else it stays the arrow. Turning on mouse tracking used to force the arrow
+  everywhere, hiding where you can select versus click.
+
+### Changed
+
+- **A theme is two data files now, no Python.** It used to take a palette dict in
+  `plugins/modules/theme.py` and a `THEMES` tuple in `bin/familiar`. A theme is now
+  `config/look/<name>.conf` (terminal colors) plus `config/palette/<name>.conf` (the
+  kittens' syntax highlighting, one `role value` per line). Both the `--theme` flag and the
+  kittens find themes by scanning `config/palette/`, so there is no list to keep in sync,
+  and any role you omit inherits the default `ghostty` color. See `config/README.md`.
+
+### Fixed
+
+- log: a failed `fetch` or `push` could flash the wrong error. The background network call
+  and the foreground git commands wrote to one shared error slot, so scrolling the commit
+  list while a push ran could overwrite the message before it was shown. The network calls
+  now hand their error back directly.
+
+### Internal
+
+- A style pass over the kittens against the project guide: the session preview moved to
+  `modules/session/preview.py`, the diff-pane key handling shared by review and log lifted
+  into `DiffTreeView`, the pointer logic factored into a `PointerCursor` mixin, type hints
+  filled in across the handlers, and the docs resynced with the code.
+
 ## [0.11.0] — 2026-07-10
 
 ### Added
