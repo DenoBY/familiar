@@ -5,6 +5,27 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.13.0] — 2026-07-11
+
+### Added
+
+- **Go to definition in the review viewer.** ⌥-click a symbol in the diff — or select a
+  word and press `d` — to jump to where it is defined. The jump happens inside the viewer
+  with a back stack (`⌃o` to return): a definition in a changed file opens its diff, a
+  definition in an unchanged file opens read-only. When a symbol has several definitions a
+  picker lists them (`1`–`9` or click to choose). Resolution is context-aware: `obj.name`
+  prefers methods, `name(` prefers declarations, and imported names are resolved to the
+  exact file via the current file's imports (Python `from a.b import x` / relative `.`/`..`;
+  JS/TS `import`/`require` with extension and `index` resolution; PHP `use` via composer
+  PSR-4; Go package symbols via `go.mod`). Everything else falls back to a repo-wide
+  `git grep`, new untracked files included — no index or language server needed.
+  ⌘-click is not possible: the terminal mouse protocol carries only Shift/Alt/Ctrl, never
+  Cmd, so the trigger is ⌥-click.
+- **Mouse gestures in the review diff.** Double-click a word to select just that word (for
+  copy), and click a line number to comment on that line — the `c`/Enter hotkey still works.
+  The pointer turns into a hand over line numbers and, while ⌥ is held, over identifiers you
+  can jump to. Selecting text now keeps the syntax highlighting and just adds a background.
+
 ## [0.12.0] — 2026-07-10
 
 ### Added
