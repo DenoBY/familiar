@@ -57,10 +57,14 @@ class TestTextColors(unittest.TestCase):
 
     def test_self_and_class_and_constant(self):
         self.assertEqual(dict(roles('self.x'))['self'], H.C_SELF)
-        self.assertEqual(dict(roles('class Foo(Base):'))['Foo'], H.C_CLASS)
-        self.assertEqual(dict(roles('class Foo(Base):'))['Base'], H.C_CLASS)
+        # по колонкам, не через roles(): в теме darcula C_CLASS
+        # совпадает с цветом пунктуации, и roles() склеила бы
+        # 'Foo(Base):' в одну группу
+        cols = H.text_colors('class Foo(Base):', '.py')[0]
+        self.assertEqual(cols[6], H.C_CLASS)      # F в Foo
+        self.assertEqual(cols[10], H.C_CLASS)     # B в Base
         self.assertEqual(dict(roles('MAX = 1'))['MAX'], H.C_CONST)
-        self.assertEqual(dict(roles('x = None'))['None'], H.C_CONST)
+        self.assertEqual(dict(roles('x = None'))['None'], H.C_KWCONST)
 
     def test_member_access_is_punctuation_not_operator(self):
         self.assertEqual(dict(roles('self.x'))['.'], H.C_PUNCT)
@@ -69,7 +73,9 @@ class TestTextColors(unittest.TestCase):
     def test_docstring_spans_lines(self):
         code = 'def f():\n    """doc\n    more"""\n    pass'
         cols = H.text_colors(code, '.py')
-        self.assertEqual(cols[2][4], H.C_STRING)      # вторая строка докстринга
+        # C_DOC, не C_STRING: токен — String.Doc (в дефолтной теме цвета
+        # совпадают, в darcula различаются)
+        self.assertEqual(cols[2][4], H.C_DOC)         # вторая строка докстринга
         # встроенный лексер многострочную строку не видит — ради этого
         # и лексим файл целиком
         self.assertIsNone(H._fg_map('    more"""', '.py')[4])
