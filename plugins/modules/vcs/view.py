@@ -1,10 +1,11 @@
 """Базовый TUI-класс двухпанельного просмотра diff: дерево файлов
-слева, unified-дифф справа. Вся навигация, скролл, гэпы, hscroll,
+слева, дифф справа. Вся навигация, скролл, гэпы, hscroll,
 поиск, выделение мышью и копирование в буфер — здесь, поверх
-модели строк из modules.vcs.diff. Источник данных (какие файлы
-и их before/after) задаёт подкласс через хуки `_contents`;
-review показывает незакоммиченные правки, log — изменения
-коммита.
+модели строк из modules.vcs.diff. Правая панель имеет два вида
+(`view_mode`, клавиша v): unified-дифф и финальный файл целиком.
+Источник данных (какие файлы и их before/after) задаёт подкласс
+через хуки `_contents`; review показывает незакоммиченные правки,
+log — изменения коммита.
 
 Хуки для подклассов:
 - `_contents(it) -> (before, after)` — содержимое файла (обязателен);
@@ -32,10 +33,15 @@ from modules.inputline import InputLine
 from modules.text import plural
 
 from .diff import (
+    MARK_FG,
     DiffModel,
     DiffSource,
     build_tree,
+    change_map,
+    final_rows,
     is_code_row,
+    kinds_to_marks,
+    line_marks,
     max_hscroll,
     render_diff_cell,
     unified_rows,
@@ -73,11 +79,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.diff_scope = []
         self.diff_gap = []
         self.diff_kind_bg = []
+        self.diff_marks = []            # 'add'/'mod'/'del'/None по строкам — карта справа
         self.expanded = set()
         self.diff_offset = 0
         self.hscroll = 0
         self.hscroll_max = 0
         self.expand = False
+        self.view_mode = 'diff'         # 'diff' — unified, 'final' — финальный файл
         self.diff_cur = 0
         self.diff_sel = None            # (lo, hi) — выделение целых строк (drag через строки)
         self.diff_char_sel = None       # (row, cs, ce) — выделение куска в одной строке
@@ -129,10 +137,11 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         return max(18, min(48, self.screen_size.cols * 2 // 5))
 
     def diff_width(self):
-        # последний столбец каждой панели занят ползунком; он
-        # зарезервирован всегда, иначе появление полосы дёргало бы
+        # два последних столбца заняты: карта изменений и ползунок
+        # (порознь, иначе риска сливается с ползунком). Оба
+        # зарезервированы всегда, иначе появление полосы дёргало бы
         # перенос строк диффа
-        return max(10, self.screen_size.cols - self.left_width() - 4)
+        return max(10, self.screen_size.cols - self.left_width() - 5)
 
     def left_limit(self):
         return max(0, len(self.rows) - self.visible_rows())
@@ -296,11 +305,15 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- дифф выбранного файла ---
 
-    def _set_diff(self, model):
+    def _set_diff(self, model, marks=None):
+        """marks — метки строк для карты изменений на полосе прокрутки;
+        у unified их несёт фон строки, у final приходят готовыми.
+        """
         self.diff_rows, self.diff_plain, self.diff_vis = model.rows, model.plains, model.vis
         self.diff_hunks, self.diff_lineno = model.hunks, model.linenos
         self.diff_scope, self.diff_gap, self.diff_kind_bg = (
             model.scopes, model.gaps, model.kinds)
+        self.diff_marks = marks if marks is not None else kinds_to_marks(model.kinds)
         if self.search_query:
             self._recompute_matches()
 
@@ -348,12 +361,21 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         if not self.diff_before and not self.diff_after:
             self._set_placeholder('  (empty file)')
             return
-        self.hscroll_max = max_hscroll(self.diff_src, rw)
+        final = self.view_mode == 'final'
+        if final and not self.diff_after:
+            self._set_placeholder('  (file deleted — no final content)')
+            return
+        self.hscroll_max = max_hscroll(self.diff_src, rw, final)
         self.hscroll = min(self.hscroll, self.hscroll_max)
-        model = unified_rows(self.diff_src, self.diff_ext, rw, 3, self.hscroll,
-                             self.expanded, self.expand)
+        if final:
+            model = final_rows(self.diff_src, self.diff_ext, rw, self.hscroll)
+            marks = line_marks(self.diff_src)[0]
+        else:
+            model = unified_rows(self.diff_src, self.diff_ext, rw, 3, self.hscroll,
+                                 self.expanded, self.expand)
+            marks = None
         if model.rows:
-            self._set_diff(model)
+            self._set_diff(model, marks)
         else:
             self._set_placeholder('  (no textual changes)')
 
@@ -500,10 +522,52 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.draw_screen()
 
     def toggle_expand(self):
+        if self.view_mode == 'final':
+            self.flash = 'final view always shows the whole file'
+            self.draw_screen()
+            return
         self.expand = not self.expand
         self.diff_offset = 0
         self.build_diff_rows()
         self.draw_screen()
+
+    def toggle_view_mode(self):
+        """unified-дифф ↔ финальный файл. Курсор остаётся на той же
+        строке кода: номер строки нового файла общий для обоих видов.
+        """
+        if self.diff_src is None:
+            return
+        line = (self.diff_lineno[self.diff_cur]
+                if 0 <= self.diff_cur < len(self.diff_lineno) else 0)
+        self.view_mode = 'final' if self.view_mode == 'diff' else 'diff'
+        self.hscroll = 0
+        self.diff_sel = self.diff_char_sel = None
+        self.build_diff_rows()
+        self._center_on_line(line)
+        self.flash = ('final code — ▎ changed, ▔ deleted here'
+                      if self.view_mode == 'final' else 'unified diff')
+        self.draw_screen()
+
+    def _mode_hints(self):
+        """Подсказка футера про вид панели: `a` осмыслен только в
+        unified — final и так показывает файл целиком.
+        """
+        if self.view_mode == 'final':
+            return 'v diff-view'
+        exp = 'a full-file' if not self.expand else 'a hunks'
+        return f'{exp} · v final-view'
+
+    def _center_on_line(self, line):
+        """Курсор на строку нового файла с номером line (нет такой —
+        на первое изменение), окно — вокруг курсора.
+        """
+        di = (next((i for i, ln in enumerate(self.diff_lineno) if ln == line), None)
+              if line else None)
+        if di is None:
+            di = self.diff_hunks[0] if self.diff_hunks else self._first_landable(0)
+        self.diff_cur = min(di, max(0, len(self.diff_rows) - 1))
+        limit = max(0, len(self.diff_rows) - self.visible_rows())
+        self.diff_offset = max(0, min(limit, self.diff_cur - self.visible_rows() // 2))
 
     def set_focus(self, target):
         if target == self.focus:
@@ -664,6 +728,16 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         # окна, лишняя вертикаль во всю высоту только рябит
         return styled('┃', fg=THUMB_FG) if bar and bar[0] <= r < bar[0] + bar[1] else ' '
 
+    @staticmethod
+    def _change_cell(cmap, r):
+        """Ячейка карты изменений — своя колонка слева от ползунка,
+        иначе риска и ползунок сливаются в одну вертикаль. Риска
+        тонкая (│) против жирного ползунка (┃): толщина сама говорит,
+        что есть что.
+        """
+        mark = cmap[r] if r < len(cmap) else None
+        return styled('│', fg=MARK_FG[mark]) if mark is not None else ' '
+
     def _draw_pane_body(self):
         lw = self.left_width()
         self.clamp_left()
@@ -683,10 +757,12 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             return
         tree_bar = self._scrollbar()
         diff_bar = self._thumb(self.diff_offset, len(self.diff_rows), vis)
+        cmap = change_map(self.diff_marks, vis)
         # строки диффа сами до правого края не достают (фон рисуется
-        # только под кодом), поэтому ползунок ставим по абсолютной
-        # колонке, а не пробелами
-        col = f'\x1b[{self.screen_size.cols}G'
+        # только под кодом), поэтому карту и ползунок ставим по
+        # абсолютным колонкам, а не пробелами
+        cols = self.screen_size.cols
+        map_col, thumb_col = f'\x1b[{cols - 1}G', f'\x1b[{cols}G'
         for r in range(vis):
             li = self.left_offset + r
             left_row = self.rows[li] if li < len(self.rows) else None
@@ -697,7 +773,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                 right = self._diff_cell(di, rw, cur_rel, cur_match)
             left = self._left_cell(left_row, lw - 1, li == self.tsel)
             left += self._thumb_cell(tree_bar, r)
-            tail = col + self._thumb_cell(diff_bar, r) if diff_bar else ''
+            tail = ''
+            mark_cell = self._change_cell(cmap, r)
+            if mark_cell != ' ':
+                tail += map_col + mark_cell
+            thumb = self._thumb_cell(diff_bar, r)
+            if thumb != ' ':
+                tail += thumb_col + thumb
             self.print(left + sep + right + tail)
 
     def _draw_input_line(self):

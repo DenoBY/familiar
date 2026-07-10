@@ -371,17 +371,17 @@ class CommitLogHandler(DiffTreeView):
             info = 'i info off' if self.show_detail else 'i info on'
             return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch · a {mode}'
                     f' · {graph} · {info} · / filter · q quit')
-        exp = 'a full-file' if not self.expand else 'a hunks'
+        modes = self._mode_hints()
         if self.focus == 'diff':
             if self.diff_sel is not None or self.diff_char_sel is not None:
                 base = ' [diff]  drag selects (line/text) · ⌘c copy · Esc clear'
             else:
                 act = 'Enter expand' if self._gap_at(self.diff_cur) is not None else '—'
                 base = (f' [diff]  ↑↓ line · {act} · ⌘c copy'
-                        f' · [ ] hunk · h/l scroll · {exp} · ←/Tab tree · Esc back')
+                        f' · [ ] hunk · h/l scroll · {modes} · ←/Tab tree · Esc back')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {exp}'
+            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
                     f' · / search · {u} · Esc back')
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'
@@ -537,6 +537,8 @@ class CommitLogHandler(DiffTreeView):
                 self.jump_edge(True)
             elif c in ('a', 'A'):
                 self.toggle_expand()
+            elif c in ('v', 'V'):
+                self.toggle_view_mode()
             elif ch == '\t':
                 self.toggle_focus()
             elif c == 'n':

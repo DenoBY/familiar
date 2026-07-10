@@ -315,10 +315,37 @@ class ReviewHandlerTest(unittest.TestCase):
         bottom = self.h._thumb(self.h.diff_offset, len(self.h.diff_rows), vis)
         self.assertEqual(bottom[0] + bottom[1], vis)
 
-    def test_thumb_column_is_reserved_in_both_panes(self):
-        separator, diff_thumb = 3, 1     # ползунок дерева живёт внутри left_width()
+    def test_change_map_marks_ride_the_diff_scrollbar(self):
+        self._select_file('big.txt')
+        self.assertIn('add', self.h.diff_marks)          # unified: фон строк → метки
+        self.h.draw_screen()
+        # риска стоит в своей колонке (символ ещё и разделяет панели)
+        map_col = f'\x1b[{self.h.screen_size.cols - 1}G│'
+        self.assertIn(map_col, draw_text(self.h))
+
+    def test_change_map_marks_follow_the_final_view(self):
+        self._select_file('big.txt')
+        self.h.toggle_view_mode()
+        # в final метки идут по строкам файла: правка была на 16-й
+        self.assertEqual(self.h.diff_marks[15], 'mod')
+        self.assertEqual(len(self.h.diff_marks), len(self.h.diff_rows))
+        self.assertIsNone(self.h.diff_marks[0])
+
+    def test_change_map_has_its_own_column_next_to_the_thumb(self):
+        cmap = ['add', None]
+        self.assertIn('│', self.h._change_cell(cmap, 0))    # тонкая риска, не жирный ползунок
+        self.assertNotIn('┃', self.h._change_cell(cmap, 0))
+        self.assertEqual(self.h._change_cell(cmap, 1), ' ')
+        self.assertEqual(self.h._change_cell(cmap, 9), ' ')   # за пределами карты
+        # ползунок живёт отдельно и о карте не знает
+        self.assertIn('┃', self.h._thumb_cell((0, 1), 0))
+
+    def test_thumb_and_map_columns_are_reserved_in_both_panes(self):
+        separator = 3                    # ползунок дерева живёт внутри left_width()
+        change_map_col, diff_thumb = 1, 1
         self.assertEqual(
-            self.h.left_width() + separator + self.h.diff_width() + diff_thumb,
+            self.h.left_width() + separator + self.h.diff_width()
+            + change_map_col + diff_thumb,
             self.h.screen_size.cols)
 
     def test_wheel_over_tree_scrolls_wheel_over_diff_scrolls_diff(self):
@@ -386,6 +413,64 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(calls[0], 'set_mode')
         self.assertEqual(calls[-1], 'reset_mode')
         self.assertIn('clear_screen', calls)
+
+    # --- flash: сообщение поверх футера гаснет само ---
+
+    def _defer_timers(self):
+        """asyncio_loop, копящий колбэки вместо немедленного вызова."""
+        scheduled = []
+
+        class Timer:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        class DeferredLoop:
+            def call_later(self, delay, cb, *args):
+                t = Timer()
+                scheduled.append((t, delay, cb))
+                return t
+
+        self.h.asyncio_loop = DeferredLoop()
+        return scheduled
+
+    def test_flash_expires_and_footer_comes_back(self):
+        scheduled = self._defer_timers()
+        self.h.flash = 'unified diff'
+        self.h.draw_screen()
+        self.assertIn('unified diff', draw_text(self.h))
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0][1], self.h.FLASH_TTL)
+        self.h.out = []
+        scheduled[0][2]()                            # таймер сработал
+        text = draw_text(self.h)
+        self.assertNotIn('unified diff', text)
+        self.assertIn('[tree]', text)                # подсказки футера вернулись
+
+    def test_frame_without_flash_arms_no_timer(self):
+        scheduled = self._defer_timers()
+        self.h.draw_screen()
+        self.assertEqual(scheduled, [])
+
+    def test_new_flash_restarts_the_countdown(self):
+        scheduled = self._defer_timers()
+        self.h.flash = 'first'
+        self.h.draw_screen()
+        self.h.flash = 'second'
+        self.h.draw_screen()
+        self.assertTrue(scheduled[0][0].cancelled)   # прежний отсчёт неактуален
+        self.assertFalse(scheduled[1][0].cancelled)
+
+    def test_flash_timer_cancelled_by_plain_redraw(self):
+        scheduled = self._defer_timers()
+        self.h.flash = 'copied'
+        self.h.draw_screen()
+        self.h.draw_screen()                         # обычный кадр, flash уже снят
+        self.assertTrue(scheduled[0][0].cancelled)
+        self.assertEqual(len(scheduled), 1)
+        self.assertIsNone(self.h._flash_timer)
 
     # --- scope ---
 
@@ -506,6 +591,61 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertTrue(self.h.expanded)
         gaps_after = sum(1 for g in self.h.diff_gap if g is not None)
         self.assertLess(gaps_after, gaps_before)
+
+    # --- final-вид (весь файл, маркеры на полях) ---
+
+    def test_final_view_shows_whole_file_without_signs(self):
+        self._select_file('big.txt')
+        self.h.toggle_view_mode()
+        self.assertEqual(self.h.view_mode, 'final')
+        self.assertEqual(len(self.h.diff_rows), 30)          # весь файл, без свёртки
+        self.assertEqual(self.h.diff_lineno, list(range(1, 31)))
+        self.assertTrue(all(g is None for g in self.h.diff_gap))
+        self.assertFalse(any('hidden' in p for p in self.h.diff_plain))
+        self.assertIn('line CHANGED', self.h.diff_plain[15])
+        self.assertFalse(any('line 15' in p for p in self.h.diff_plain))   # старой строки нет
+
+    def test_toggle_view_keeps_cursor_on_same_source_line(self):
+        self._select_file('big.txt')
+        self.h.set_focus('diff')
+        di = next(i for i, ln in enumerate(self.h.diff_lineno) if ln == 16)
+        self.h.diff_cur = di
+        self.h.toggle_view_mode()
+        self.assertEqual(self.h.diff_lineno[self.h.diff_cur], 16)
+        self.h.toggle_view_mode()                            # и обратно в unified
+        self.assertEqual(self.h.view_mode, 'diff')
+        self.assertEqual(self.h.diff_lineno[self.h.diff_cur], 16)
+
+    def test_final_view_comments_land_on_right_line(self):
+        self._select_file('big.txt')
+        self.h.toggle_view_mode()
+        self.h.set_focus('diff')
+        self.h.diff_cur = 15                                 # строка «line CHANGED»
+        self.h.start_comment()
+        self.assertEqual(self.h.comment_target[1], 16)       # номер строки нового файла
+        self.assertEqual(self.h.comment_target[2], 'line CHANGED')
+
+    def test_expand_is_noop_in_final_view(self):
+        self._select_file('big.txt')
+        self.h.toggle_view_mode()
+        rows = list(self.h.diff_rows)
+        self.h.toggle_expand()
+        self.assertFalse(self.h.expand)
+        self.assertEqual(self.h.diff_rows, rows)
+
+    def test_final_view_of_deleted_file_shows_placeholder(self):
+        os.remove(os.path.join(self.repo, 'dir/sub.txt'))
+        self.h.load_source()
+        self._select_file('sub.txt')
+        self.h.toggle_view_mode()
+        self.assertIn('deleted', self.h.diff_plain[0])
+
+    def test_view_mode_survives_file_switch(self):
+        self._select_file('big.txt')
+        self.h.toggle_view_mode()
+        self._select_file('sub.txt')
+        self.assertEqual(self.h.view_mode, 'final')
+        self.assertEqual(self.h.diff_plain[0].strip().split(maxsplit=1)[1], '▎ sub edited')
 
     # --- поиск ---
 

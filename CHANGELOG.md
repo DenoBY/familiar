@@ -5,6 +5,34 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-07-10
+
+### Added
+
+- review, log: **final code** view (`v`) — the file as an IDE shows it after the merge:
+  no `+`/`−` signs, no removed lines, no fill inside the lines. Edits are marked in the
+  gutter (`▎` green — added, `▎` blue — modified, `▔` red — code was cut here). Jumps,
+  search, comments and copying work as in the diff, and the cursor keeps its line when
+  you switch views.
+- review, log: a **change map** on the scrollbar right of the diff — colored ticks show
+  where the edits are, so a long file tells you at a glance where to scroll.
+- **IDE-grade syntax highlighting** via Pygments: functions, types, `self`, decorators,
+  docstrings and f-strings, instead of the previous strings/comments/numbers/keywords.
+  Pygments ships vendored in `plugins/vendor`, so there is still nothing to install; if
+  it is unavailable, the built-in regex lexer takes over.
+
+### Changed
+
+- Flash messages above the footer clear themselves after 2.5 s — the footer hints come
+  back without waiting for the next keypress.
+
+### Fixed
+
+- review, log: when a block of lines was replaced by fewer lines, the gutter showed only
+  `▎ modified` and the deletion went unmarked; `▔` is now placed where the code was cut.
+- Syntax colors no longer shift by one line below a form feed, a lone `\r`, or U+2028 —
+  the color map is split on exactly the separators `str.splitlines()` uses.
+
 ## [0.6.0] — 2026-07-10
 
 ### Added

@@ -1,15 +1,40 @@
-"""Лёгкая подсветка синтаксиса и word-diff: общий модуль всех китов.
+"""Подсветка синтаксиса и word-diff: общий модуль всех китов.
 
-Лексер грубый и намеренно однопроходный — строка кода превращается
-в ANSI без разбора грамматики языка. Нужен и vcs-китам (дифф), и
-session (fenced-блоки в ответах Claude, diff правок), поэтому лежит
-в корне пакета modules.
+Подсветку даёт Pygments (лежит рядом, в plugins/vendor — kitty носит
+свой Python, системных пакетов там нет): настоящий лексер различает
+функции, типы, self, декораторы и многострочные строки. Если Pygments
+недоступен или для языка нет лексера, работает встроенный однопроходный
+регексп-лексер — грубее, но без зависимостей.
+
+Нужен и vcs-китам (дифф), и session (fenced-блоки в ответах Claude,
+diff правок), поэтому лежит в корне пакета modules.
 """
 
 import difflib
+import os
 import re
+import sys
 
 from kittens.tui.operations import styled
+
+
+def _load_pygments():
+    """Pygments из plugins/vendor. Возвращает (get_lexer_for_filename,
+    ClassNotFound) либо None, если библиотеки нет.
+    """
+    vendor = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'vendor')
+    if os.path.isdir(vendor) and vendor not in sys.path:
+        sys.path.append(vendor)   # append: свой pygments у пользователя важнее
+    try:
+        from pygments.lexers import get_lexer_for_filename
+        from pygments.util import ClassNotFound
+    except ImportError:
+        return None
+    return get_lexer_for_filename, ClassNotFound
+
+
+_PYGMENTS = _load_pygments()
 
 
 _KEYWORDS = frozenset("""
@@ -35,6 +60,61 @@ _COMMENT_BY_EXT = {
 _TOK_COLOR = {'comment': 'gray', 'string': 'yellow', 'number': 'cyan'}
 _LEX_CACHE = {}
 
+# Палитра подсветки — 256-цветная (truecolor не у всех тем терминала
+# ложится ровно, а 256 kitty рисует одинаково). Оттенки в духе
+# One Dark: тем же цветом, что IDE, красит те же роли.
+C_COMMENT = 244    # серый
+C_STRING = 114     # зелёный
+C_NUMBER = 173     # оранжевый
+C_CONST = 173      # True/False/None/nil — та же роль, что у числа
+C_KEYWORD = 176    # фиолетовый: if/for/def/return, а также and/or/not
+C_FUNC = 75        # синий: имя функции — и в объявлении, и в вызове
+C_CLASS = 180      # песочный: классы, типы, исключения, декораторы
+C_SELF = 168       # красноватый: self/this/cls и переменные ($var в php)
+C_BUILTIN = 75     # синий: len/print — это тоже функции
+C_OPERATOR = 73    # бирюзовый: = + - > и прочие знаки
+C_PUNCT = 145      # тусклый: скобки, запятые, точки с запятой
+C_ERROR = 203      # красный: то, что лексер не смог разобрать
+
+# Ключи — строковые пути токенов Pygments; проверяются от частного к
+# общему (Token.Name.Function → Token.Name → Token), поэтому здесь
+# достаточно перечислить только те роли, что отличаются от родителя.
+_TOKEN_COLOR = {
+    'Token.Comment': C_COMMENT,
+    'Token.Literal.String': C_STRING,
+    'Token.Literal.String.Escape': C_CONST,
+    'Token.Literal.String.Interpol': C_SELF,
+    'Token.Literal.String.Affix': C_KEYWORD,        # префикс f'' / b''
+    'Token.Literal.Number': C_NUMBER,
+    'Token.Keyword': C_KEYWORD,
+    'Token.Keyword.Constant': C_CONST,
+    'Token.Keyword.Type': C_CLASS,
+    'Token.Operator': C_OPERATOR,
+    'Token.Operator.Word': C_KEYWORD,               # and / or / not / in
+    'Token.Punctuation': C_PUNCT,
+    'Token.Name.Function': C_FUNC,
+    'Token.Name.Function.Magic': C_FUNC,
+    'Token.Name.Class': C_CLASS,
+    'Token.Name.Namespace': C_CLASS,
+    'Token.Name.Exception': C_CLASS,
+    'Token.Name.Decorator': C_CLASS,
+    'Token.Name.Builtin': C_BUILTIN,
+    'Token.Name.Builtin.Pseudo': C_SELF,            # self / this / cls
+    'Token.Name.Constant': C_CONST,
+    'Token.Name.Variable': C_SELF,
+    'Token.Name.Tag': C_KEYWORD,
+    'Token.Name.Attribute': C_FUNC,
+    'Token.Error': C_ERROR,
+}
+# Выше этого размера файл не лексим: Pygments стоит времени, а дифф
+# грузится на каждый шаг курсора по дереву. Такие файлы получат
+# грубую подсветку встроенным лексером — построчную и мгновенную.
+MAX_HIGHLIGHT_BYTES = 400_000
+
+_MISSING = object()          # None — валидный цвет («не красить»), нужен свой маркер
+_TOKEN_CACHE: dict = {}      # token -> (цвет, это ли имя): str(token) дороже, чем кажется
+_PYG_CACHE: dict = {}
+
 ADD_BG = 22        # тёмно-зелёный фон добавленных строк (256-цвет)
 DEL_BG = 52        # тёмно-красный фон удалённых строк
 ADD_WORD_BG = 28   # ярче — на изменившихся словах (word-diff)
@@ -44,6 +124,12 @@ SEL_RANGE_BG = 25  # фон выделения — синий, чтобы чит
 # Ниже этой похожести строки считаем разными: подсвечивать в них
 # «изменившиеся слова» бессмысленно — подсветилась бы вся строка.
 WORD_DIFF_RATIO = 0.3
+# Внутри блока правок строки спариваются позиционно, поэтому в паре
+# может оказаться что угодно (комментарий и вызов функции); общих
+# пробелов и запятых хватает, чтобы пройти WORD_DIFF_RATIO. Если
+# «изменившиеся слова» покрывают больше этой доли строки, подсветка
+# ничего не выделяет — гасим её, изменение и так видно по строке.
+WORD_DIFF_COVER = 0.6
 
 # Язык из инфо-строки fenced-блока markdown → расширение для лексера.
 LANG_EXT = {
@@ -60,6 +146,11 @@ LANG_EXT = {
 
 
 _WORD_SPLIT = re.compile(r'\w+|\s+|[^\w\s]')
+
+# Ровно те разделители, по которым рвёт str.splitlines(): цвета
+# индексируются строками, что DiffSource режет тем же splitlines, и
+# расхождение (form-feed, U+2028, одинокий \r) сдвинуло бы подсветку.
+_LINE_SPLIT = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
 
 
 def word_ranges(old: str, new: str) -> tuple:
@@ -83,6 +174,112 @@ def word_ranges(old: str, new: str) -> tuple:
             for k in range(j1, j2):
                 aset.update(range(bp[k], bp[k] + len(b[k])))
     return dset, aset, sm.ratio()
+
+
+def strong_set(marked: set, ratio: float, line: str) -> 'set | None':
+    """Символы строки под word-diff подсветку, либо None — когда пара
+    строк непохожа или подсветка накрыла бы почти всю строку.
+
+    Отступ в marked не попадает, поэтому долю считаем от кода без
+    ведущих пробелов.
+    """
+    code = line.strip()
+    if not code or ratio < WORD_DIFF_RATIO:
+        return None
+    return marked if len(marked) <= WORD_DIFF_COVER * len(code) else None
+
+
+def _token_style(token) -> tuple:
+    """(цвет токена, имя ли это). Цвет — самый частный из объявленных,
+    ищем поднимаясь к родителю (Token.Name.Function.Magic → … → Token).
+    """
+    cached = _TOKEN_CACHE.get(token, _MISSING)
+    if cached is not _MISSING:
+        return cached
+    color, node = None, token
+    while node is not None:
+        if str(node) in _TOKEN_COLOR:
+            color = _TOKEN_COLOR[str(node)]
+            break
+        node = node.parent
+    style = (color, str(token).startswith('Token.Name'))
+    _TOKEN_CACHE[token] = style
+    return style
+
+
+def _pygments_lexer(ext: str):
+    if not _PYGMENTS or not ext:
+        return None
+    if ext in _PYG_CACHE:
+        return _PYG_CACHE[ext]
+    by_filename, class_not_found = _PYGMENTS
+    try:
+        # stripnl/stripall выключены: номера строк должны совпадать
+        # с файлом, лишний перенос сдвинул бы всю раскраску.
+        # startinline — чтобы php-код без открывающего <?php (фрагмент
+        # в диффе или fenced-блок) всё-таки подсвечивался
+        lexer = by_filename('x' + ext, stripnl=False, stripall=False, ensurenl=False,
+                            startinline=True)
+    except (class_not_found, ImportError):
+        lexer = None      # урезанный вендоринг: модуля лексера может не быть
+    _PYG_CACHE[ext] = lexer
+    return lexer
+
+
+def _is_call(tokens: list, idx: int) -> bool:
+    """За именем — открывающая скобка, значит это вызов функции.
+
+    Лексеры метят Name.Function только в объявлении (`def foo`), а IDE
+    красит и вызовы; отличить их можно лишь по следующему токену.
+    """
+    for _token, value in tokens[idx + 1:]:
+        if not value.strip():
+            continue                     # пробелы между именем и скобкой
+        return value.startswith('(')
+    return False
+
+
+def _name_color(value: str, tokens: list, idx: int) -> 'int | None':
+    """Цвет имени, которое лексер не отнёс ни к какой роли. Соглашения
+    об именах те же, на которые смотрит глаз в IDE.
+    """
+    if _is_call(tokens, idx):
+        return C_FUNC
+    if len(value) > 1 and value.isupper():
+        return C_CONST                   # UPPER_CASE — константа
+    if value[:1].isupper():
+        return C_CLASS                   # CapWords — класс или тип
+    return None
+
+
+def text_colors(text: str, ext: str) -> 'list[list[int | None]] | None':
+    """Цвет каждого символа текста, разложенный по строкам, либо None —
+    когда Pygments недоступен или не знает язык (тогда зовущий
+    откатывается на построчный _fg_map).
+
+    Лексим текст целиком, а не построчно: только так видны докстринги,
+    многострочные строки и f-string-интерполяция.
+    """
+    lexer = _pygments_lexer(ext)
+    if lexer is None or len(text) > MAX_HIGHLIGHT_BYTES:
+        return None
+    tokens = list(lexer.get_tokens(text))
+    lines: 'list[list[int | None]]' = [[]]
+    for idx, (token, value) in enumerate(tokens):
+        color, is_name = _token_style(token)
+        if color is None and is_name:
+            color = _name_color(value, tokens, idx)
+        elif color == C_OPERATOR and value in ('.', '->', '::'):
+            color = C_PUNCT              # доступ к члену — разделитель, не операция
+        # по кускам между переносами, а не посимвольно: на большом
+        # файле разница в разы
+        chunks = _LINE_SPLIT.split(value)
+        for i, chunk in enumerate(chunks):
+            if i:
+                lines.append([])
+            if chunk:
+                lines[-1].extend([color] * len(chunk))
+    return lines
 
 
 def _lexer(ext):
@@ -110,12 +307,29 @@ def _fg_map(code, ext):
     return fgs
 
 
+def fit_fgs(fgs: 'list | None', start: int, length: int) -> 'list | None':
+    """Кусок карты цветов под видимый срез строки: с start, длиной
+    length, добитый None (усечение могло дописать многоточие).
+    """
+    if fgs is None:
+        return None
+    cut = fgs[start:start + length]
+    return cut + [None] * (length - len(cut))
+
+
 def render_code(code: str, ext: str, base_bg: 'int | None' = None,
-                strong: 'set | None' = None, strong_bg: 'int | None' = None) -> str:
+                strong: 'set | None' = None, strong_bg: 'int | None' = None,
+                fgs: 'list | None' = None) -> str:
     """Код → ANSI: fg по синтаксису; фон = strong_bg на символах из
     strong, иначе base_bg.
+
+    fgs — готовые цвета символов (Pygments лексит файл целиком). Без
+    них строка лексится сама: Pygments по одной строке, а если его нет
+    или язык незнаком — встроенным лексером.
     """
-    fgs = _fg_map(code, ext)
+    if fgs is None:
+        single = text_colors(code, ext)
+        fgs = single[0] if single else _fg_map(code, ext)
     out, i, n = '', 0, len(code)
     while i < n:
         fg = fgs[i]

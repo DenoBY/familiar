@@ -12,6 +12,9 @@ Two view modes — the whole file, or just the changed hunks:
 
 ![review — hunks-only view](../img/review-hunks.png)
 
+Plus a third view (`v`) — **final code**, the way an IDE shows it: the whole file with no
+`+`/`−` signs and no removed lines; edits are marked in the gutter.
+
 ## What it can do
 
 - **Git scopes** (toggle `s`): **working** — uncommitted (vs `HEAD`),
@@ -19,12 +22,19 @@ Two view modes — the whole file, or just the changed hunks:
   base branch (`main`/`master`, auto-detected). The current scope is shown in the header.
 - On the left, a **tree** of files (folders in blue, files colored by status `M`/`A`/`D`/`R`).
 - On the right, the **unified diff** of the selected file: additions in green `+`, deletions in red `−`,
-  context with **syntax highlighting** (strings, comments, numbers, keywords —
-  by file extension, no external dependencies). Updates instantly as you move.
+  context with IDE-grade **syntax highlighting** (Pygments): functions, types, `self`,
+  decorators, docstrings, f-strings — by file extension. Updates instantly as you move.
 - **Word-diff**: in a removed/added line pair, the words that actually changed
   are highlighted more brightly, not the whole line.
 - **Two view modes** (`a`): hunks only (changes with context) or the **whole file**
   expanded, with changes marked inline.
+- **Final code** (`v`) — an IDE-style view: read the code as it will look after the merge.
+  No `+`/`−`, no removed lines, no highlighting inside the lines — just a gutter marker
+  (`▎` green — added, `▎` blue — modified, `▔` red — something was cut here). To see what
+  exactly changed within a line, switch back to the unified view. Jumps, comments, copying
+  and search work as in the diff, and the cursor stays on the same line when you switch.
+- **A change map on the scrollbar** to the right of the diff — colored ticks show where the
+  edits are (green — added, blue — modified, red — deleted), so you can see where to scroll.
 - **Jump between changes** (`[` / `]`) — across edit blocks within the diff (in both modes).
 - **Per-file line stats** in the tree (`+added −removed`), like in an IDE/GitHub.
 - **Unversioned Files** — untracked files are gathered into their own group at the bottom
@@ -133,6 +143,7 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `PgUp` `PgDn` | scroll the diff (also `Ctrl+U` / `Ctrl+D`) |
 | `h` / `l` | horizontal scroll of the diff (long lines) |
 | `a` | view mode: hunks only ↔ whole file |
+| `v` | pane view: unified diff ↔ final code (IDE-style) |
 | `/` `n`/`N` | search the diff and jump between matches |
 | `⌘c` | copy: in the tree — `@path` of the file/folder, in the diff — the selection / line under the cursor |
 | `⌘shift+c` | copy `@path#L42` (in the tree — `@path`) |

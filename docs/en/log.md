@@ -94,6 +94,7 @@ overlay.
 | `PgUp` `PgDn` | scroll the diff |
 | `h` / `l` | horizontal scroll (long lines) |
 | `a` | view mode: hunks only ↔ the whole file |
+| `v` | pane view: unified diff ↔ final code (IDE-style) |
 | `/` `n`/`N` | search the diff and jump between matches |
 | `⌘c` | copy the selection (or the line under the cursor) |
 | `⌘shift+c` | copy `@path#L42` (`#L42-58` for a selected range) |

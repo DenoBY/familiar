@@ -4,6 +4,11 @@
 в готовые к печати строки: лёгкая подсветка синтаксиса, word-diff,
 свёртка контекста в гэпы, sticky-скоупы и плоское дерево файлов.
 Без обращения к git и без состояния хендлера.
+
+Представлений диффа два, и оба дают одинаковую DiffModel:
+`unified_rows` — классический дифф со знаками +/−, `final_rows` —
+финальный файл целиком, как в IDE: изменения видны только маркером
+на полях.
 """
 
 import bisect
@@ -13,15 +18,16 @@ from typing import NamedTuple
 
 from kittens.tui.operations import styled
 
-from ..highlight import (  # noqa: F401  (ре-экспорт: тесты и view)
+from ..highlight import (
     ADD_BG,
     ADD_WORD_BG,
     DEL_BG,
     DEL_WORD_BG,
     SEL_RANGE_BG,
-    WORD_DIFF_RATIO,
-    _fg_map,
+    fit_fgs,
     render_code,
+    strong_set,
+    text_colors,
     word_ranges,
 )
 from .util import truncate
@@ -49,8 +55,16 @@ def _bg(text: str, bg: 'int | None') -> str:
     return styled(text, bg=bg) if bg is not None and text else text
 
 
+def _geometry(one_col: bool, width: int) -> tuple[int, int]:
+    """(ширина гуттера, ширина колонки кода). Два символа между ними —
+    знак строки (+/− в unified, маркер на полях в final).
+    """
+    gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
+    return gutter_w, max(1, width - gutter_w - 2)
+
+
 def _render_diff_line(gut_plain, sign, sign_fg, code, ext, base_bg, strong, strong_bg,
-                      num_fg, width):
+                      num_fg, width, fgs=None):
     """Строка диффа: номера, знак, фон на всю ширину,
     синтаксис + word-diff подсветка.
     """
@@ -58,7 +72,7 @@ def _render_diff_line(gut_plain, sign, sign_fg, code, ext, base_bg, strong, stro
          if (num_fg or base_bg is not None) else gut_plain)
     s = (styled(sign, fg=sign_fg, bold=True, bg=base_bg)
          if (sign_fg or base_bg is not None) else sign)
-    line = g + s + render_code(code, ext, base_bg, strong, strong_bg)
+    line = g + s + render_code(code, ext, base_bg, strong, strong_bg, fgs)
     if base_bg is not None:
         used = len(gut_plain) + len(sign) + len(code)
         if used < width:
@@ -106,10 +120,28 @@ class DiffSource:
             None, self.a, self.b, autojunk=False).get_opcodes()
         self.longest = max(
             (len(s.replace('\t', '    ')) for s in self.a + self.b), default=0)
+        # final-вид показывает только новый файл — hscroll там не должен
+        # уезжать вслед за длинной удалённой строкой
+        self.longest_b = max((len(s.replace('\t', '    ')) for s in self.b), default=0)
         # строки-определения нового файла — для sticky-заголовка скоупа
         self.def_lns = [i + 1 for i, s in enumerate(self.b) if _DEF_RE.match(s)]
         self.def_txt = [self.b[n - 1].strip() for n in self.def_lns]
         self._ranges_by_op: 'dict[int, list]' = {}
+        self._colors: 'dict[tuple, list | None]' = {}
+
+    def colors(self, ext: str, new: bool) -> 'list[list] | None':
+        """Цвета символов каждой строки файла (нового или старого),
+        либо None — Pygments не знает язык.
+
+        Лексим по табам, уже развёрнутым в пробелы: иначе индексы
+        цветов разъехались бы с тем, что печатается на экране. Файл
+        лексится один раз — hscroll и раскрытие гэпов переиспользуют.
+        """
+        key = (ext, new)
+        if key not in self._colors:
+            src = self.after if new else self.before
+            self._colors[key] = text_colors(src.replace('\t', '    '), ext)
+        return self._colors[key]
 
     def op_word_ranges(self, oi: int, rem: 'list[str]', add: 'list[str]',
                        pairs: int) -> list:
@@ -133,9 +165,13 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
     expanded = expanded or set()
     a, b = src.a, src.b
     one_col = src.one_col
-    gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
-    codew = max(1, width - gutter_w - 2)   # gutter + знак
+    _, codew = _geometry(one_col, width)
+    cols_a, cols_b = src.colors(ext, new=False), src.colors(ext, new=True)
     rows, plains, vis, hunks, linenos, gaps, kinds = [], [], [], [], [], [], []
+
+    def line_fgs(cols, idx, cf):
+        row = cols[idx] if (cols is not None and idx < len(cols)) else None
+        return fit_fgs(row, hscroll, len(cf))
 
     def gutter(sign, old_ln, new_ln):
         if one_col:
@@ -166,8 +202,8 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
         gut = gutter(' ', ia + 1, ib + 1)
         cf = clip(full)
         emit(_render_diff_line(gut, '  ', None, cf, ext, None, None, None,
-                               'gray', width), gut + '  ' + full, ib + 1,
-             visible=gut + '  ' + cf)
+                               'gray', width, line_fgs(cols_b, ib, cf)),
+             gut + '  ' + full, ib + 1, visible=gut + '  ' + cf)
 
     def emit_change(oi, i1, i2, j1, j2):
         hunks.append(len(rows))
@@ -176,21 +212,23 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
         pairs = min(len(rem), len(add))
         rng = src.op_word_ranges(oi, rem, add, pairs)
         for k, full in enumerate(rem):
-            strong = (clip_strong(rng[k][0])
-                      if (k < pairs and rng[k][2] >= WORD_DIFF_RATIO) else None)
+            strong = (clip_strong(strong_set(rng[k][0], rng[k][2], full))
+                      if k < pairs else None)
             gut = gutter('-', i1 + k + 1, j1 + 1)
             cf = clip(full)
             emit(_render_diff_line(gut, '- ', 'red', cf, ext, DEL_BG, strong,
-                                   DEL_WORD_BG, 'red', width), gut + '- ' + full, j1 + 1,
-                 bg=DEL_BG, visible=gut + '- ' + cf)
+                                   DEL_WORD_BG, 'red', width,
+                                   line_fgs(cols_a, i1 + k, cf)),
+                 gut + '- ' + full, j1 + 1, bg=DEL_BG, visible=gut + '- ' + cf)
         for k, full in enumerate(add):
-            strong = (clip_strong(rng[k][1])
-                      if (k < pairs and rng[k][2] >= WORD_DIFF_RATIO) else None)
+            strong = (clip_strong(strong_set(rng[k][1], rng[k][2], full))
+                      if k < pairs else None)
             gut = gutter('+', i1 + 1, j1 + k + 1)
             cf = clip(full)
             emit(_render_diff_line(gut, '+ ', 'green', cf, ext, ADD_BG, strong,
-                                   ADD_WORD_BG, 'green', width), gut + '+ ' + full, j1 + k + 1,
-                 bg=ADD_BG, visible=gut + '+ ' + cf)
+                                   ADD_WORD_BG, 'green', width,
+                                   line_fgs(cols_b, j1 + k, cf)),
+                 gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf)
 
     def emit_gap(hidden, lineno, gid):
         noun = 'line' if hidden == 1 else 'lines'
@@ -226,24 +264,145 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
         else:
             emit_change(oi, i1, i2, j1, j2)
 
-    # скоупы: для каждой строки — ближайшее определение (def/class/…)
-    # выше по новому файлу
+    return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos), gaps, kinds, vis)
+
+
+def _scopes(src: DiffSource, linenos: 'list[int]') -> 'list[str]':
+    """Для каждой строки — ближайшее определение (def/class/…) выше по
+    новому файлу; sticky-заголовок панели.
+    """
     def scope_for(ln):
         j = bisect.bisect_right(src.def_lns, ln) - 1
         return src.def_txt[j] if j >= 0 else ''
 
-    scopes = [scope_for(ln) for ln in linenos]
-    return DiffModel(rows, plains, hunks, linenos, scopes, gaps, kinds, vis)
+    return [scope_for(ln) for ln in linenos]
 
 
-def max_hscroll(src: DiffSource, width: int) -> int:
+# ─────────── final-вид (финальный файл, как в IDE) ───────────
+
+_MARK_CHANGE = '▎'   # добавлена/изменена: полоса вдоль строки
+_MARK_DELETE = '▔'   # перед этой строкой вырезан код
+MARK_FG = {'add': 'green', 'mod': 'blue', 'del': 'red'}
+# Что важнее показать, когда в одну ячейку карты изменений попали
+# разные правки: удаление заметить труднее всего (своей строки у него
+# нет), добавление — легче всего.
+_MARK_PRIORITY = {'del': 3, 'mod': 2, 'add': 1}
+
+
+def line_marks(src: DiffSource) -> tuple:
+    """Разметка строк нового файла: (marks, hunks).
+
+    marks[j] — 'add' | 'mod' | 'del' | None для строки b[j]; 'del'
+    означает «перед этой строкой вырезан код». hunks — индексы строк,
+    с которых начинаются изменения.
+    """
+    b = src.b
+    marks: 'list[str | None]' = [None] * len(b)
+    hunks: 'set[int]' = set()
+    for tag, i1, i2, j1, j2 in src.ops:
+        if tag == 'equal':
+            continue
+        if tag == 'delete':
+            if not b:
+                continue
+            # индекс строки b == индекс её ряда, поэтому «удалено перед
+            # b[j1]» ложится прямо в j1; удаление в конце файла метит
+            # последнюю строку
+            row = min(j1, len(b) - 1)
+            if marks[row] is None:   # add/mod важнее: своя строка изменилась
+                marks[row] = 'del'
+            hunks.add(row)
+            continue
+        hunks.add(j1)
+        if tag == 'insert':
+            for j in range(j1, j2):
+                marks[j] = 'add'
+            continue
+        pairs = min(i2 - i1, j2 - j1)
+        for k in range(j2 - j1):
+            # строк стало больше — хвост блока просто добавлен
+            marks[j1 + k] = 'mod' if k < pairs else 'add'
+        if i2 - i1 > j2 - j1 and b:
+            # строк стало меньше: вырезанному хвосту достаётся строка за
+            # блоком — своей у него, как и у обычного delete, нет
+            row = min(j2, len(b) - 1)
+            if marks[row] is None:
+                marks[row] = 'del'
+            hunks.add(row)
+    return marks, sorted(hunks)
+
+
+def kinds_to_marks(kinds: 'list[int | None]') -> 'list[str | None]':
+    """Фон строк unified-диффа → те же метки, что у final-вида: карта
+    изменений на полосе прокрутки одна на оба вида.
+    """
+    return [{ADD_BG: 'add', DEL_BG: 'del'}.get(k) for k in kinds]
+
+
+def change_map(marks: 'list[str | None]', height: int) -> 'list[str | None]':
+    """Метки изменений, сжатые до height ячеек полосы прокрутки:
+    сразу видно, куда листать. Строки диффа делятся между ячейками
+    поровну; в ячейку попадает самая заметная из меток её строк.
+
+    Дифф, который влезает в окно целиком, не растягиваем: риска
+    должна стоять ровно напротив своей строки.
+    """
+    n = len(marks)
+    if not n or height <= 0:
+        return []
+    out: 'list[str | None]' = [None] * height
+    best = [0] * height
+    for i, mark in enumerate(marks):
+        if mark is None:
+            continue
+        r = i if n <= height else min(i * height // n, height - 1)
+        if _MARK_PRIORITY[mark] > best[r]:
+            best[r] = _MARK_PRIORITY[mark]
+            out[r] = mark
+    return out
+
+
+def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffModel:
+    """Модель финального файла: все строки нового текста, без знаков
+    +/− и без удалённых строк.
+
+    Правки видны так же, как в IDE: только цветной маркер на полях
+    (зелёный — добавлено, синий — изменено, красный — здесь что-то
+    вырезано). Заливки внутри строки нет — код читается как код;
+    что именно изменилось в строке, показывает unified-вид.
+    """
+    _, codew = _geometry(True, width)
+    marks, hunks = line_marks(src)
+    cols = src.colors(ext, new=True)
+    rows, plains, vis, linenos = [], [], [], []
+    for j, raw in enumerate(src.b):
+        full = raw.replace('\t', '    ')
+        mark = marks[j]
+        char = ' ' if mark is None else (_MARK_DELETE if mark == 'del' else _MARK_CHANGE)
+        sign = char + ' '
+        gut = f'{j + 1:>{_NUMW}} '
+        cf = truncate(full[hscroll:] if hscroll else full, codew)
+        fgs = fit_fgs(cols[j] if (cols is not None and j < len(cols)) else None,
+                      hscroll, len(cf))
+        rows.append(_render_diff_line(gut, sign, MARK_FG.get(mark), cf, ext, None,
+                                      None, None, 'gray', width, fgs))
+        # маркер входит в plain: под курсором печатается именно plain,
+        # иначе строка дёргалась бы влево на ширину маркера
+        plains.append(gut + sign + full)
+        vis.append(gut + sign + cf)
+        linenos.append(j + 1)
+    n = len(rows)
+    return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos),
+                     [None] * n, [None] * n, vis)
+
+
+def max_hscroll(src: DiffSource, width: int, final: bool = False) -> int:
     """Предел горизонтального скролла: дальше вправо некуда — самая
     длинная строка уже целиком помещается в видимую ширину кода.
-    gutter/codew считаются как в unified_rows.
     """
-    gutter_w = (_NUMW + 1) if src.one_col else (2 * _NUMW + 2)
-    codew = max(1, width - gutter_w - 2)
-    return max(0, src.longest - codew)
+    _, codew = _geometry(True if final else src.one_col, width)
+    longest = src.longest_b if final else src.longest
+    return max(0, longest - codew)
 
 
 # ──────── отрисовка одной строки диффа под курсором/выделением ────────

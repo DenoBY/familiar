@@ -3,7 +3,8 @@
 Keyboard-driven overlays for the [kitty](https://sw.kovidgoyal.net/kitty/)
 terminal, built around a Claude Code workflow — a session manager for your AI
 agents, a git working-tree reviewer, and a git-log/diff browser. Pure Python
-standard library, zero external dependencies — macOS only.
+standard library plus Pygments for syntax highlighting — it ships alongside,
+in `plugins/vendor`, so there is nothing to install. macOS only.
 
 > A *familiar* is a helper spirit in a cat's shape — fitting for a set of kitty
 > kittens that tend your coding agents.

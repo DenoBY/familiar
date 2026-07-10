@@ -5,6 +5,8 @@
 line-length = 99
 # kitty 0.47 несёт встроенный Python 3.11+ — на нём и исполняются киты.
 target-version = "py311"
+# Вендоренный Pygments — сторонний код, его стиль не наша забота.
+extend-exclude = ["plugins/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

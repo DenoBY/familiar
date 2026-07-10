@@ -2,16 +2,26 @@ import unittest
 
 import kittymock  # noqa: F401
 import modules.vcs.diff as D
+from modules import highlight as H
 
 
 def unified(before, after, ext, width, **kw):
     return D.unified_rows(D.DiffSource(before, after), ext, width, **kw)
 
 
+def final(before, after, ext, width, **kw):
+    return D.final_rows(D.DiffSource(before, after), ext, width, **kw)
+
+
+def marks(plains):
+    """Символ маркера на полях каждой строки final-вида."""
+    return [p[D._NUMW + 1] for p in plains]
+
+
 class TestFgMap(unittest.TestCase):
     def test_highlights_by_token_kind(self):
         code = 'return 42 "s" # note'
-        fg = D._fg_map(code, '.py')
+        fg = H._fg_map(code, '.py')
         self.assertEqual(fg[code.index('r')], 'magenta')      # keyword
         self.assertEqual(fg[code.index('4')], 'cyan')         # number
         self.assertEqual(fg[code.index('"')], 'yellow')       # string
@@ -19,11 +29,11 @@ class TestFgMap(unittest.TestCase):
 
     def test_comment_prefix_by_ext(self):
         code = 'x -- tail'
-        fg = D._fg_map(code, '.sql')                          # в .sql комментарий это --
+        fg = H._fg_map(code, '.sql')                          # в .sql комментарий это --
         self.assertEqual(fg[code.index('-')], 'gray')
 
     def test_plain_chars_have_no_color(self):
-        fg = D._fg_map('xy zz', '.txt')
+        fg = H._fg_map('xy zz', '.txt')
         self.assertTrue(all(c is None for c in fg))
 
 
@@ -32,22 +42,45 @@ class TestRenderCode(unittest.TestCase):
         # styled — тождество в моке, поэтому
         # результат = исходный код целиком
         code = 'def f(): return "a" # c'
-        self.assertEqual(D.render_code(code, '.py'), code)
-        self.assertEqual(D.render_code(code, '.py', 22, {0, 1, 2}, 28), code)
+        self.assertEqual(H.render_code(code, '.py'), code)
+        self.assertEqual(H.render_code(code, '.py', 22, {0, 1, 2}, 28), code)
 
 
 class TestWordRanges(unittest.TestCase):
     def test_replace_marks_changed_words(self):
-        dset, aset, ratio = D.word_ranges('foo bar baz', 'foo qux baz')
+        dset, aset, ratio = H.word_ranges('foo bar baz', 'foo qux baz')
         self.assertEqual(dset, {4, 5, 6})
         self.assertEqual(aset, {4, 5, 6})
         self.assertAlmostEqual(ratio, 0.8)
 
     def test_identical_full_ratio(self):
-        dset, aset, ratio = D.word_ranges('same', 'same')
+        dset, aset, ratio = H.word_ranges('same', 'same')
         self.assertEqual(dset, set())
         self.assertEqual(aset, set())
         self.assertEqual(ratio, 1.0)
+
+
+class TestStrongSet(unittest.TestCase):
+    def test_small_change_is_highlighted(self):
+        line = 'foo qux baz'
+        self.assertEqual(H.strong_set({4, 5, 6}, 0.8, line), {4, 5, 6})
+
+    def test_dissimilar_pair_not_highlighted(self):
+        self.assertIsNone(H.strong_set({0, 1, 2}, 0.1, 'abc'))
+
+    def test_change_covering_most_of_the_line_not_highlighted(self):
+        # позиционное спаривание внутри блока может свести комментарий
+        # с кодом: ratio проходит на пробелах, а подсветка накрывает всё
+        line = '    return DiffModel(rows, plains, hunks)'
+        self.assertIsNone(H.strong_set(set(range(4, 40)), 0.35, line))
+
+    def test_indent_does_not_dilute_coverage(self):
+        # доля считается от кода, а не от строки с отступом
+        deep = ' ' * 40 + 'x = 1'
+        self.assertIsNone(H.strong_set(set(range(40, 45)), 0.5, deep))
+
+    def test_blank_line_never_highlighted(self):
+        self.assertIsNone(H.strong_set(set(), 1.0, '    '))
 
 
 class TestUnifiedRows(unittest.TestCase):
@@ -57,7 +90,7 @@ class TestUnifiedRows(unittest.TestCase):
         self.assertEqual(len(rows), 4)
         self.assertEqual(hunks, [1])
         self.assertEqual(linenos, [1, 2, 2, 3])
-        self.assertEqual(kinds, [None, D.DEL_BG, D.ADD_BG, None])
+        self.assertEqual(kinds, [None, H.DEL_BG, H.ADD_BG, None])
         self.assertTrue(all(g is None for g in gaps))
         self.assertTrue(plains[0].endswith('l1'))
         self.assertTrue(plains[1].endswith('l2') and '-' in plains[1])
@@ -95,14 +128,14 @@ class TestUnifiedRows(unittest.TestCase):
         rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             '', 'n1\nn2\nn3\n', '.py', 40)
         self.assertEqual(len(rows), 3)
-        self.assertTrue(all(k == D.ADD_BG for k in kinds))
+        self.assertTrue(all(k == H.ADD_BG for k in kinds))
         self.assertEqual(linenos, [1, 2, 3])
 
     def test_deleted_file_one_column_all_dels(self):
         rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
             'o1\no2\n', '', '.py', 40)
         self.assertEqual(len(rows), 2)
-        self.assertTrue(all(k == D.DEL_BG for k in kinds))
+        self.assertTrue(all(k == H.DEL_BG for k in kinds))
 
     def test_scope_tracks_enclosing_def(self):
         rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
@@ -132,6 +165,126 @@ class TestUnifiedRows(unittest.TestCase):
         self.assertEqual(D.max_hscroll(D.DiffSource('a\n', 'b\n'), 40), 0)
         # один столбец (added file): gutter_w=5, codew=width-7
         self.assertEqual(D.max_hscroll(D.DiffSource('', 'y' * 50 + '\n'), 40), 17)
+
+
+class TestFinalRows(unittest.TestCase):
+    def test_modified_line_marked_others_clean(self):
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = final(
+            'l1\nl2\nl3\n', 'l1\nX2\nl3\n', '.py', 40)
+        self.assertEqual(len(rows), 3)                 # только строки нового файла
+        self.assertEqual(linenos, [1, 2, 3])
+        self.assertEqual(hunks, [1])
+        self.assertTrue(all(k is None for k in kinds))  # фона на всю строку нет
+        self.assertTrue(all(g is None for g in gaps))
+        self.assertEqual(marks(plains), [' ', D._MARK_CHANGE, ' '])
+        self.assertTrue(plains[1].endswith('X2'))
+        self.assertNotIn('l2', ''.join(plains))         # старой строки в файле нет
+
+    def test_whole_file_shown_without_gaps(self):
+        before = 'x\n' + '\n'.join(f'e{i}' for i in range(20)) + '\n'
+        after = 'X\n' + '\n'.join(f'e{i}' for i in range(20)) + '\n'
+        rows, plains, *_ = final(before, after, '.py', 40)
+        self.assertEqual(len(rows), 21)                 # свёртки контекста нет
+        self.assertFalse(any('hidden' in p for p in plains))
+
+    def test_marks_distinguish_add_mod_delete(self):
+        src = D.DiffSource('a\nold\nb\ngone\nc\n', 'a\nnew\nb\nc\nextra\n')
+        mk, hunks = D.line_marks(src)
+        self.assertEqual(mk[1], 'mod')                  # old → new
+        self.assertEqual(mk[3], 'del')                  # перед 'c' вырезано 'gone'
+        self.assertEqual(mk[4], 'add')                  # 'extra' дописана
+        self.assertEqual(mk[0], None)
+        self.assertEqual(hunks, [1, 3, 4])
+
+    def test_delete_at_end_marks_last_line(self):
+        src = D.DiffSource('a\nb\ngone\n', 'a\nb\n')
+        mk, hunks = D.line_marks(src)
+        self.assertEqual(mk, [None, 'del'])
+        self.assertEqual(hunks, [1])
+
+    def test_delete_of_whole_file_has_no_rows(self):
+        rows, *_ = final('a\nb\n', '', '.py', 40)
+        self.assertEqual(rows, [])                      # плейсхолдер ставит view
+
+    def test_added_file_all_lines_marked_add(self):
+        src = D.DiffSource('', 'n1\nn2\n')
+        mk, hunks = D.line_marks(src)
+        self.assertEqual(mk, ['add', 'add'])
+        self.assertEqual(hunks, [0])
+
+    def test_no_word_highlight_inside_lines(self):
+        # изменение видно маркером на полях; заливки внутри строки нет —
+        # с ней код не читается (styled в моке — тождество, значит
+        # строка рендера совпадает с самим кодом)
+        rows, plains, *_ = final('foo bar baz\n', 'foo qux baz\n', '.py', 40)
+        self.assertEqual(rows[0], plains[0])
+        self.assertEqual(marks(plains), [D._MARK_CHANGE])
+
+    def test_replace_growing_block_tail_is_add(self):
+        mk, _ = D.line_marks(D.DiffSource('a\nold\n', 'a\nnew1\nnew2\n'))
+        self.assertEqual(mk, [None, 'mod', 'add'])
+
+    def test_replace_shrinking_block_marks_cut_tail(self):
+        # 3→1: своей строки у вырезанного хвоста нет, иначе правка
+        # выглядела бы обычным 'mod' и удаление осталось бы незаметным
+        mk, hunks = D.line_marks(D.DiffSource('a\nx1\nx2\nx3\nz\n', 'a\ny\nz\n'))
+        self.assertEqual(mk, [None, 'mod', 'del'])
+        self.assertEqual(hunks, [1, 2])
+
+    def test_replace_shrinking_at_eof_marks_last_line(self):
+        mk, _ = D.line_marks(D.DiffSource('a\nx1\nx2\n', 'a\ny\n'))
+        self.assertEqual(mk, [None, 'mod'])   # строки за блоком нет — метить некуда
+
+    def test_scope_tracks_enclosing_def(self):
+        *_, scopes, _, _, _ = final(
+            'def foo():\n    x = 1\n', 'def foo():\n    x = 2\n', '.py', 40)
+        self.assertEqual(scopes, ['def foo():', 'def foo():'])
+
+    def test_vis_tracks_hscroll_plains_stay_full(self):
+        before, after = 'x\n', 'x0123456789abcdef\n'
+        plains0, vis0 = final(before, after, '.py', 40)[1], final(before, after, '.py', 40)[7]
+        plains5, vis5 = (final(before, after, '.py', 40, hscroll=5)[1],
+                         final(before, after, '.py', 40, hscroll=5)[7])
+        self.assertEqual(plains0, plains5)              # полный текст не зависит от hscroll
+        self.assertIn('0123456789abcdef', vis0[0])
+        self.assertNotIn('0123456789abcdef', vis5[0])
+
+    def test_max_hscroll_ignores_removed_long_line(self):
+        # final показывает только новый файл: длинная удалённая строка
+        # не должна расширять предел скролла (gutter_w=5, codew=width-7)
+        src = D.DiffSource('z' * 90 + '\n', 'y' * 50 + '\n')
+        self.assertEqual(D.max_hscroll(src, 40, final=True), 17)
+        # unified видит обе строки: две колонки номеров, codew=28
+        self.assertEqual(D.max_hscroll(src, 40), 62)
+
+
+class TestChangeMap(unittest.TestCase):
+    def test_marks_projected_onto_bar_cells(self):
+        marks = [None] * 10 + ['add'] * 10 + [None] * 20
+        self.assertEqual(D.change_map(marks, 4), [None, 'add', None, None])
+
+    def test_most_visible_mark_wins_a_shared_cell(self):
+        # удаление своей строки не имеет — теряться в ячейке оно
+        # не должно; добавление заметно и так
+        self.assertEqual(D.change_map(['add', 'del', 'mod'], 1), ['del'])
+        self.assertEqual(D.change_map(['add', 'mod'], 1), ['mod'])
+
+    def test_last_line_lands_inside_the_bar(self):
+        self.assertEqual(D.change_map([None, None, 'add'], 3)[-1], 'add')
+
+    def test_empty_inputs(self):
+        self.assertEqual(D.change_map([], 10), [])
+        self.assertEqual(D.change_map(['add'], 0), [])
+
+    def test_short_diff_is_not_stretched_over_the_bar(self):
+        # дифф влезает в окно — риска стоит напротив своей строки,
+        # а не уезжает вниз вместе с растянутой картой
+        self.assertEqual(D.change_map([None, 'add', None], 9)[:3], [None, 'add', None])
+        self.assertEqual(D.change_map(['add', 'del'], 4), ['add', 'del', None, None])
+
+    def test_unified_kinds_become_the_same_marks(self):
+        self.assertEqual(D.kinds_to_marks([H.ADD_BG, H.DEL_BG, None]),
+                         ['add', 'del', None])
 
 
 class TestBuildTree(unittest.TestCase):
@@ -196,7 +349,7 @@ class DiffCellTest(unittest.TestCase):
             rows=['row-ctx', 'row-add'],
             plains=['  1   ctx', '  2 + add'],
             linenos=[1, 2],
-            kind_bg=[None, D.ADD_BG],
+            kind_bg=[None, H.ADD_BG],
             gaps=[None, None],
             cur_match=-1,
             query='')

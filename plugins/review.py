@@ -38,8 +38,8 @@ from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import detect_base, revert_paths, scan_changes, stage_paths
 from modules.text import plural
-from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.diff import group_key
+from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.util import chord, short_path, to_latin, truncate
 from modules.vcs.view import DiffTreeView
 
@@ -197,7 +197,7 @@ class ReviewHandler(DiffTreeView):
             return ' Enter — keep   ⌃w erase word   ⌃u erase all   Esc — clear'
         if self.flash:
             return ' ' + self.flash
-        exp = 'a full-file' if not self.expand else 'a hunks'
+        modes = self._mode_hints()
         if self.focus == 'diff':
             if self.diff_sel is not None or self.diff_char_sel is not None:
                 base = ' [diff]  drag selects (line/text) · ⌘c copy · Esc clear'
@@ -205,12 +205,12 @@ class ReviewHandler(DiffTreeView):
                 act = ('Enter expand' if self._gap_at(self.diff_cur) is not None
                        else 'Enter/c comment')
                 base = (f' [diff]  ↑↓ line · {act} · ⌘c copy'
-                        f' · [ ] hunk · h/l scroll · {exp} · w export · ←/Tab tree · e edit')
+                        f' · [ ] hunk · h/l scroll · {modes} · w export · ←/Tab tree · e edit')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
             revert = ' · - revert' if any(self._revert_targets()) else ''
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {exp} · s scope'
+            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes} · s scope'
                     f'{stage}{revert} · e edit · r refresh · / search · f filter · {u} · q')
         if self.annots:
             base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy+clear · x clear)'
@@ -609,6 +609,8 @@ class ReviewHandler(DiffTreeView):
                 self.jump_edge(True)
             elif c in ('a', 'A'):
                 self.toggle_expand()
+            elif c in ('v', 'V'):
+                self.toggle_view_mode()
             elif c in ('s', 'S'):
                 self.cycle_scope()
             elif c in ('r', 'R'):
