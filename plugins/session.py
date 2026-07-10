@@ -744,23 +744,15 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         row = self.preview.offset + r
         return row if 0 <= row < len(self.preview.lines) else None
 
-    def _item_row_at(self, ev) -> bool:
-        head = 0 if self.screen == 'projects' else 2   # на проектах шапки нет
-        r = ev.cell_y - head
-        if r < 0:
-            return False
-        idx = self.offset + r
-        return 0 <= idx < len(self.items())
-
     def _wanted_pointer(self, ev) -> 'str | None':
-        # рука — на кликабельном (строка списка, сворачиваемая запись
-        # превью), текст — на прочих строках превью (drag-select)
-        if self.screen == 'preview':
-            row = self._preview_row_at(ev)
-            if row is None:
-                return None
-            return 'pointer' if self.preview.lines[row].entry >= 0 else 'text'
-        return 'pointer' if self._item_row_at(ev) else None
+        # только в просмотре сессии: рука — на сворачиваемой записи,
+        # текст — на прочих строках (drag-select); в списках стрелка
+        if self.screen != 'preview':
+            return None
+        row = self._preview_row_at(ev)
+        if row is None:
+            return None
+        return 'pointer' if self.preview.lines[row].entry >= 0 else 'text'
 
     def on_mouse_event(self, ev) -> None:
         self.update_pointer(ev)

@@ -211,19 +211,16 @@ class SessionsHandlerTest(unittest.TestCase):
         self.h.on_key(KeyEvent(key='с', super=True))    # кириллическая «эс»
         self.assertIn('\x1b]52;c;', ''.join(str(x) for x in self.h.out))
 
-    def test_pointer_shape_follows_hover_zone(self):
+    def test_pointer_shape_only_in_preview(self):
         def move(x, y):
             self.h.out.clear()
             self.h.on_mouse_event(
                 MouseEvent(cell_x=x, cell_y=y, type=EventType.MOVE))
 
-        # экран проектов: строка проекта → рука, пустота ниже → стрелка
+        # в списках форму указателя не трогаем — обычная стрелка
         move(5, 0)
-        self.assertEqual(self.h._pointer_shape, 'pointer')
-        self.assertIn('\x1b]22;>pointer\x1b\\', self.h.out)
-        move(5, len(self.h.items()) + 3)
         self.assertIsNone(self.h._pointer_shape)
-        self.assertEqual(self.h.out, ['\x1b]22;<\x1b\\'])
+        self.assertEqual(self.h.out, [])
 
         # превью: обычная строка диалога → текстовый курсор
         self._open_A()
@@ -233,6 +230,7 @@ class SessionsHandlerTest(unittest.TestCase):
                         if ln.entry < 0)
         move(3, text_row + 2)
         self.assertEqual(self.h._pointer_shape, 'text')
+        self.assertIn('\x1b]22;>text\x1b\\', self.h.out)
 
         # превью: сворачиваемая запись → рука
         self._folded_preview()
