@@ -32,6 +32,10 @@ Two view modes — the whole file, or just the changed hunks:
   came to review.
 - **Stage from the tree** (`+`) — `git add` the file under the cursor, a whole folder, or
   every untracked file at once (`+` on the group node).
+- **Revert changes** (`-`) — drop the edits of the file/folder under the cursor back to
+  `HEAD` (both the working tree and the index). Asks for confirmation first: only `y`
+  goes through. Untracked files have nothing to revert to, so they are **deleted**, and
+  the prompt says so.
 - **Sticky header**: while scrolling, the enclosing function/class is pinned at the top.
 - **Horizontal scroll** for long lines (`h` / `l`).
 - **Scrollbars** in both panes; the mouse wheel scrolls the pane it's over, without
@@ -92,6 +96,7 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `Enter` `Space` | collapse/expand folder |
 | `→` `Tab` | go to the diff (cursor over lines) |
 | `+` | `git add` the file / folder / all Unversioned Files under the cursor |
+| `-` | revert changes to `HEAD` (new files are deleted); asks `y` to confirm |
 | `s` | git scope: working → staged → vs branch |
 | `r` | rescan changes (refresh) |
 | `u` | show/hide noisy folders (`.idea`, `node_modules`, `__pycache__`, …) |
@@ -141,6 +146,11 @@ Untracked files are gathered into an **Unversioned Files** group at the bottom o
 tree, collapsed by default. `+` on the group node stages all of them at once; `+` on a
 file or a folder stages just that. The hint only shows up when there is actually
 something to add — an already staged file offers nothing.
+
+`-` reverts instead: the file goes back to its `HEAD` version, in the working tree and in
+the index alike, and an untracked file is deleted from disk — irreversibly, git has no
+copy of it. Nothing happens until you press `y`; `Enter`, `Esc` and every other key
+cancel.
 
 Noisy IDE folders (`.idea`, `.vscode`, `node_modules`, `__pycache__`, `dist`, `venv`,
 etc.) are hidden by default — as in an IDE; `u` shows them (and says how many). They are

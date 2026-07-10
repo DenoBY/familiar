@@ -22,6 +22,14 @@ def last_error() -> str:
     return _last_error
 
 
+def set_error(msg: str) -> None:
+    """Сообщить об ошибке не от git (например, os.remove) через тот
+    же канал, что и сбои git.
+    """
+    global _last_error
+    _last_error = msg
+
+
 def run_git(root: str, *args: str, binary: bool = False,
             timeout: int = 8) -> 'str | bytes | None':
     global _last_error

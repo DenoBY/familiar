@@ -21,6 +21,7 @@ from modules.vcs.git import (  # noqa: F401
     last_error,
     read_text,
     run_git,
+    set_error,
 )
 from modules.vcs.util import is_noise
 
@@ -66,6 +67,28 @@ def stage_paths(root: str, paths: list[str]) -> bool:
     if not paths:
         return False
     return run_git(root, 'add', '--', *paths) is not None
+
+
+def revert_paths(root: str, tracked: list[str], untracked: list[str]) -> bool:
+    """Откатить файлы к HEAD (диск и индекс); untracked — удалить с
+    диска, откатывать их не к чему.
+
+    False — что-то не удалось (причина в last_error()); остальное всё
+    равно откачено: частичный успех виднее в дереве, чем молчание.
+    """
+    ok = True
+    if tracked:
+        if not has_head(root):
+            return False    # нет HEAD — восстанавливать не из чего
+        ok = run_git(root, 'restore', '--source=HEAD', '--staged', '--worktree',
+                     '--', *tracked) is not None
+    for rel in untracked:
+        try:
+            os.remove(os.path.join(root, rel))
+        except OSError as e:
+            set_error(str(e))
+            ok = False
+    return ok
 
 
 def detect_base(root: str) -> str:

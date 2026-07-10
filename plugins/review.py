@@ -36,7 +36,7 @@ if '__file__' in globals():
 
 from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
-from modules.review.git import detect_base, scan_changes, stage_paths
+from modules.review.git import detect_base, revert_paths, scan_changes, stage_paths
 from modules.text import plural
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.diff import group_key
@@ -62,6 +62,7 @@ class ReviewHandler(DiffTreeView):
         self.action = None           # что сделать после выхода (open in editor)
         self.annots = {}             # (file_rel, line) -> {'code': str, 'text': str}
         self.comment_target = None   # (rel, line, code) редактируемой аннотации
+        self.pending_revert = None   # (tracked, untracked), ждёт подтверждения
         self.filter_query = ''
 
     # --- хуки DiffTreeView ---
@@ -178,11 +179,17 @@ class ReviewHandler(DiffTreeView):
         self.print(styled('─' * cols, fg='gray'))
         self._draw_pane_body()
         self._draw_input_line()
-        foot_fg = 'green' if self.flash else 'gray'
-        self.print(styled(truncate(self._footer(), cols), fg=foot_fg), end='')
+        if self.pending_revert:
+            foot_fg = 'red'
+        else:
+            foot_fg = 'green' if self.flash else 'gray'
+        self.print(styled(truncate(self._footer(), cols), fg=foot_fg, bold=bool(
+            self.pending_revert)), end='')
         self.flash = ''
 
     def _footer(self):
+        if self.pending_revert:
+            return self._revert_prompt()
         if self.input_mode == 'comment':
             return (' Enter — save   Shift+Enter — new line   ⌃w erase word'
                     '   ⌃u erase all   Esc — cancel   (empty = delete)')
@@ -202,8 +209,9 @@ class ReviewHandler(DiffTreeView):
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
+            revert = ' · - revert' if any(self._revert_targets()) else ''
             base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {exp} · s scope'
-                    f'{stage} · e edit · r refresh · / search · f filter · {u} · q')
+                    f'{stage}{revert} · e edit · r refresh · / search · f filter · {u} · q')
         if self.annots:
             base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy+clear · x clear)'
         if self.hscroll:
@@ -223,22 +231,25 @@ class ReviewHandler(DiffTreeView):
         xy = it.get('xy') or ''
         return len(xy) > 1 and xy[1] != ' '
 
-    def _selected_paths(self):
-        """Пути под курсором дерева, готовые к git add: у файла — он
-        сам, у папки (и у узла Unversioned Files) — все её файлы.
-        Скрытые фильтром и noise-каталоги не попадают: добавляем
-        ровно то, что видно.
+    def _items_under_cursor(self, keep):
+        """Элементы под курсором дерева: у файла — он сам, у папки (и
+        у узла Unversioned Files) — все её файлы, прошедшие keep.
+        Скрытые фильтром и noise-каталоги не попадают: трогаем ровно
+        то, что видно.
         """
         if not self.rows or not (0 <= self.tsel < len(self.rows)):
             return []
         row = self.rows[self.tsel]
         if row['type'] == 'file':
             it = self.filtered[row['idx']]
-            return [it['path']] if self._stageable(it) else []
+            return [it] if keep(it) else []
         prefix = row['path'] + '/' if row.get('path') else ''
-        return [it['path'] for it in self.filtered
+        return [it for it in self.filtered
                 if it.get('group') == row.get('group') and it['rel'].startswith(prefix)
-                and self._stageable(it)]
+                and keep(it)]
+
+    def _selected_paths(self):
+        return [it['path'] for it in self._items_under_cursor(self._stageable)]
 
     def stage_selected(self):
         if not self.root:
@@ -253,6 +264,56 @@ class ReviewHandler(DiffTreeView):
         else:
             self.flash = f'git add failed: {last_error()}'
         self.refresh()
+
+    # --- откат изменений (git restore / удаление новых файлов) ---
+
+    @staticmethod
+    def _revertable(it):
+        # 'xy' есть только в скоупе working: в staged/branch откатывать
+        # нечего — там показан уже закоммиченный/проиндексированный дифф
+        return bool(it.get('xy'))
+
+    def _revert_targets(self):
+        items = self._items_under_cursor(self._revertable)
+        tracked = [it['path'] for it in items if not it['untracked']]
+        untracked = [it['path'] for it in items if it['untracked']]
+        return tracked, untracked
+
+    def start_revert(self):
+        """Спросить подтверждение: откат необратим, а new-файлы ещё и
+        не восстановить из git.
+        """
+        if not self.root:
+            return
+        tracked, untracked = self._revert_targets()
+        if not tracked and not untracked:
+            self.flash = 'nothing to revert here'
+            self.draw_screen()
+            return
+        self.pending_revert = (tracked, untracked)
+        self.draw_screen()
+
+    def cancel_revert(self):
+        self.pending_revert = None
+        self.flash = 'revert cancelled'
+        self.draw_screen()
+
+    def confirm_revert(self):
+        tracked, untracked = self.pending_revert
+        self.pending_revert = None
+        n = len(tracked) + len(untracked)
+        if revert_paths(self.root, tracked, untracked):
+            self.flash = f'reverted {plural(n, "file")}'
+        else:
+            self.flash = f'revert failed: {last_error()}'
+        self.refresh()
+
+    def _revert_prompt(self):
+        tracked, untracked = self.pending_revert
+        what = plural(len(tracked) + len(untracked), 'file')
+        deleted = (f', {plural(len(untracked), "new file")} will be deleted for good'
+                   if untracked else '')
+        return f' revert {what}{deleted}?   y — yes   any other key — no'
 
     # --- аннотации (комментарии к строкам → markdown в буфер) ---
 
@@ -422,6 +483,13 @@ class ReviewHandler(DiffTreeView):
     def on_key(self, key_event):
         if key_event.type == EventType.RELEASE:
             return
+        if self.pending_revert:
+            # печатаемое (в т.ч. сам «y») разбирает on_text; здесь
+            # гасим только Enter/стрелки/Esc: необратимое не должно
+            # подтверждаться ничем, кроме явного «y»
+            if not getattr(key_event, 'text', ''):
+                self.cancel_revert()
+            return
         if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
             return
@@ -492,6 +560,12 @@ class ReviewHandler(DiffTreeView):
                 self.quit_loop(0)
 
     def on_text(self, text, in_bracketed_paste=False):
+        if self.pending_revert:
+            if to_latin(text[:1]) in ('y', 'Y'):
+                self.confirm_revert()
+            else:
+                self.cancel_revert()
+            return
         if self.input_text(text):
             return
         for ch in text:
@@ -552,6 +626,8 @@ class ReviewHandler(DiffTreeView):
                 self.toggle_noise()
             elif ch == '+':
                 self.stage_selected()
+            elif ch == '-':
+                self.start_revert()
             elif ch == ' ':
                 self.toggle_fold()
 

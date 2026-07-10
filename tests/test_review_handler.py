@@ -187,6 +187,71 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tsel = self.h.rows.index(inside[0])
         self.assertEqual(self.h._selected_paths(), ['dir/fresh.txt'])
 
+    # --- откат изменений ---
+
+    def test_revert_asks_before_touching_anything(self):
+        self._select_file('big.txt')
+        self.h.start_revert()
+        self.assertIsNotNone(self.h.pending_revert)
+        self.assertIn('big.txt', self._status())
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('revert 1 file', draw_text(self.h))
+
+    def test_revert_confirmed_with_y_restores_file(self):
+        self._select_file('big.txt')
+        self.h.start_revert()
+        self.h.on_text('y')
+        self.assertNotIn('big.txt', self._status())
+        self.assertIsNone(self.h.pending_revert)
+
+    def test_revert_cancelled_by_any_other_key(self):
+        self._select_file('big.txt')
+        self.h.start_revert()
+        self.h.on_text('n')
+        self.assertIsNone(self.h.pending_revert)
+        self.assertIn('big.txt', self._status())
+
+    def test_enter_does_not_confirm_revert(self):
+        self._select_file('big.txt')
+        self.h.start_revert()
+        self.h.on_key(kittymock.KeyEvent('ENTER'))
+        self.assertIsNone(self.h.pending_revert)
+        self.assertIn('big.txt', self._status())
+
+    def test_revert_undoes_staged_changes_too(self):
+        self._select_file('big.txt')
+        self.h.stage_selected()
+        self.assertEqual(self._status()['big.txt'], 'M ')
+        self._select_file('big.txt')
+        self.h.start_revert()
+        self.h.on_text('y')
+        self.assertNotIn('big.txt', self._status())
+
+    def test_revert_deletes_untracked_file(self):
+        self._select_file('new.txt')
+        self.h.start_revert()
+        self.h.on_text('y')
+        self.assertFalse(os.path.exists(os.path.join(self.repo, 'new.txt')))
+
+    def test_revert_prompt_warns_about_deletion(self):
+        self._select_row(lambda r: r.get('group_root'))
+        self.h.start_revert()
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('will be deleted for good', draw_text(self.h))
+
+    def test_revert_of_folder_takes_all_its_files(self):
+        self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
+        tracked, untracked = self.h._revert_targets()
+        self.assertEqual((tracked, untracked), (['dir/sub.txt'], []))
+
+    def test_nothing_to_revert_outside_working_scope(self):
+        self.h.scope = 'staged'
+        self.h.load_source()
+        self.h.start_revert()
+        self.assertIsNone(self.h.pending_revert)
+
     # --- навигация ---
 
     def test_move_is_bounded(self):

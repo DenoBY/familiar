@@ -5,6 +5,15 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-07-10
+
+### Added
+
+- review: `-` reverts the file or folder under the cursor back to `HEAD` — both the
+  working tree and the index. Untracked files have no version to restore, so they are
+  deleted from disk; the confirmation prompt spells that out. Nothing happens until `y`
+  is pressed: `Enter`, `Esc` and every other key cancel.
+
 ## [0.5.0] — 2026-07-10
 
 ### Added
