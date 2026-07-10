@@ -74,6 +74,11 @@ class LogHandlerTest(unittest.TestCase):
         self.assertIn('current branch', text)
         self.assertIn('add feature', text)
 
+    def test_footer_offers_the_other_mode(self):
+        self.assertIn('a all branches', self.h._footer())
+        self.h.all_branches = True
+        self.assertIn('a current branch', self.h._footer())
+
     def test_filter_commits(self):
         self.h.filter_query = 'feature'
         self.h.rebuild_commits()

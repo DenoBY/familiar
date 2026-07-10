@@ -30,12 +30,12 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | File | What it checks |
 |------|----------------|
 | `test_review_util.py` / `test_sessions_util.py` | truncation/padding of strings, keyboard layout, `human_age`, wrapping, `is_noise`, `compose` |
-| `test_review_git.py` | review's git layer against a **real temporary repository**: working/staged/branch, untracked, rename, numstat, `detect_base` |
+| `test_review_git.py` | review's git layer against a **real temporary repository**: uncommitted changes, untracked, rename, numstat |
 | `test_review_diff.py` | core of `modules.vcs.diff`: highlighting (`_fg_map`), word-diff, `unified_rows` (modification, gaps, expand, one-column, scopes), tree, cell rendering (`render_diff_cell`/`render_match`/`is_code_row`) |
 | `test_log_git.py` | log's git layer against a **real temporary repository**: `load_commits` (branch/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (root commit via the empty tree), `commit_contents` |
 | `test_log_graph.py` | the branch graph engine `modules.log.graph.build_graph`: linear history, branch+merge (glyphs/lanes), lane colors, width alignment |
 | `test_sessions_data.py` | parsing of sessions/projects, registry of live pids, `append_custom_title` (on temporary directories) |
-| `test_review_handler.py` | `ReviewHandler`: tree, navigation, scope, filter, focus/cursor, gaps, search, comments, `_editor_command` |
+| `test_review_handler.py` | `ReviewHandler`: tree, navigation, filter, focus/cursor, gaps, search, comments, `_editor_command` |
 | `test_log_handler.py` | `CommitLogHandler`: commit list, filter, branch/`--all` mode, opening a commit, diff, copy, mouse |
 | `test_sessions_transcript.py` | `modules.session.transcript`: tool labels, `⎿` output, edit diffs, plans, folding, widths |
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |

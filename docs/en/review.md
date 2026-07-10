@@ -17,9 +17,7 @@ Plus a third view (`v`) — **final code**, the way an IDE shows it: the whole f
 
 ## What it can do
 
-- **Git scopes** (toggle `s`): **working** — uncommitted (vs `HEAD`),
-  **staged** — what's in the index (vs `HEAD`), **vs \<branch\>** — the diff from the
-  base branch (`main`/`master`, auto-detected). The current scope is shown in the header.
+- Shows the **uncommitted changes** in the working tree (vs `HEAD`), untracked files included.
 - On the left, a **tree** of files (folders in blue, files colored by status `M`/`A`/`D`/`R`).
 - On the right, the **unified diff** of the selected file: additions in green `+`, deletions in red `−`,
   context with IDE-grade **syntax highlighting** (Pygments): functions, types, `self`,
@@ -107,7 +105,6 @@ lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff)
 | `→` `Tab` | go to the diff (cursor over lines) |
 | `+` | `git add` the file / folder / all Unversioned Files under the cursor |
 | `-` | revert changes to `HEAD` (new files are deleted); asks `y` to confirm |
-| `s` | git scope: working → staged → vs branch |
 | `r` | rescan changes (refresh) |
 | `u` | show/hide noisy folders (`.idea`, `node_modules`, `__pycache__`, …) |
 | `f` | filter the tree by file name |
@@ -204,14 +201,11 @@ you run `claude` from the project root. Land on a line in the diff → `⌘shift
 into the prompt — no need to describe the spot in words ("in such-and-such file, somewhere
 near that function").
 
-## Git scopes (what's compared with what)
+## What's compared with what
 
-Switched with `s`, the current one is shown in the header:
+The file list is `git status` (plus untracked); each file's diff is the version in
+`HEAD` ("before") against the file on disk ("after"). It answers the question "what
+have I changed since the last commit".
 
-| Scope | Files | "Before" → "After" | Answers the question |
-|---|---|---|---|
-| **working** | `git status` (+ untracked) | `HEAD:file` → file on disk | what you've changed since the last commit |
-| **staged** | `git diff --cached` | `HEAD:file` → version from the index (`:file`) | what will go into the next commit |
-| **vs \<branch\>** | `git diff <base>` | `<base>:file` → file on disk | what's new in the branch relative to `main` |
-
-The base branch (`base`) is auto-detected: `origin/HEAD` → `main` → `master` → `develop`.
+For untracked files and for a repository without commits the "before" side is empty:
+the whole file shows up as added.

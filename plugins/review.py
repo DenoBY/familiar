@@ -10,7 +10,7 @@ review — kitten для kitty.
 
 Двухпанельная diff-механика — общий базовый класс
 modules.vcs.view.DiffTreeView; здесь только review-специфика:
-скоупы working/staged/branch (modules.review.git), аннотации к
+незакоммиченные правки (modules.review.git), аннотации к
 строкам, живой refresh и открытие файла в редакторе.
 
 Подключение в ~/.config/kitty/kitty.conf:
@@ -36,7 +36,7 @@ if '__file__' in globals():
 
 from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
-from modules.review.git import detect_base, revert_paths, scan_changes, stage_paths
+from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.text import plural
 from modules.vcs.diff import group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
@@ -51,14 +51,11 @@ class ReviewHandler(DiffTreeView):
 
     multiline_modes = ('comment',)
 
-    def __init__(self, args: list, cwd: str, root: 'str | None',
-                 base: str = 'main') -> None:
+    def __init__(self, args: list, cwd: str, root: 'str | None') -> None:
         super().__init__(root)
         self.collapsed.add(group_key(UNVERSIONED))
         self.cli_args = args
         self.cwd = cwd
-        self.base = base             # базовая ветка для scope 'branch'
-        self.scope = 'working'       # working → staged → branch (клавиша s)
         self.action = None           # что сделать после выхода (open in editor)
         self.annots = {}             # (file_rel, line) -> {'code': str, 'text': str}
         self.comment_target = None   # (rel, line, code) редактируемой аннотации
@@ -69,22 +66,11 @@ class ReviewHandler(DiffTreeView):
 
     def _contents(self, it):
         path = it['path']
-        src = it.get('orig') or path
         absp = os.path.join(self.root, path)
-        disk = read_text(absp) if os.path.exists(absp) else ''
-        if self.scope == 'working':
-            if it['untracked'] or not has_head(self.root):
-                before = ''
-            else:
-                before = git_blob(self.root, 'HEAD', src)
-            after = disk
-        elif self.scope == 'staged':                      # индекс vs HEAD
-            before = '' if it['kind'] == 'added' else git_blob(self.root, 'HEAD', src)
-            after = '' if it['kind'] == 'deleted' else git_blob(self.root, '', path)
-        else:                                             # branch: рабочее дерево vs base
-            before = '' if it['kind'] == 'added' else git_blob(self.root, self.base, src)
-            after = disk
-        return before, after
+        after = read_text(absp) if os.path.exists(absp) else ''
+        if it['untracked'] or not has_head(self.root):
+            return '', after
+        return git_blob(self.root, 'HEAD', it.get('orig') or path), after
 
     def _tree_visible(self, it):
         q = self.filter_query.lower()
@@ -122,7 +108,7 @@ class ReviewHandler(DiffTreeView):
             self.items = []
             self.status = 'not a git repository'
             return
-        self.items = scan_changes(self.root, self.scope, self.base)
+        self.items = scan_changes(self.root)
         for it in self.items:
             it['rel'] = it['path']
             if it.get('untracked'):
@@ -130,13 +116,6 @@ class ReviewHandler(DiffTreeView):
         # пустой список из-за ошибки git — показать её,
         # а не «no changes»
         self.status = '' if self.items else last_error()
-
-    def cycle_scope(self):
-        order = ('working', 'staged', 'branch')
-        self.scope = order[(order.index(self.scope) + 1) % len(order)]
-        self.tsel = 0
-        self.load_source()
-        self.draw_screen()
 
     def load_source(self):
         self._reload_items()
@@ -168,9 +147,7 @@ class ReviewHandler(DiffTreeView):
         self.cmd.clear_screen()
         cols = self.screen_size.cols
         base = short_path(self.root or self.cwd)
-        scope = {'working': 'working', 'staged': 'staged',
-                 'branch': f'vs {self.base}'}[self.scope]
-        header = f' {base} · {scope} ({self.n_files}'
+        header = f' {base} ({self.n_files}'
         header += f'/{len(self.items)})' if self.filter_query else ')'
         cur = self.current_item()
         if cur:
@@ -210,7 +187,7 @@ class ReviewHandler(DiffTreeView):
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
             revert = ' · - revert' if any(self._revert_targets()) else ''
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes} · s scope'
+            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
                     f'{stage}{revert} · e edit · r refresh · / search · f filter · {u} · q')
         if self.annots:
             base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy+clear · x clear)'
@@ -228,7 +205,7 @@ class ReviewHandler(DiffTreeView):
         рабочее дерево. Полностью staged файл ('M ', 'A ') повторный
         git add не изменит, untracked ('??') — изменит.
         """
-        xy = it.get('xy') or ''
+        xy = it['xy']
         return len(xy) > 1 and xy[1] != ' '
 
     def _items_under_cursor(self, keep):
@@ -267,14 +244,8 @@ class ReviewHandler(DiffTreeView):
 
     # --- откат изменений (git restore / удаление новых файлов) ---
 
-    @staticmethod
-    def _revertable(it):
-        # 'xy' есть только в скоупе working: в staged/branch откатывать
-        # нечего — там показан уже закоммиченный/проиндексированный дифф
-        return bool(it.get('xy'))
-
     def _revert_targets(self):
-        items = self._items_under_cursor(self._revertable)
+        items = self._items_under_cursor(lambda it: True)
         tracked = [it['path'] for it in items if not it['untracked']]
         untracked = [it['path'] for it in items if it['untracked']]
         return tracked, untracked
@@ -611,8 +582,6 @@ class ReviewHandler(DiffTreeView):
                 self.toggle_expand()
             elif c in ('v', 'V'):
                 self.toggle_view_mode()
-            elif c in ('s', 'S'):
-                self.cycle_scope()
             elif c in ('r', 'R'):
                 self.refresh()
             elif c in ('e', 'E'):
@@ -650,8 +619,7 @@ def main(args: list) -> 'dict | None':
     mark_overlay('review')
     cwd = os.getcwd()
     root = git_root(cwd)
-    base = detect_base(root) if root else 'main'
-    handler = ReviewHandler(args, cwd, root, base)
+    handler = ReviewHandler(args, cwd, root)
     loop = Loop()
     loop.loop(handler)
     return handler.action

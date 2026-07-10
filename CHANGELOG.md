@@ -5,6 +5,19 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-07-10
+
+### Removed
+
+- review: the **staged** and **vs \<branch\>** git scopes, and with them the `s` key.
+  The kitten now always shows the uncommitted changes of the working tree (vs `HEAD`),
+  which is the only scope that saw any use. `+` still stages files, as before.
+
+### Fixed
+
+- log: the footer offered `a current branch` while you were already on the current
+  branch — it now names the mode `a` switches *to*, like the neighbouring hints do.
+
 ## [0.7.0] — 2026-07-10
 
 ### Added

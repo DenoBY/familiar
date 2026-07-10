@@ -30,12 +30,12 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | Файл | Что проверяет |
 |------|----------------|
 | `test_review_util.py` / `test_sessions_util.py` | обрезка/паддинг строк, раскладка, `human_age`, перенос, `is_noise`, `compose` |
-| `test_review_git.py` | git-слой review на **настоящем временном репозитории**: working/staged/branch, untracked, rename, numstat, `detect_base` |
+| `test_review_git.py` | git-слой review на **настоящем временном репозитории**: незакоммиченные правки, untracked, rename, numstat |
 | `test_review_diff.py` | ядро `modules.vcs.diff`: подсветка (`_fg_map`), word-diff, `unified_rows` (модификация, гэпы, expand, one-column, скоупы), дерево, отрисовка ячейки (`render_diff_cell`/`render_match`/`is_code_row`) |
 | `test_log_git.py` | git-слой log на **настоящем временном репозитории**: `load_commits` (ветка/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (корневой коммит через пустое дерево), `commit_contents` |
 | `test_log_graph.py` | движок графа веток `modules.log.graph.build_graph`: линейная история, ветка+мерж (глифы/лейны), цвета лейнов, выравнивание ширины |
 | `test_sessions_data.py` | парсинг сессий/проектов, реестр живых pid, `append_custom_title` (на временных каталогах) |
-| `test_review_handler.py` | `ReviewHandler`: дерево, навигация, scope, фильтр, фокус/курсор, гэпы, поиск, аннотации, `_editor_command` |
+| `test_review_handler.py` | `ReviewHandler`: дерево, навигация, фильтр, фокус/курсор, гэпы, поиск, аннотации, `_editor_command` |
 | `test_log_handler.py` | `CommitLogHandler`: список коммитов, фильтр, режим ветка/`--all`, открытие коммита, дифф, копирование, мышь |
 | `test_sessions_transcript.py` | `modules.session.transcript`: метки инструментов, вывод `⎿`, diff правок, планы, сворачивание, ширина |
 | `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |

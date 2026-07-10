@@ -34,7 +34,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('dir/sub.txt', 'sub edited\n')
         self.write('new.txt', 'brand new\n')
 
-        self.h = R.ReviewHandler([], self.repo, self.repo, 'main')
+        self.h = R.ReviewHandler([], self.repo, self.repo)
         wire(self.h, rows=40, cols=120)
         self.h.load_source()
 
@@ -145,16 +145,6 @@ class ReviewHandlerTest(unittest.TestCase):
         self._select_row(lambda r: r.get('group_root'))
         self.assertNotIn('node_modules/junk.js', self.h._selected_paths())
 
-    def test_nothing_to_stage_outside_working_scope(self):
-        self.h.scope = 'staged'
-        self.h.load_source()
-        staged = []
-        self.h.refresh = lambda: staged.append(1)
-        self.h.out = []
-        self.h.stage_selected()
-        self.assertEqual(staged, [])
-        self.assertIn('nothing to stage', draw_text(self.h))  # flash гаснет после отрисовки
-
     def test_already_staged_file_offers_nothing(self):
         self._select_file('new.txt')
         self.h.stage_selected()
@@ -245,12 +235,6 @@ class ReviewHandlerTest(unittest.TestCase):
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
         tracked, untracked = self.h._revert_targets()
         self.assertEqual((tracked, untracked), (['dir/sub.txt'], []))
-
-    def test_nothing_to_revert_outside_working_scope(self):
-        self.h.scope = 'staged'
-        self.h.load_source()
-        self.h.start_revert()
-        self.assertIsNone(self.h.pending_revert)
 
     # --- навигация ---
 
@@ -396,7 +380,6 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.draw_screen()
         text = draw_text(self.h)
         self.assertTrue(self.h.out)
-        self.assertIn('working', text)             # scope в шапке
         self.assertIn('[tree]', text)              # футер режима дерева
 
     def test_draw_screen_is_atomic_frame(self):
@@ -471,17 +454,6 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertTrue(scheduled[0][0].cancelled)
         self.assertEqual(len(scheduled), 1)
         self.assertIsNone(self.h._flash_timer)
-
-    # --- scope ---
-
-    def test_cycle_scope(self):
-        self.assertEqual(self.h.scope, 'working')
-        self.h.cycle_scope()
-        self.assertEqual(self.h.scope, 'staged')
-        self.h.cycle_scope()
-        self.assertEqual(self.h.scope, 'branch')
-        self.h.cycle_scope()
-        self.assertEqual(self.h.scope, 'working')
 
     # --- фильтр ---
 
@@ -865,10 +837,11 @@ class YankTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self.h = R.ReviewHandler([], '/repo', '/repo', 'main')
+        self.h = R.ReviewHandler([], '/repo', '/repo')
         wire(self.h, rows=40, cols=120)
         # минимально имитируем выбранный файл a/b.py и загруженный дифф
-        self.h.filtered = [{'path': 'a/b.py', 'rel': 'a/b.py', 'kind': 'modified'}]
+        self.h.filtered = [{'path': 'a/b.py', 'rel': 'a/b.py', 'kind': 'modified',
+                            'xy': ' M', 'untracked': False}]
         self.h.rows = [{'type': 'file', 'idx': 0, 'depth': 0,
                         'name': 'b.py', 'kind': 'modified', 'stat': None}]
         self.h.tsel = 0

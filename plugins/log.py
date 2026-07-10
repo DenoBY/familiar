@@ -366,10 +366,12 @@ class CommitLogHandler(DiffTreeView):
         if self._fetching:
             return ' fetching…'
         if self.screen == 'commits':
-            mode = 'all branches' if self.all_branches else 'current branch'
+            # в футере — действие по клавише, а не текущий режим
+            # (он и так виден в шапке)
+            mode = 'a current branch' if self.all_branches else 'a all branches'
             graph = 'g graph off' if self.show_graph else 'g graph on'
             info = 'i info off' if self.show_detail else 'i info on'
-            return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch · a {mode}'
+            return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch · {mode}'
                     f' · {graph} · {info} · / filter · q quit')
         modes = self._mode_hints()
         if self.focus == 'diff':
