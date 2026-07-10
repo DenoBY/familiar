@@ -42,7 +42,6 @@ from modules.log.git import (
 )
 from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay
-from modules.pointer import pop_pointer, push_text_pointer
 from modules.text import pad, plural, short_path, truncate, wrap_text
 from modules.vcs.git import git_root, last_error
 from modules.vcs.util import chord, compose, to_latin
@@ -110,13 +109,12 @@ class CommitLogHandler(DiffTreeView):
 
     def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
-        self.print(push_text_pointer(), end='')
         self.reload_commits()
         self.draw_screen()
 
     def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
-        self.print(pop_pointer(), end='')
+        self._reset_pointer()
 
     # --- список коммитов ---
 

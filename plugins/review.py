@@ -36,7 +36,6 @@ if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.overlay import mark_overlay
-from modules.pointer import pop_pointer, push_text_pointer
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.text import plural, short_path, truncate
@@ -103,13 +102,12 @@ class ReviewHandler(DiffTreeView):
 
     def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
-        self.print(push_text_pointer(), end='')
         self.load_source()
         self.draw_screen()
 
     def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
-        self.print(pop_pointer(), end='')
+        self._reset_pointer()
 
     def _reload_items(self) -> None:
         if not self.root:

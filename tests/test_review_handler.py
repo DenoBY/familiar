@@ -7,7 +7,7 @@ import unittest
 
 import kittymock  # noqa: F401
 import review as R
-from kittymock import MouseEvent, draw_text, wire
+from kittymock import EventType, MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key, is_code_row
 
 
@@ -348,6 +348,42 @@ class ReviewHandlerTest(unittest.TestCase):
         Ev.cell_x = self.h.left_width() + 5
         self.h.on_mouse_event(Ev())
         self.assertEqual(calls, [('tree', 3), ('diff', 3)])
+
+    def test_pointer_shape_follows_hover_zone(self):
+        self._select_file('big.txt')
+        lw = self.h.left_width()
+
+        def move(x, y):
+            self.h.out.clear()
+            self.h.on_mouse_event(
+                MouseEvent(cell_x=x, cell_y=y, type=EventType.MOVE))
+
+        # строка кода в diff-панели → текстовый курсор
+        code_y = next(y for y in range(2, self.h.visible_rows() + 2)
+                      if self.h._diff_row_at(MouseEvent(cell_x=lw + 5, cell_y=y))
+                      is not None
+                      and self.h._gap_at(self.h._diff_row_at(
+                          MouseEvent(cell_x=lw + 5, cell_y=y))) is None)
+        move(lw + 5, code_y)
+        self.assertEqual(self.h._pointer_shape, 'text')
+        self.assertIn('\x1b]22;>text\x1b\\', self.h.out)
+
+        # папка в дереве → рука; на смене зоны сначала pop, потом push
+        dir_row = next(i for i, r in enumerate(self.h.rows) if r['type'] == 'dir')
+        move(1, dir_row - self.h.left_offset + 2)
+        self.assertEqual(self.h._pointer_shape, 'pointer')
+        self.assertEqual(self.h.out,
+                         ['\x1b]22;<\x1b\\', '\x1b]22;>pointer\x1b\\'])
+
+        # файл в дереве (кликабелен, но не «раскрытие») → стрелка
+        file_row = next(i for i, r in enumerate(self.h.rows) if r['type'] == 'file')
+        move(1, file_row - self.h.left_offset + 2)
+        self.assertIsNone(self.h._pointer_shape)
+        self.assertEqual(self.h.out, ['\x1b]22;<\x1b\\'])
+
+        # повторное движение в той же зоне — без нового escape
+        move(2, file_row - self.h.left_offset + 2)
+        self.assertEqual(self.h.out, [])
 
     def test_fast_tree_scroll_defers_diff_load(self):
         scheduled = []

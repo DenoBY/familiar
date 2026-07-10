@@ -28,6 +28,7 @@ from ..clipboard import osc52
 from ..dragselect import DragSelect
 from ..draw import AtomicDraw
 from ..inputline import InputLine
+from ..pointer import pop_pointer, push_pointer
 from ..text import plural
 from .diff import (
     MARK_FG,
@@ -50,7 +51,9 @@ THUMB_FG = 244   # ползунки обеих панелей: заметнее 
 
 class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
-    mouse_tracking = MouseTracking.buttons_and_drag
+    # full (не buttons_and_drag): нужны события движения без нажатой
+    # кнопки — иначе не поймать наведение для смены формы указателя.
+    mouse_tracking = MouseTracking.full
 
     def __init__(self, root: 'str | None') -> None:
         self.root = root
@@ -96,6 +99,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.status = ''
         self.flash = ''
         self._load_later = None
+        self._pointer_shape: 'str | None' = None
 
     # --- хуки подкласса ---
 
@@ -906,7 +910,40 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         """
         return max(0, ev.cell_x - (self.left_width() + 3) + self.hscroll)
 
+    def _dir_row_at(self, ev) -> bool:
+        r = ev.cell_y - 2
+        if not (0 <= r < self.visible_rows()) or ev.cell_x >= self.left_width():
+            return False
+        li = self.left_offset + r
+        return li < len(self.rows) and self.rows[li]['type'] == 'dir'
+
+    def _wanted_pointer(self, ev) -> 'str | None':
+        # рука — на кликабельном «раскрытии» (папка дерева, gap
+        # диффа), текст — на строке кода (drag-select), иначе стрелка
+        di = self._diff_row_at(ev)
+        if di is not None:
+            return 'pointer' if self._gap_at(di) is not None else 'text'
+        if self._dir_row_at(ev):
+            return 'pointer'
+        return None
+
+    def _update_pointer(self, ev) -> None:
+        want = self._wanted_pointer(ev)
+        if want == self._pointer_shape:
+            return
+        if self._pointer_shape is not None:
+            self.print(pop_pointer(), end='')
+        if want is not None:
+            self.print(push_pointer(want), end='')
+        self._pointer_shape = want
+
+    def _reset_pointer(self) -> None:
+        if self._pointer_shape is not None:
+            self.print(pop_pointer(), end='')
+            self._pointer_shape = None
+
     def on_mouse_event(self, ev) -> None:
+        self._update_pointer(ev)
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
             up = ev.buttons == MouseButton.WHEEL_UP
             if ev.cell_x < self.left_width():

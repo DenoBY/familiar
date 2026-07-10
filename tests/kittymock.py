@@ -56,6 +56,7 @@ class MouseButton:
 class MouseTracking:
     buttons_only = 'buttons_only'
     buttons_and_drag = 'buttons_and_drag'
+    full = 'full'
 
 
 class Mode:
