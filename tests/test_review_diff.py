@@ -85,7 +85,7 @@ class TestStrongSet(unittest.TestCase):
 
 class TestUnifiedRows(unittest.TestCase):
     def test_single_line_modify(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             'l1\nl2\nl3\n', 'l1\nX2\nl3\n', '.py', 40)
         self.assertEqual(len(rows), 4)
         self.assertEqual(hunks, [1])
@@ -104,7 +104,7 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_context_folds_into_gap(self):
         before, after = self._big()
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             before, after, '.py', 40, context=3)
         self.assertTrue(any(g is not None for g in gaps))
         sep = [p for p in plains if 'hidden' in p]
@@ -113,7 +113,7 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_expand_all_no_gap(self):
         before, after = self._big()
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             before, after, '.py', 40, context=3, expand_all=True)
         self.assertTrue(all(g is None for g in gaps))
         self.assertFalse(any('hidden' in p for p in plains))
@@ -125,20 +125,20 @@ class TestUnifiedRows(unittest.TestCase):
         self.assertFalse(any('hidden' in p for p in plains))
 
     def test_added_file_one_column_all_adds(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             '', 'n1\nn2\nn3\n', '.py', 40)
         self.assertEqual(len(rows), 3)
         self.assertTrue(all(k == H.ADD_BG for k in kinds))
         self.assertEqual(linenos, [1, 2, 3])
 
     def test_deleted_file_one_column_all_dels(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             'o1\no2\n', '', '.py', 40)
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(k == H.DEL_BG for k in kinds))
 
     def test_scope_tracks_enclosing_def(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = unified(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
             'def foo():\n    x = 1\n', 'def foo():\n    x = 2\n', '.py', 40)
         self.assertIn('def foo():', scopes)
 
@@ -169,7 +169,7 @@ class TestUnifiedRows(unittest.TestCase):
 
 class TestFinalRows(unittest.TestCase):
     def test_modified_line_marked_others_clean(self):
-        rows, plains, hunks, linenos, scopes, gaps, kinds, vis = final(
+        rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = final(
             'l1\nl2\nl3\n', 'l1\nX2\nl3\n', '.py', 40)
         self.assertEqual(len(rows), 3)                 # только строки нового файла
         self.assertEqual(linenos, [1, 2, 3])
@@ -236,7 +236,7 @@ class TestFinalRows(unittest.TestCase):
         self.assertEqual(mk, [None, 'mod'])   # строки за блоком нет — метить некуда
 
     def test_scope_tracks_enclosing_def(self):
-        *_, scopes, _, _, _ = final(
+        *_, scopes, _, _, _, _ = final(
             'def foo():\n    x = 1\n', 'def foo():\n    x = 2\n', '.py', 40)
         self.assertEqual(scopes, ['def foo():', 'def foo():'])
 

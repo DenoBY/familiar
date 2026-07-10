@@ -23,7 +23,8 @@ import sys
 from typing import Callable, ClassVar
 
 from kittens.tui.handler import result_handler
-from kittens.tui.loop import Loop
+from kittens.tui.loop import EventType as MouseEventType
+from kittens.tui.loop import Loop, MouseButton
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
@@ -39,13 +40,20 @@ from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.text import plural, short_path, truncate
-from modules.vcs.diff import group_key
+from modules.vcs.diff import DiffSource, group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
+from modules.vcs.navdef import Target, resolve_definition, symbol_at, word_span
 from modules.vcs.util import chord, to_latin
 from modules.vcs.view import DiffTreeView
 
 
 UNVERSIONED = 'Unversioned Files'
+
+# бит Alt/Option в mouse-событии. kitty кодирует модификаторы мыши
+# СВОЕЙ схемой (shift=1, alt=2, ctrl=4, super=8), а не xterm-SGR
+# (где alt=8): проверено эмпирически — ⌥+click даёт mods=2. ⌘/Super
+# мышью не приходит, поэтому go-to-definition — на ⌥+click.
+_ALT_MOD = 0b10
 
 
 class ReviewHandler(DiffTreeView):
@@ -66,6 +74,12 @@ class ReviewHandler(DiffTreeView):
         # (tracked, untracked), ждёт подтверждения
         self.pending_revert: 'tuple[list[str], list[str]] | None' = None
         self.filter_query = ''
+        # go-to-definition: путь показанного read-only внешнего файла
+        # (None — обычный diff из ревью), стек «назад», активный пикер
+        self._external: 'str | None' = None
+        self._navstack: list[dict] = []
+        self._cand: 'list[Target] | None' = None
+        self._cand_sym = ''
 
     # --- хуки DiffTreeView ---
 
@@ -92,11 +106,22 @@ class ReviewHandler(DiffTreeView):
         return (cur_rel is not None and (cur_rel, line) in self.annots
                 and self._commentable(di))
 
-    def _diff_line_clicked(self, di: int, double: bool) -> None:
-        if double and self._commentable(di):
-            self.start_comment()
-        else:
-            self.draw_screen()
+    def _diff_line_clicked(self, di: int, double: bool, col: int) -> None:
+        # клик по номеру строки (левее гуттера) → комментарий к ней
+        if col < self._gutter_cols():
+            if self._commentable(di):
+                self.start_comment()
+            else:
+                self.draw_screen()
+            return
+        # двойной клик по коду → выделить слово под курсором
+        if double and not self._external:
+            span = word_span(self.diff_plain[di], col)
+            if span:
+                self.diff_char_sel = (di, *span)
+                self.diff_sel = None
+                self.flash = 'selected — ⌘c to copy'
+        self.draw_screen()
 
     # --- жизненный цикл ---
 
@@ -150,13 +175,18 @@ class ReviewHandler(DiffTreeView):
     # --- отрисовка ---
 
     def _draw_frame(self) -> None:
+        if self._cand is not None:
+            self._draw_picker()
+            return
         self.cmd.clear_screen()
         cols = self.screen_size.cols
         base = short_path(self.root or self.cwd)
         header = f' {base} ({self.n_files}'
         header += f'/{len(self.items)})' if self.filter_query else ')'
         cur = self.current_item()
-        if cur:
+        if self._external:
+            header += f'   ▸ {self._external} (read-only)'
+        elif cur:
             header += f'   ▸ {cur["rel"]}'
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
@@ -181,16 +211,19 @@ class ReviewHandler(DiffTreeView):
         if self.flash:
             return ' ' + self.flash
         modes = self._mode_hints()
+        back = ' · ⌃o back' if self._navstack else ''
+        if self._external:
+            return f' [read-only]  ↑↓ scroll · [ ] hunk · h/l scroll · ⌥/d def{back} · q'
         if self.focus == 'diff':
             if self.diff_sel is not None or self.diff_char_sel is not None:
-                base = ' [diff]  drag selects (line/text) · ⌘c copy · Esc clear'
+                base = ' [diff]  drag selects (line/text) · ⌘c copy · d def · Esc clear'
             else:
                 if self._gap_at(self.diff_cur) is not None:
                     act = 'Enter expand'
                 else:
                     act = 'Enter/c comment'
-                base = (f' [diff]  ↑↓ line · {act} · ⌘c copy'
-                        f' · [ ] hunk · h/l scroll · {modes} · w export · ←/Tab tree · e edit')
+                base = (f' [diff]  ↑↓ line · {act} · ⌥/d def · ⌘c copy · [ ] hunk'
+                        f' · h/l scroll · {modes} · w export · ←/Tab tree · e edit{back}')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
@@ -237,7 +270,7 @@ class ReviewHandler(DiffTreeView):
         return [it['path'] for it in self._items_under_cursor(self._stageable)]
 
     def stage_selected(self) -> None:
-        if not self.root:
+        if self._ro_block() or not self.root:
             return
         paths = self._selected_paths()
         if not paths:
@@ -262,7 +295,7 @@ class ReviewHandler(DiffTreeView):
         """Спросить подтверждение: откат необратим, а new-файлы ещё и
         не восстановить из git.
         """
-        if not self.root:
+        if self._ro_block() or not self.root:
             return
         tracked, untracked = self._revert_targets()
         if not tracked and not untracked:
@@ -319,6 +352,8 @@ class ReviewHandler(DiffTreeView):
         self.draw_screen()
 
     def start_comment(self) -> None:
+        if self._ro_block():
+            return
         if self.focus != 'diff' or not self._commentable(self.diff_cur):
             self.flash = 'Tab → diff, hover a line, then c'
             self.draw_screen()
@@ -409,6 +444,171 @@ class ReviewHandler(DiffTreeView):
         self.action = {'action': 'edit', 'path': path, 'line': line, 'cwd': project}
         self.quit_loop(0)
 
+    # --- go-to-definition (⌥click / d по выделению) ---
+
+    def _ro_block(self) -> bool:
+        # правки (комментарий/stage/revert/export) в read-only внешнем
+        # файле бессмысленны: tree-item под ним чужой
+        if self._external:
+            self.flash = 'read-only (external file)'
+            self.draw_screen()
+            return True
+        return False
+
+    def _word_at(self, ev) -> 'tuple[str, bool, bool, str | None] | None':
+        di = self._diff_row_at(ev)
+        if di is None or not (0 <= di < len(self.diff_plain)):
+            return None
+        return symbol_at(self.diff_plain[di], self._diff_col_at(ev))
+
+    def goto_definition(self, symbol: 'str | None', is_attr: bool = False,
+                        is_call: bool = False, qualifier: 'str | None' = None) -> None:
+        if not symbol or not self.root:
+            return
+        cur_rel = self._external or (self.current_item() or {}).get('rel')
+        targets = resolve_definition(
+            self.root, cur_rel, self.diff_ext, symbol, is_attr=is_attr,
+            is_call=is_call, qualifier=qualifier, cur_source=self.diff_after)
+        if not targets:
+            self.flash = f"no definition for '{symbol}'"
+            self.draw_screen()
+            return
+        if len(targets) == 1:
+            self._navigate(targets[0])
+        else:
+            self._cand, self._cand_sym = targets, symbol
+            self.draw_screen()
+
+    def _goto_from_selection(self) -> None:
+        sel = self.diff_char_sel
+        if not sel:
+            self.flash = 'select a word (drag), then d'
+            self.draw_screen()
+            return
+        row, cs, ce = sel
+        if 0 <= row < len(self.diff_plain):
+            ref = symbol_at(self.diff_plain[row], cs)
+            if ref:
+                self.goto_definition(*ref)
+
+    def _snapshot(self) -> dict:
+        return {'external': self._external, 'tsel': self.tsel,
+                'diff_offset': self.diff_offset, 'diff_cur': self.diff_cur,
+                'view_mode': self.view_mode, 'hscroll': self.hscroll,
+                'left_offset': self.left_offset, 'focus': self.focus,
+                'collapsed': set(self.collapsed)}
+
+    def _reveal_file(self, rel: str) -> None:
+        # раскрыть свёрнутых предков, чтобы файл появился строкой дерева
+        it = next((x for x in self.filtered if x['rel'] == rel), None)
+        if it is None:
+            return
+        prefix = group_key(it['group']) if it.get('group') else ''
+        if prefix:
+            self.collapsed.discard(prefix)
+        key = prefix
+        for part in rel.split('/')[:-1]:
+            key = f'{key}/{part}' if key else part
+            self.collapsed.discard(key)
+        self.rebuild_tree()
+
+    def _tree_row_for(self, rel: str) -> 'int | None':
+        for i, r in enumerate(self.rows):
+            if r['type'] == 'file' and self.filtered[r['idx']]['rel'] == rel:
+                return i
+        return None
+
+    def _navigate(self, target: Target) -> None:
+        self._navstack.append(self._snapshot())
+        in_review = any(x['rel'] == target.path for x in self.filtered)
+        row = None
+        if in_review:
+            self._reveal_file(target.path)
+            row = self._tree_row_for(target.path)
+        if row is not None:
+            self._external = None
+            self.set_tsel(row)
+            self.load_diff()
+            self.focus = 'diff'
+            # определение часто на неизменённой строке — в unified она
+            # скрыта (свёрнута), центрироваться не на что; финальный вид
+            # показывает файл целиком. nav_back вернёт прежний режим.
+            if target.line and target.line not in self.diff_lineno:
+                self.view_mode = 'final'
+                self.build_diff_rows()
+            self._center_on_line(target.line)
+        else:
+            self._show_file(target.path, target.line)
+        self.flash = f'{short_path(target.path)}:{target.line}'
+        self.draw_screen()
+
+    def _show_file(self, rel: str, line: int) -> None:
+        text = read_text(os.path.join(self.root, rel))
+        self._external = rel
+        self.diff_before = self.diff_after = text
+        self.diff_ext = os.path.splitext(rel)[1].lower()
+        self.diff_src = DiffSource(text, text)
+        self.view_mode = 'final'
+        self.hscroll = 0
+        self.diff_sel = self.diff_char_sel = None
+        self.expanded = set()
+        self.build_diff_rows()
+        self.focus = 'diff'
+        self._center_on_line(line)
+
+    def nav_back(self) -> None:
+        if not self._navstack:
+            self.flash = 'nothing to go back to'
+            self.draw_screen()
+            return
+        s = self._navstack.pop()
+        self.collapsed = s['collapsed']
+        self.rebuild_tree()
+        self.view_mode = s['view_mode']
+        if s['external']:
+            self._show_file(s['external'], 0)
+        else:
+            self._external = None
+            self.set_tsel(s['tsel'])
+            self.load_diff()
+        if s['hscroll'] and self.hscroll != s['hscroll']:
+            self.hscroll = min(s['hscroll'], self.hscroll_max)
+            self.build_diff_rows()
+        rows = max(0, len(self.diff_rows) - 1)
+        self.diff_cur = min(s['diff_cur'], rows)
+        self.diff_offset = min(s['diff_offset'], max(0, len(self.diff_rows) - self.visible_rows()))
+        self.left_offset = s['left_offset']
+        self.focus = s['focus']
+        self.flash = 'back'
+        self.draw_screen()
+
+    # --- пикер кандидатов (несколько определений) ---
+
+    def _draw_picker(self) -> None:
+        cols = self.screen_size.cols
+        self.cmd.clear_screen()
+        self.print(styled(truncate(f" definitions of ‘{self._cand_sym}’", cols),
+                          fg='green', bold=True))
+        self.print(styled('─' * cols, fg='gray'))
+        for i, t in enumerate(self._cand[:9]):
+            mark = '▎' if t.kind == 'def' else ' '
+            loc = f'{short_path(t.path)}:{t.line}'
+            self.print(truncate(f' {i + 1} {mark} {loc}   {t.preview}', cols))
+        self.print('')
+        self.print(styled(truncate(' 1-9 open · Esc cancel', cols), fg='gray'), end='')
+
+    def _pick(self, n: int) -> None:
+        targets = self._cand
+        self._cand, self._cand_sym = None, ''
+        if targets and 0 <= n < min(9, len(targets)):
+            self._navigate(targets[n])
+        else:
+            self.draw_screen()
+
+    def _close_picker(self) -> None:
+        self._cand, self._cand_sym = None, ''
+        self.draw_screen()
+
     # --- фильтр/поиск/комментарий (ввод в строке) ---
 
     def start_filter(self) -> None:
@@ -448,9 +648,43 @@ class ReviewHandler(DiffTreeView):
 
     # --- ввод ---
 
+    def _wanted_pointer(self, ev) -> 'str | None':
+        di = self._diff_row_at(ev)
+        if di is not None:
+            col = self._diff_col_at(ev)
+            # ⌥ над идентификатором → go-to-definition (кликабельно)
+            if (getattr(ev, 'mods', 0) & _ALT_MOD) and col >= self._gutter_cols():
+                if word_span(self.diff_plain[di], col):
+                    return 'pointer'
+            # над номером строки, где можно оставить комментарий
+            if col < self._gutter_cols() and self._commentable(di):
+                return 'pointer'
+        return super()._wanted_pointer(ev)
+
+    def on_mouse_event(self, ev) -> None:
+        press = getattr(ev, 'type', None) == MouseEventType.PRESS
+        left = bool(ev.buttons & MouseButton.LEFT)
+        # пикер открыт — клик выбирает кандидата (строки списка с 2-й)
+        if self._cand is not None:
+            if press and left:
+                self._pick(ev.cell_y - 2)
+            return
+        # ⌥+ЛКМ по слову — go-to-definition; press глотаем, иначе
+        # базовый Handler синтезирует click и начнёт drag-select
+        if press and left and (getattr(ev, 'mods', 0) & _ALT_MOD):
+            ref = self._word_at(ev)
+            if ref:
+                self.goto_definition(*ref)
+            return
+        super().on_mouse_event(ev)
+
     def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:
             return
+        if self._cand is not None:
+            if key_event.key == 'ESCAPE':
+                self._close_picker()
+            return   # пока пикер открыт — глотаем прочие клавиши
         if self.pending_revert:
             # печатаемое (в т.ч. сам «y») разбирает on_text; здесь
             # гасим только Enter/стрелки/Esc: необратимое не должно
@@ -470,6 +704,9 @@ class ReviewHandler(DiffTreeView):
             if chord(key_event, 'ctrl', 'u'):
                 self.input_kill_all()
                 return
+        elif chord(key_event, 'ctrl', 'o'):
+            self.nav_back()
+            return
         elif chord(key_event, 'ctrl', 'd'):
             self.diff_scroll(self.visible_rows() // 2)
             return
@@ -507,6 +744,11 @@ class ReviewHandler(DiffTreeView):
             else:
                 self.cancel_revert()
             return
+        if self._cand is not None:
+            ch = text[:1]
+            if ch.isdigit() and ch != '0':
+                self._pick(int(ch) - 1)
+            return
         if self.input_text(text):
             return
         for ch in text:
@@ -537,6 +779,8 @@ class ReviewHandler(DiffTreeView):
                 return
             elif c in ('c', 'C'):
                 self.start_comment()
+            elif c in ('d', 'D'):
+                self._goto_from_selection()
             elif c in ('w', 'W'):
                 self.export_review()
             elif c in ('x', 'X'):

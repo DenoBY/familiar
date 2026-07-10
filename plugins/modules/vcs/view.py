@@ -37,6 +37,7 @@ from .diff import (
     build_tree,
     change_map,
     final_rows,
+    gutter_width,
     kinds_to_marks,
     line_marks,
     max_hscroll,
@@ -73,6 +74,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         self.diff_rows: list[str] = []
         self.diff_plain: list[str] = []
         self.diff_vis: list[str] = []
+        self.diff_fgs: 'list[list | None]' = []
         self.diff_hunks: list[int] = []
         self.diff_lineno: list[int] = []
         self.diff_scope: list[str] = []
@@ -114,7 +116,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
     def _diff_annotated(self, di: int, cur_rel: 'str | None') -> bool:
         return False
 
-    def _diff_line_clicked(self, di: int, double: bool) -> None:
+    def _diff_line_clicked(self, di: int, double: bool, col: int) -> None:
         self.draw_screen()
 
     def _empty_pane_msg(self) -> str:
@@ -312,6 +314,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         у unified их несёт фон строки, у final приходят готовыми.
         """
         self.diff_rows, self.diff_plain, self.diff_vis = model.rows, model.plains, model.vis
+        self.diff_fgs = model.fgs
         self.diff_hunks, self.diff_lineno = model.hunks, model.linenos
         self.diff_scope, self.diff_gap, self.diff_kind_bg = (
             model.scopes, model.gaps, model.kinds)
@@ -324,7 +327,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         # по нему не работают
         self.hscroll_max = 0
         self._set_diff(DiffModel([styled(msg, fg='gray')], [msg], [], [0], [''],
-                                 [None], [None], [msg]))
+                                 [None], [None], [msg], [None]))
 
     @staticmethod
     def _is_binary(it: dict, before: str, after: str) -> bool:
@@ -357,7 +360,9 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         self.build_diff_rows()
 
     def build_diff_rows(self) -> None:
-        if self.current_item() is None or self.diff_src is None:
+        # diff_src задан и без tree-item — при show_file (внешний файл в
+        # режиме final read-only); current_item() там None
+        if self.diff_src is None:
             return
         rw = self.diff_width()
         if not self.diff_before and not self.diff_after:
@@ -388,7 +393,8 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
             rows=self.diff_rows, plains=self.diff_plain, linenos=self.diff_lineno,
             kind_bg=self.diff_kind_bg, gaps=self.diff_gap,
             cur_match=cur_match, query=self.search_query, char_sel=self.diff_char_sel,
-            vis=self.diff_vis, hscroll=self.hscroll)
+            vis=self.diff_vis, hscroll=self.hscroll,
+            ext=self.diff_ext, gutter_w=self._gutter_cols(), fgs=self.diff_fgs)
 
     # --- навигация по диффу ---
 
@@ -904,10 +910,22 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         return di
 
     def _diff_col_at(self, ev) -> int:
-        """Позиция символа под курсором в diff_plain строки
-        (с учётом hscroll).
+        """Позиция символа под курсором в diff_plain строки. hscroll
+        сдвигает только код: гуттер и знак прибиты к левому краю.
         """
-        return max(0, ev.cell_x - (self.left_width() + 3) + self.hscroll)
+        x = ev.cell_x - (self.left_width() + 3)
+        fixed = self._gutter_cols() + 2
+        return max(0, x if x < fixed else x + self.hscroll)
+
+    def _gutter_cols(self) -> int:
+        """Ширина гуттера с номерами строк в diff_plain (0 — нет диффа).
+        Клик левее — по номеру строки, правее — по коду. В final-виде
+        колонка одна (как в final_rows), в unified — как у diff_src.
+        """
+        if self.diff_src is None:
+            return 0
+        one_col = self.view_mode == 'final' or self.diff_src.one_col
+        return gutter_width(one_col, self.diff_width())
 
     def _dir_row_at(self, ev) -> bool:
         r = ev.cell_y - 2
@@ -1004,4 +1022,4 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         self._click_di, self._click_t = di, now
         self.focus = 'diff'
         self.diff_cur = di
-        self._diff_line_clicked(di, double)
+        self._diff_line_clicked(di, double, self._diff_col_at(ev))

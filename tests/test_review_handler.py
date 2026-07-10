@@ -358,13 +358,14 @@ class ReviewHandlerTest(unittest.TestCase):
             self.h.on_mouse_event(
                 MouseEvent(cell_x=x, cell_y=y, type=EventType.MOVE))
 
-        # строка кода в diff-панели → текстовый курсор
+        # строка кода (правее гуттера номеров) → текстовый курсор
         code_y = next(y for y in range(2, self.h.visible_rows() + 2)
                       if self.h._diff_row_at(MouseEvent(cell_x=lw + 5, cell_y=y))
                       is not None
                       and self.h._gap_at(self.h._diff_row_at(
                           MouseEvent(cell_x=lw + 5, cell_y=y))) is None)
-        move(lw + 5, code_y)
+        code_x = lw + 3 + self.h._gutter_cols() + 3
+        move(code_x, code_y)
         self.assertEqual(self.h._pointer_shape, 'text')
         self.assertIn('\x1b]22;>text\x1b\\', self.h.out)
 

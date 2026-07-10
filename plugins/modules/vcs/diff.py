@@ -60,12 +60,26 @@ def _bg(text: str, bg: 'int | None') -> str:
     return styled(text, bg=bg) if bg is not None and text else text
 
 
+def _split_code(body: str, gutter_w: int) -> 'tuple[str, str, str]':
+    """(номера, знак(2 симв.), код) из plain-строки диффа — код
+    перерисовать с подсветкой, гуттер/знак оставить плоскими.
+    """
+    return body[:gutter_w], body[gutter_w:gutter_w + 2], body[gutter_w + 2:]
+
+
 def _geometry(one_col: bool, width: int) -> tuple[int, int]:
     """(ширина гуттера, ширина колонки кода). Два символа между ними —
     знак строки (+/− в unified, маркер на полях в final).
     """
     gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
     return gutter_w, max(1, width - gutter_w - 2)
+
+
+def gutter_width(one_col: bool, width: int) -> int:
+    """Ширина гуттера с номерами строк — граница «клик по номеру» vs
+    «клик по коду» в просмотрщике.
+    """
+    return _geometry(one_col, width)[0]
 
 
 def _render_diff_line(gut_plain: str, sign: str, sign_fg: 'str | None', code: str,
@@ -96,7 +110,9 @@ class DiffModel(NamedTuple):
     (open-in-editor); scopes — объемлющая функция/класс (sticky);
     gaps — id гэпа (None, кроме строк-разделителей — раскрываются по
     Enter); kinds — фон строки (ADD_BG/DEL_BG/None); vis — видимый plain
-    с применённым hscroll (фоновая подсветка курсора/выделения).
+    с применённым hscroll (фоновая подсветка курсора/выделения); fgs —
+    цвета символов кода каждой строки (полнофайловый лексинг), чтобы
+    выделение/курсор сохраняли подсветку, а не пере-лексили построчно.
     """
     rows: 'list[str]'
     plains: 'list[str]'
@@ -106,6 +122,7 @@ class DiffModel(NamedTuple):
     gaps: 'list[int | None]'
     kinds: 'list[int | None]'
     vis: 'list[str]'
+    fgs: 'list[list | None]'
 
 
 class DiffSource:
@@ -174,7 +191,8 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
     one_col = src.one_col
     _, codew = _geometry(one_col, width)
     cols_a, cols_b = src.colors(ext, new=False), src.colors(ext, new=True)
-    rows, plains, vis, hunks, linenos, gaps, kinds = [], [], [], [], [], [], []
+    rows, plains, vis, hunks, linenos, gaps, kinds, fgs = (
+        [], [], [], [], [], [], [], [])
 
     def line_fgs(cols, idx, cf):
         row = cols[idx] if (cols is not None and idx < len(cols)) else None
@@ -196,21 +214,23 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
             return strong
         return {i - hscroll for i in strong if i >= hscroll}
 
-    def emit(row, plain, lineno=0, gap=None, bg=None, visible=None):
+    def emit(row, plain, lineno=0, gap=None, bg=None, visible=None, fg=None):
         rows.append(row)
         plains.append(plain)
         vis.append(plain if visible is None else visible)
         linenos.append(lineno)
         gaps.append(gap)
         kinds.append(bg)
+        fgs.append(fg)
 
     def emit_ctx(ia, ib):
         full = a[ia].replace('\t', '    ')
         gut = gutter(' ', ia + 1, ib + 1)
         cf = clip(full)
+        fg = line_fgs(cols_b, ib, cf)
         emit(_render_diff_line(gut, '  ', None, cf, ext, None, None, None,
-                               'gray', width, line_fgs(cols_b, ib, cf)),
-             gut + '  ' + full, ib + 1, visible=gut + '  ' + cf)
+                               'gray', width, fg),
+             gut + '  ' + full, ib + 1, visible=gut + '  ' + cf, fg=fg)
 
     def emit_change(oi, i1, i2, j1, j2):
         hunks.append(len(rows))
@@ -223,19 +243,19 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
                       if k < pairs else None)
             gut = gutter('-', i1 + k + 1, j1 + 1)
             cf = clip(full)
+            fg = line_fgs(cols_a, i1 + k, cf)
             emit(_render_diff_line(gut, '- ', 'red', cf, ext, DEL_BG, strong,
-                                   DEL_WORD_BG, 'red', width,
-                                   line_fgs(cols_a, i1 + k, cf)),
-                 gut + '- ' + full, j1 + 1, bg=DEL_BG, visible=gut + '- ' + cf)
+                                   DEL_WORD_BG, 'red', width, fg),
+                 gut + '- ' + full, j1 + 1, bg=DEL_BG, visible=gut + '- ' + cf, fg=fg)
         for k, full in enumerate(add):
             strong = (clip_strong(strong_set(rng[k][1], rng[k][2], full))
                       if k < pairs else None)
             gut = gutter('+', i1 + 1, j1 + k + 1)
             cf = clip(full)
+            fg = line_fgs(cols_b, j1 + k, cf)
             emit(_render_diff_line(gut, '+ ', 'green', cf, ext, ADD_BG, strong,
-                                   ADD_WORD_BG, 'green', width,
-                                   line_fgs(cols_b, j1 + k, cf)),
-                 gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf)
+                                   ADD_WORD_BG, 'green', width, fg),
+                 gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf, fg=fg)
 
     def emit_gap(hidden, lineno, gid):
         inner = f' {plural(hidden, "line")} hidden — Enter to expand '  # линии вплотную к тексту
@@ -270,7 +290,8 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
         else:
             emit_change(oi, i1, i2, j1, j2)
 
-    return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos), gaps, kinds, vis)
+    return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos),
+                     gaps, kinds, vis, fgs)
 
 
 def _scopes(src: DiffSource, linenos: 'list[int]') -> 'list[str]':
@@ -380,7 +401,7 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
     _, codew = _geometry(True, width)
     marks, hunks = line_marks(src)
     cols = src.colors(ext, new=True)
-    rows, plains, vis, linenos = [], [], [], []
+    rows, plains, vis, linenos, fgs = [], [], [], [], []
     for j, raw in enumerate(src.b):
         full = raw.replace('\t', '    ')
         mark = marks[j]
@@ -388,18 +409,19 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
         sign = char + ' '
         gut = f'{j + 1:>{_NUMW}} '
         cf = truncate(full[hscroll:] if hscroll else full, codew)
-        fgs = fit_fgs(cols[j] if (cols is not None and j < len(cols)) else None,
-                      hscroll, len(cf))
+        fg = fit_fgs(cols[j] if (cols is not None and j < len(cols)) else None,
+                     hscroll, len(cf))
         rows.append(_render_diff_line(gut, sign, MARK_FG.get(mark), cf, ext, None,
-                                      None, None, 'gray', width, fgs))
+                                      None, None, 'gray', width, fg))
         # маркер входит в plain: под курсором печатается именно plain,
         # иначе строка дёргалась бы влево на ширину маркера
         plains.append(gut + sign + full)
         vis.append(gut + sign + cf)
         linenos.append(j + 1)
+        fgs.append(fg)
     n = len(rows)
     return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos),
-                     [None] * n, [None] * n, vis)
+                     [None] * n, [None] * n, vis, fgs)
 
 
 def max_hscroll(src: DiffSource, width: int, final: bool = False) -> int:
@@ -444,7 +466,9 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
                      kind_bg: 'list[int | None]', gaps: 'list[int | None]',
                      cur_match: int, query: str,
                      char_sel: 'tuple[int, int, int] | None' = None,
-                     vis: 'list[str] | None' = None, hscroll: int = 0) -> str:
+                     vis: 'list[str] | None' = None, hscroll: int = 0,
+                     ext: str = '', gutter_w: int = 0,
+                     fgs: 'list[list | None] | None' = None) -> str:
     """Правая ячейка строки диффа: курсор, выделение, маркер аннотации,
     совпадение поиска или обычная строка. Чистая — все данные и
     состояние приходят параметрами (annotated считает вызывающий: у
@@ -464,10 +488,16 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
         cs = max(0, min(char_sel[1] - hscroll, len(body)))
         ce = max(cs, min(char_sel[2] - hscroll, len(body)))
         base = kind_bg[di] if di < len(kind_bg) else None
-        span_bg = SEL_RANGE_BG   # тот же синий, что у многострочного выделения
         pad = ' ' * (rw - len(body)) if len(body) < rw else ''
-        out = (_bg(body[:cs], base) + _bg(body[cs:ce], span_bg)
-               + _bg(body[ce:], base) + _bg(pad, base))
+        # код рисуем реальными цветами файла (fgs), выделение — фоном на
+        # диапазоне (SEL_RANGE_BG как strong_bg), знак/номер — плоско
+        head, sign, code = _split_code(body, gutter_w)
+        row_fgs = fgs[di] if (fgs and di < len(fgs)) else None
+        off = gutter_w + 2
+        strong = set(range(max(0, cs - off), max(0, ce - off))) if ce > cs else None
+        out = (_bg(head, base) + _bg(sign, base)
+               + render_code(code, ext, base, strong, SEL_RANGE_BG, row_fgs)
+               + _bg(pad, base))
         return out
     code_row = is_code_row(di, linenos, gaps)
     # выделение подсвечивает только реальные строки кода — не
@@ -479,20 +509,24 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
     # гэпа — иначе конец drag серым «прыгает» по пустым строкам гэпа
     if is_cur and diff_sel is not None and not code_row:
         is_cur = False
-    if is_cur or in_sel:
+    if in_sel or is_cur:
+        # выделение строк / строка под курсором: сохраняем реальную
+        # подсветку файла (fgs), поверх — соответствующий фон
         body = truncate(visible[di], rw)
         if in_sel:
-            sel_bg = SEL_RANGE_BG   # выделение важнее фона курсора
+            sel_bg = SEL_RANGE_BG
         else:
             bg = kind_bg[di] if di < len(kind_bg) else None
-            sel_bg = _FOCUS_SHADE.get(bg, SEL_BG)   # другой оттенок того же цвета
+            sel_bg = _FOCUS_SHADE.get(bg, SEL_BG)
+        head, sign, code = _split_code(body, gutter_w)
+        row_fgs = fgs[di] if (fgs and di < len(fgs)) else None
         if is_cur:
             marker = '●' if annotated else '▎'
             mfg = 'yellow' if annotated else 'cyan'
-            out = styled(marker, fg=mfg, bg=sel_bg, bold=True)
-            out += styled(body[1:], bg=sel_bg) if len(body) > 1 else ''
+            out = styled(marker, fg=mfg, bg=sel_bg, bold=True) + _bg(head[1:], sel_bg)
         else:
-            out = styled(body, bg=sel_bg) if body else ''
+            out = _bg(head, sel_bg)
+        out += _bg(sign, sel_bg) + render_code(code, ext, sel_bg, None, None, row_fgs)
         if len(body) < rw:
             out += styled(' ' * (rw - len(body)), bg=sel_bg)
         return out
