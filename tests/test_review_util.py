@@ -91,9 +91,9 @@ class TestIsNoise(unittest.TestCase):
 
 class TestStatusStyle(unittest.TestCase):
     def test_known_statuses(self):
-        self.assertEqual(U.STATUS_STYLE['added'], ('A', 'green'))
-        self.assertEqual(U.STATUS_STYLE['deleted'], ('D', 'gray'))
-        self.assertEqual(U.STATUS_STYLE['untracked'], ('?', 'red'))
+        self.assertEqual(U.STATUS_STYLE['added'], 'green')
+        self.assertEqual(U.STATUS_STYLE['deleted'], 'gray')
+        self.assertEqual(U.STATUS_STYLE['untracked'], 'red')
 
 
 class TestChord(unittest.TestCase):

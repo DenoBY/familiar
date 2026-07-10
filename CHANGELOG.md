@@ -37,11 +37,10 @@ versioning follows [SemVer](https://semver.org/).
 - The Darcula terminal text was tinted blue: it took the editor's `TEXT` (`#a9b7c6`) where
   the JetBrains scheme has a separate `CONSOLE_NORMAL_OUTPUT` (`#bbbbbb`) for the console.
 - Darcula: word-diff highlighting drowned in the line background. The line is darker now and
-  the word stayed saturated — twice the contrast between them, and text on top reads better.
+  the word stays saturated — twice the contrast between them, and text on top reads better.
 - review, log: clicking a folder in the tree folded it right away, so a slightly-off click
   rearranged the tree under the cursor. The first click now selects the folder, a second
   click on it folds it — the way the commit list in `log` already behaved.
-- log: the footer offered `a current branch` while you were already on the current branch.
 
 ### Internal
 

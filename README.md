@@ -79,7 +79,7 @@ kitty. (`Ctrl+Shift+F5` is kitty's *Linux* reload default; on macOS it's
 | `familiar enable --kittens` | all kittens only, leaves your terminal config untouched |
 | `familiar enable session review log` | only the named overlays (add `--terminal` for the terminal config too) |
 | `familiar enable --terminal` | only the terminal config, no kittens |
-| `familiar enable --all --theme darcula` | same, but with the [Darcula](config/look/darcula.conf) palette (JetBrains) instead of the default one |
+| `familiar enable --all --theme darcula` | same as `--all`, but with the [Darcula](config/look/darcula.conf) palette (JetBrains) instead of the default one |
 | `familiar disable` | remove the familiar block (`--restore` reverts `kitty.conf` from the backup taken on first enable) |
 | `familiar status` | show what's currently enabled |
 
@@ -147,7 +147,7 @@ familiar enable --all          # switch back to the Homebrew build
 Both the Homebrew `familiar` and the repo `./bin/familiar` write the same
 `~/.config/kitty/familiar.conf`, so switching is just re-running the other one —
 no duplication, nothing to clean up. `familiar` bakes absolute paths from wherever
-it runs: the brew build points at `/opt/homebrew/opt/familiar`, the checkout at
+it runs: the brew build points at `/opt/homebrew/opt/familiar/libexec`, the checkout at
 your clone. `familiar status` prints `wired root:` — the installation kitty
 actually runs — next to the `app root:` of the copy you invoked, and warns when
 the two differ; `familiar disable` removes it entirely.

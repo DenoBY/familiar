@@ -5,12 +5,13 @@
 numstat + содержимое blob'ов). Без TUI.
 """
 
-from modules.vcs.git import (
+from ..vcs.git import (
     EMPTY_TREE,
     diff_name_status,
     git_blob,
     git_numstat,
     run_git,
+    run_git_err,
 )
 
 
@@ -56,7 +57,7 @@ def parse_refs(s: str) -> list[tuple[str, str]]:
     return out
 
 
-def display_refs(refs: 'list[tuple[str, str]]') -> 'list[tuple[str, str]]':
+def display_refs(refs: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """[(имя, тип)] → компактные метки для показа:
     локальную ветку с одноимённой удалённой схлопываем в
     «origin & name» (как в IDE); одиночные remote/tag —
@@ -119,11 +120,13 @@ def load_commits(root: str, all_branches: bool = False,
     return commits
 
 
-def fetch(root: str) -> bool:
-    """git fetch --all --prune (сеть, поэтому увеличенный
-    таймаут). True при успехе.
+def fetch(root: str) -> 'str | None':
+    """git fetch --all --prune (сеть, поэтому увеличенный таймаут).
+
+    None — успех, иначе текст ошибки: зовётся из executor-потока,
+    где глобальный last_error() затёрли бы git-вызовы главного.
     """
-    return run_git(root, 'fetch', '--all', '--prune', timeout=60) is not None
+    return run_git_err(root, 'fetch', '--all', '--prune', timeout=60)
 
 
 def push_target(root: str) -> 'tuple[str, str | None, int] | None':
@@ -148,14 +151,15 @@ def push_target(root: str) -> 'tuple[str, str | None, int] | None':
     return (branch, up, n) if n else None
 
 
-def push(root: str, branch: str, has_upstream: bool) -> bool:
+def push(root: str, branch: str, has_upstream: bool) -> 'str | None':
     """Отправить текущую ветку. Без upstream — `push -u origin`, чтобы
     ветка появилась на удалёнке и привязалась (как это делает IDE).
 
-    Сеть, поэтому увеличенный таймаут. True при успехе.
+    Сеть, поэтому увеличенный таймаут. None — успех, иначе текст
+    ошибки (как у fetch: executor-поток, last_error() ненадёжен).
     """
     args = ['push'] if has_upstream else ['push', '-u', 'origin', branch]
-    return run_git(root, *args, timeout=120) is not None
+    return run_git_err(root, *args, timeout=120)
 
 
 def unpushed_shas(root: str) -> set[str]:

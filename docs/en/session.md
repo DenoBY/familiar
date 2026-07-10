@@ -77,7 +77,7 @@ duplicates for the Russian layout.
 ## Keys
 
 **Mouse**: click a row — select; click the selected row again — open (enter the
-project / preview the session).
+project / resume the session).
 
 **Lists (projects / sessions)**
 
@@ -86,7 +86,7 @@ project / preview the session).
 | `↑/↓`, `PgUp`/`PgDn` | both | navigation |
 | `g` / `G`, `Home`/`End` | both | to start / end |
 | mouse click | both | select row · click again — open |
-| `Enter` | both | open project / preview session |
+| `Enter` | both | open project / resume session |
 | `→` | sessions | preview (on projects — open) |
 | `n` | both | new session (`claude`) in the directory |
 | `w` | both | worktree (`claude --worktree`) + new session |
@@ -94,7 +94,7 @@ project / preview the session).
 | `a` | projects | show all sessions / `cli` only |
 | `o` | sessions | resume — new tab with `claude --resume` |
 | `f` | sessions | fork — resume with `--fork-session` |
-| `p` | sessions | preview conversation (same as `Enter`) |
+| `p` | sessions | preview conversation (same as `→`) |
 | `r` | sessions | rename session |
 | `/` | both | search (filter) the list |
 | `Esc` | both | back (or clear the filter) |

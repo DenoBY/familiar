@@ -1,3 +1,4 @@
+import base64
 import os
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ import unittest
 import kittymock  # noqa: F401
 import review as R
 from kittymock import MouseEvent, draw_text, wire
-from modules.vcs.diff import DiffSource, group_key
+from modules.vcs.diff import DiffSource, group_key, is_code_row
 
 
 _ENV = {
@@ -107,7 +108,7 @@ class ReviewHandlerTest(unittest.TestCase):
     def _status(self):
         out = subprocess.run(['git', '-C', self.repo, 'status', '--porcelain', '-uall'],
                              capture_output=True, text=True, env=os.environ).stdout
-        return dict((ln[3:], ln[:2]) for ln in out.splitlines())
+        return {ln[3:]: ln[:2] for ln in out.splitlines()}
 
     def _select_row(self, pred):
         self.h.tsel = next(i for i, r in enumerate(self.h.rows) if pred(r))
@@ -914,9 +915,10 @@ class YankTest(unittest.TestCase):
         self.assertEqual(self.h.hscroll, 0)          # влево — до нуля
 
     def test_is_code_row_skips_gap_and_padding(self):
-        self.assertTrue(self.h._is_code_row(0))      # обычная строка
-        self.assertTrue(self.h._is_code_row(4))
-        self.assertFalse(self.h._is_code_row(2))     # padding/разделитель гэпа (lineno 0, gap set)
+        lineno, gap = self.h.diff_lineno, self.h.diff_gap
+        self.assertTrue(is_code_row(0, lineno, gap))      # обычная строка
+        self.assertTrue(is_code_row(4, lineno, gap))
+        self.assertFalse(is_code_row(2, lineno, gap))     # padding/разделитель гэпа
 
     def test_cursor_hidden_on_padding_during_selection(self):
         self.h.focus = 'diff'
@@ -938,7 +940,6 @@ class YankTest(unittest.TestCase):
         self.assertIsNone(self.h._yank_code(0, 4))   # current_item() → None
 
     def _copied(self):
-        import base64
         blob = ''.join(self.h.out)
         self.assertIn('\x1b]52;c;', blob)
         b64 = blob.split('\x1b]52;c;', 1)[1].split('\x07', 1)[0]

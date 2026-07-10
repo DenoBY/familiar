@@ -59,7 +59,7 @@ hubs (`kitty.conf`, `terminal.conf`) stay at the root.
 |---|---|
 | `kitty.conf` | Thin entry for the manual `cp` path — just `include terminal.conf`. |
 | `terminal.conf` | Look-only hub — pulls in the others in order (`restored-defaults` **first**, so its `clear_all_shortcuts` runs before anything is mapped). This is what `familiar enable --all` includes. |
-| `keys/restored-defaults.conf` | `clear_all_shortcuts` + a curated macOS `Cmd` set: font size (`Cmd+=/-/0`), new window/tab (`Cmd+N/T/Enter`), tab nav (`Cmd+Shift+[ ]`), clipboard (`Cmd+C/V`), search (`Cmd+F`), clear screen (`Cmd+K/L`), scroll, quit/hide/minimize (`Cmd+Q/H/M`), edit/reload config (`Cmd+,` / `Cmd+Ctrl+,`). |
+| `keys/restored-defaults.conf` | `clear_all_shortcuts` + a curated macOS `Cmd` set: font size (`Cmd+=/-/0`), new window/tab (`Cmd+N/T/Enter`), tab nav (`Cmd+Shift+[ ]`), rename tab (`Cmd+Shift+I`), clipboard (`Cmd+C/V`), search (`Cmd+F`), clear screen (`Cmd+K/L`), scroll, quit/hide/minimize (`Cmd+Q/H/M`), edit/reload config (`Cmd+,` / `Cmd+Ctrl+,`). |
 | `look/ghostty.conf` | The look: Ghostty's default dark palette + JetBrains Mono 12 + macOS titlebar tinted to background. **Needs the font installed.** |
 | `keys/russian-ctrl.conf` | Remaps `Ctrl+<Cyrillic>` to the same control code as the Latin key, by physical ЙЦУКЕН→QWERTY position — so `Ctrl+C/V/…` keep working while typing Russian. |
 | `keys/splits.conf` | Ghostty-style panes: `Cmd+D` / `Cmd+Shift+D` split, `Cmd+Shift+arrows` move focus, `Cmd+Shift+Enter` zoom (stack), `Cmd+W` close pane, `Cmd+Shift+W` close tab. |

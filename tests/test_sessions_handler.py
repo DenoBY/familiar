@@ -46,6 +46,12 @@ class SessionsHandlerTest(unittest.TestCase):
         return {'dir': d, 'dir_name': name, 'path': path, 'name': name,
                 'probes': [{'file': f, 'entrypoint': entrypoint, 'mtime': NOW - 100}]}
 
+    def _rebuild(self):
+        self.h.preview.rebuild(self.h.screen_size.cols)
+
+    def _limit(self):
+        return self.h.preview.limit(self.h.visible_rows())
+
     # --- список проектов ---
 
     def test_rebuild_filters_non_interactive(self):
@@ -151,52 +157,52 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self.assertEqual(self.h.screen, 'preview')
-        self.assertTrue(self.h.preview_lines)
-        self.assertTrue(any('hello from A' in ln.text for ln in self.h.preview_lines))
+        self.assertTrue(self.h.preview.lines)
+        self.assertTrue(any('hello from A' in ln.text for ln in self.h.preview.lines))
 
-        self.h.search_query = 'reply'
-        self.h.run_search()
-        self.assertTrue(self.h.search_matches)
-        idx0 = self.h.search_idx
+        self.h.preview.run_search('reply', self.h.screen_size.cols,
+                                  self.h.visible_rows())
+        self.assertTrue(self.h.preview.search_matches)
+        idx0 = self.h.preview.search_idx
         self.h.search_jump(1)
-        self.assertTrue(self.h.search_idx >= 0 or idx0 >= 0)
+        self.assertTrue(self.h.preview.search_idx >= 0 or idx0 >= 0)
 
     def _folded_preview(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview_entries = [Dt.Entry('result', body)]
-        self.h.build_preview_lines()
-        return len(self.h.preview_lines)
+        self.h.preview.entries = [Dt.Entry('result', body)]
+        self._rebuild()
+        return len(self.h.preview.lines)
 
-    def test_enter_expands_then_collapses(self):
+    def test_expand_all_expands_then_collapses(self):
         collapsed = self._folded_preview()
 
         self.h.expand_all()
-        self.assertEqual(self.h.preview_expanded, {0})
-        self.assertGreater(len(self.h.preview_lines), collapsed)
+        self.assertEqual(self.h.preview.expanded, {0})
+        self.assertGreater(len(self.h.preview.lines), collapsed)
 
         self.h.expand_all()
-        self.assertEqual(self.h.preview_expanded, set())
-        self.assertEqual(len(self.h.preview_lines), collapsed)
+        self.assertEqual(self.h.preview.expanded, set())
+        self.assertEqual(len(self.h.preview.lines), collapsed)
 
     def test_ctrl_o_expands(self):
         collapsed = self._folded_preview()
         self.h.on_key(KeyEvent(key='o', ctrl=True))
-        self.assertEqual(self.h.preview_expanded, {0})
-        self.assertGreater(len(self.h.preview_lines), collapsed)
+        self.assertEqual(self.h.preview.expanded, {0})
+        self.assertGreater(len(self.h.preview.lines), collapsed)
 
     def test_ctrl_o_expands_on_cyrillic_layout(self):
         self._folded_preview()
         self.h.on_key(KeyEvent(key='щ', ctrl=True))     # физическая клавиша o
-        self.assertEqual(self.h.preview_expanded, {0})
+        self.assertEqual(self.h.preview.expanded, {0})
 
     def test_ctrl_o_expands_when_sent_as_control_byte(self):
         # config/keys/russian-ctrl.conf мапит ctrl+щ в
         # `send_text all \x0f`
         self._folded_preview()
         self.h.on_text('\x0f')
-        self.assertEqual(self.h.preview_expanded, {0})
+        self.assertEqual(self.h.preview.expanded, {0})
 
     def test_cmd_c_copies_on_cyrillic_layout(self):
         self._open_A()
@@ -208,15 +214,15 @@ class SessionsHandlerTest(unittest.TestCase):
     def test_click_toggles_fold(self):
         collapsed = self._folded_preview()
         self.h.on_click(MouseEvent(cell_x=3, cell_y=2))     # строка ⎿ под шапкой
-        self.assertEqual(self.h.preview_expanded, {0})
-        self.assertGreater(len(self.h.preview_lines), collapsed)
+        self.assertEqual(self.h.preview.expanded, {0})
+        self.assertGreater(len(self.h.preview.lines), collapsed)
 
     def test_click_on_fold_marker_expands(self):
         self._folded_preview()
-        row = next(i for i, ln in enumerate(self.h.preview_lines)
+        row = next(i for i, ln in enumerate(self.h.preview.lines)
                    if ln.text.strip().startswith('…'))
         self.h.on_click(MouseEvent(cell_x=3, cell_y=row + 2))
-        self.assertEqual(self.h.preview_expanded, {0})
+        self.assertEqual(self.h.preview.expanded, {0})
 
     def test_ctrl_o_expands_every_block_at_once(self):
         # раскрывается весь свёрнутый вывод, а не по одной
@@ -224,13 +230,13 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview_entries = [Dt.Entry('result', body),
+        self.h.preview.entries = [Dt.Entry('result', body),
                                   Dt.Entry('result', body)]
-        self.h.build_preview_lines()
+        self._rebuild()
         self.h.expand_all()
-        self.assertEqual(self.h.preview_expanded, {0, 1})
+        self.assertEqual(self.h.preview.expanded, {0, 1})
         self.h.expand_all()
-        self.assertEqual(self.h.preview_expanded, set())
+        self.assertEqual(self.h.preview.expanded, set())
 
     def test_expand_all_absorbs_a_single_open_block(self):
         # один блок раскрыт кликом — ctrl+o дораскрывает остальные,
@@ -238,12 +244,12 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview_entries = [Dt.Entry('result', body),
+        self.h.preview.entries = [Dt.Entry('result', body),
                                   Dt.Entry('result', body)]
-        self.h.build_preview_lines()
+        self._rebuild()
         self.h.toggle_fold(0)
         self.h.expand_all()
-        self.assertEqual(self.h.preview_expanded, {0, 1})
+        self.assertEqual(self.h.preview.expanded, {0, 1})
 
     def test_search_counts_only_visible_matches(self):
         # совпадение за правой границей экрана не «находится»:
@@ -251,35 +257,35 @@ class SessionsHandlerTest(unittest.TestCase):
         # выглядел бы сломанным
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.preview_entries = [Dt.Entry('result', 'x' * 200 + 'needle')]
-        self.h.build_preview_lines()
-        self.h.search_query = 'needle'
-        self.h._find_matches()
-        self.assertEqual(self.h.search_matches, [])
+        self.h.preview.entries = [Dt.Entry('result', 'x' * 200 + 'needle')]
+        self._rebuild()
+        self.h.preview.search_query = 'needle'
+        self.h.preview.find_matches(self.h.screen_size.cols)
+        self.assertEqual(self.h.preview.search_matches, [])
 
-    def test_enter_without_foldable_reports(self):
+    def test_expand_all_without_foldable_reports(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        before = list(self.h.preview_lines)
+        before = list(self.h.preview.lines)
         self.h.expand_all()
-        self.assertEqual(self.h.preview_lines, before)
+        self.assertEqual(self.h.preview.lines, before)
         self.assertEqual(self.h.status, 'nothing to expand')
 
     def test_preview_opens_at_the_end(self):
         self._open_A()
         self.h.screen_size.rows = 4          # заведомо короче диалога
         self.h.open_preview(self.h.sessions[0])
-        self.assertEqual(self.h.preview_offset, self.h._preview_limit())
-        self.assertGreater(self.h.preview_offset, 0)
+        self.assertEqual(self.h.preview.offset, self._limit())
+        self.assertGreater(self.h.preview.offset, 0)
 
     def test_scroll_jumps_to_edges(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.preview_lines = self.h.preview_lines * 30    # заведомо длиннее экрана
+        self.h.preview.lines = self.h.preview.lines * 30    # заведомо длиннее экрана
         self.h.preview_jump(True)
-        self.assertEqual(self.h.preview_offset, self.h._preview_limit())
+        self.assertEqual(self.h.preview.offset, self._limit())
         self.h.preview_jump(False)
-        self.assertEqual(self.h.preview_offset, 0)
+        self.assertEqual(self.h.preview.offset, 0)
 
     # --- прыжки по репликам ---
 
@@ -288,42 +294,44 @@ class SessionsHandlerTest(unittest.TestCase):
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
         # между репликами — длинный вывод, чтобы прыжок был заметен
-        self.h.preview_entries = [e for n in range(3)
-                                  for e in (Dt.Entry('user', f'вопрос {n}'),
-                                            Dt.Entry('result', body))]
-        self.h.build_preview_lines()
-        return [i for i, ln in enumerate(self.h.preview_lines) if ln.prompt]
+        entries = []
+        for n in range(3):
+            entries.append(Dt.Entry('user', f'вопрос {n}'))
+            entries.append(Dt.Entry('result', body))
+        self.h.preview.entries = entries
+        self._rebuild()
+        return [i for i, ln in enumerate(self.h.preview.lines) if ln.prompt]
 
     def test_jump_prompt_walks_forward_and_back(self):
         rows = self._three_prompts()
         self.assertEqual(len(rows), 3)
-        self.h.preview_offset = 0
+        self.h.preview.offset = 0
         self.h.jump_prompt(1)
-        self.assertEqual(self.h.preview_offset, min(rows[1], self.h._preview_limit()))
+        self.assertEqual(self.h.preview.offset, min(rows[1], self._limit()))
         self.h.jump_prompt(-1)
-        self.assertEqual(self.h.preview_offset, rows[0])
+        self.assertEqual(self.h.preview.offset, rows[0])
 
     def test_jump_prompt_reports_at_the_edges(self):
         self._three_prompts()
-        self.h.preview_offset = 0
+        self.h.preview.offset = 0
         self.h.jump_prompt(-1)
         self.assertEqual(self.h.status, 'first prompt')
 
     def test_jump_prompt_without_prompts(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.preview_entries = [Dt.Entry('result', 'ok')]
-        self.h.build_preview_lines()
+        self.h.preview.entries = [Dt.Entry('result', 'ok')]
+        self._rebuild()
         self.h.jump_prompt(1)
         self.assertEqual(self.h.status, 'no prompts')
 
     def test_bracket_keys_jump_on_cyrillic_layout(self):
         rows = self._three_prompts()
-        self.h.preview_offset = 0
+        self.h.preview.offset = 0
         self.h.on_text('ъ')          # физическая ], ЙЦУКЕН
-        self.assertEqual(self.h.preview_offset, min(rows[1], self.h._preview_limit()))
+        self.assertEqual(self.h.preview.offset, min(rows[1], self._limit()))
         self.h.on_text('х')          # физическая [
-        self.assertEqual(self.h.preview_offset, rows[0])
+        self.assertEqual(self.h.preview.offset, rows[0])
 
     # --- выделение и копирование ---
 
@@ -338,37 +346,37 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self._drag(2, 4)
-        self.assertEqual(self.h.preview_sel, (0, 2))
-        self.assertIsNone(self.h.preview_char_sel)
+        self.assertEqual(self.h.preview.sel, (0, 2))
+        self.assertIsNone(self.h.preview.char_sel)
 
     def test_drag_within_row_selects_chars(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self._drag(2, 2, x0=2, x1=7)
         # правая граница включительно: символ под курсором тоже выделен
-        self.assertEqual(self.h.preview_char_sel, (0, 2, 8))
-        self.assertIsNone(self.h.preview_sel)
+        self.assertEqual(self.h.preview.char_sel, (0, 2, 8))
+        self.assertIsNone(self.h.preview.sel)
 
     def test_drag_upwards_selects_same_lines(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self._drag(4, 2)
-        self.assertEqual(self.h.preview_sel, (0, 2))
-        self.assertIsNone(self.h.preview_char_sel)
+        self.assertEqual(self.h.preview.sel, (0, 2))
+        self.assertIsNone(self.h.preview.char_sel)
 
     def test_drag_leftwards_selects_same_chars(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self._drag(2, 2, x0=7, x1=2)
-        self.assertEqual(self.h.preview_char_sel, (0, 2, 8))
-        self.assertIsNone(self.h.preview_sel)
+        self.assertEqual(self.h.preview.char_sel, (0, 2, 8))
+        self.assertIsNone(self.h.preview.sel)
 
     def test_drag_without_movement_selects_nothing(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         self._drag(2, 2, x0=3, x1=3)
-        self.assertIsNone(self.h.preview_char_sel)
-        self.assertIsNone(self.h.preview_sel)
+        self.assertIsNone(self.h.preview.char_sel)
+        self.assertIsNone(self.h.preview.sel)
 
     def test_copy_puts_selection_into_clipboard(self):
         self._open_A()
@@ -378,7 +386,7 @@ class SessionsHandlerTest(unittest.TestCase):
         payload = ''.join(str(x) for x in self.h.out)
         self.assertIn('\x1b]52;c;', payload)
         self.assertTrue(self.h.status.startswith('copied 2 lines'))
-        self.assertIsNone(self.h.preview_sel)
+        self.assertIsNone(self.h.preview.sel)
 
     def test_copy_without_selection_reports(self):
         self._open_A()
@@ -391,7 +399,7 @@ class SessionsHandlerTest(unittest.TestCase):
         self.h.open_preview(self.h.sessions[0])
         self._drag(2, 3)
         self.h.preview_scroll(1)
-        self.assertIsNone(self.h.preview_sel)
+        self.assertIsNone(self.h.preview.sel)
 
     # --- переименование ---
 
@@ -405,7 +413,6 @@ class SessionsHandlerTest(unittest.TestCase):
         self.assertEqual(self.h.sessions[0]['title'], 'Renamed A')
         self.assertTrue(self.h.sessions[0]['custom'])
         # запись реально дописана в файл
-        import modules.session.data as Dt
         self.assertEqual(Dt.load_session_meta(self.h.sessions[0]['file'])['title'], 'Renamed A')
 
     # --- resume ---

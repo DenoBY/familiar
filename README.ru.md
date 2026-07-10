@@ -41,7 +41,7 @@ Python (stdlib) плюс Pygments для подсветки синтаксиса
 ## Установка
 
 Хелпер `familiar` сам всё подключает: пишет `include` в твой `kitty.conf` и
-генерирует kitten-мапы с **абсолютными** путями (относительный kitty резолвит от
+генерирует kitten-мапы с **абсолютными** путями (относительный путь kitty резолвит от
 `~/.config/kitty`, а не от файла с `map` — просто относительным не обойтись).
 Никакой ручной правки, никакого `sed`, и это переживает обновления.
 
@@ -79,7 +79,7 @@ kitty. (`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки
 | `familiar enable --kittens` | только все киты, конфиг терминала не трогает |
 | `familiar enable session review log` | только названные оверлеи (`--terminal` добавит и конфиг терминала) |
 | `familiar enable --terminal` | только конфиг терминала, без китов |
-| `familiar enable --all --theme darcula` | то же, но с палитрой [Darcula](config/look/darcula.conf) (JetBrains) вместо дефолтной |
+| `familiar enable --all --theme darcula` | то же, что `--all`, но с палитрой [Darcula](config/look/darcula.conf) (JetBrains) вместо дефолтной |
 | `familiar disable` | снять familiar-блок (`--restore` вернёт `kitty.conf` из копии, снятой при первом enable) |
 | `familiar status` | показать, что подключено сейчас |
 
@@ -147,7 +147,7 @@ familiar enable --all          # вернуться на Homebrew-сборку
 И `familiar` из brew, и `./bin/familiar` из репо пишут один и тот же
 `~/.config/kitty/familiar.conf`, поэтому переключение — это просто запуск другого,
 без дублей и без уборки. `familiar` запекает абсолютные пути от места запуска:
-brew-сборка → `/opt/homebrew/opt/familiar`, клон → твоя папка. `familiar status`
+brew-сборка → `/opt/homebrew/opt/familiar/libexec`, клон → твоя папка. `familiar status`
 печатает `wired root:` — установку, которую kitty реально исполняет — рядом с
 `app root:` вызванной копии и предупреждает, если они разошлись;
 `familiar disable` убирает полностью.

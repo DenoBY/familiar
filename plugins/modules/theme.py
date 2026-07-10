@@ -13,6 +13,11 @@ styled() выводит как truecolor. Точные оттенки IDE ина
 """
 
 import os
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from kitty.fast_data_types import Color
 
 
 DEFAULT = 'ghostty'
@@ -97,12 +102,14 @@ def theme_name() -> str:
     return os.environ.get('FAMILIAR_THEME', '').strip().lower() or DEFAULT
 
 
-def _rgb(spec: str):
+def _rgb(spec: str) -> 'Color':
+    # ленивый импорт: модуль должен импортироваться и без kitty
+    # (тесты, дефолтная int-палитра)
     from kitty.fast_data_types import Color
     return Color(int(spec[1:3], 16), int(spec[3:5], 16), int(spec[5:7], 16))
 
 
-def palette(name: 'str | None' = None) -> dict:
-    """Роль токена → цвет для styled(): int (256-цвет) или Color."""
+def palette(name: 'str | None' = None) -> 'dict[str, int | Color]':
+    """Роль токена → цвет для styled()."""
     raw = _PALETTES.get(name or theme_name(), _GHOSTTY_PALETTE)
     return {role: _rgb(v) if isinstance(v, str) else v for role, v in raw.items()}

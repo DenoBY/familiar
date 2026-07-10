@@ -8,7 +8,7 @@ import os
 
 # Ре-экспорт примитивов: тесты берут их отсюда
 # (import modules.review.git as G).
-from modules.vcs.git import (  # noqa: F401
+from ..vcs.git import (  # noqa: F401
     classify_status,
     count_lines,
     git_blob,
@@ -20,7 +20,7 @@ from modules.vcs.git import (  # noqa: F401
     run_git,
     set_error,
 )
-from modules.vcs.util import is_noise
+from ..vcs.util import is_noise
 
 
 def scan_changes(root: str) -> list[dict]:

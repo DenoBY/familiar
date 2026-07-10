@@ -50,6 +50,25 @@ def run_git(root: str, *args: str, binary: bool = False,
     return out.stdout if binary else out.stdout.decode('utf-8', 'replace')
 
 
+def run_git_err(root: str, *args: str, timeout: int = 8) -> 'str | None':
+    """Запустить git и вернуть ошибку явно: None — успех, иначе
+    первая строка stderr.
+
+    Для вызовов из фоновых потоков (fetch/push в executor):
+    глобальный last_error() там ненадёжен — его затирают git-вызовы
+    главного потока, пока фоновая команда работает.
+    """
+    try:
+        out = subprocess.run(['git', '-C', root, *args],
+                             capture_output=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if out.returncode == 0:
+        return None
+    err = out.stderr.decode('utf-8', 'replace').strip()
+    return err.splitlines()[0] if err else f'git {args[0]} failed'
+
+
 def git_root(cwd: str) -> 'str | None':
     out = run_git(cwd, 'rev-parse', '--show-toplevel')
     return out.strip() if out else None

@@ -32,6 +32,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_review_util.py` / `test_sessions_util.py` | truncation/padding of strings, keyboard layout, `human_age`, wrapping, `is_noise`, `compose` |
 | `test_review_git.py` | review's git layer against a **real temporary repository**: uncommitted changes, untracked, rename, numstat |
 | `test_review_diff.py` | core of `modules.vcs.diff`: highlighting (`_fg_map`), word-diff, `unified_rows` (modification, gaps, expand, one-column, scopes), tree, cell rendering (`render_diff_cell`/`render_match`/`is_code_row`) |
+| `test_highlight.py` | syntax highlighting in `modules.highlight`: the vendored Pygments, token colors by role (keywords, strings, comments, classes), multi-line docstrings, the huge-file skip, `fit_fgs`, per-side color caching for diffs |
 | `test_log_git.py` | log's git layer against a **real temporary repository**: `load_commits` (branch/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (root commit via the empty tree), `commit_contents` |
 | `test_log_graph.py` | the branch graph engine `modules.log.graph.build_graph`: linear history, branch+merge (glyphs/lanes), lane colors, width alignment |
 | `test_sessions_data.py` | parsing of sessions/projects, registry of live pids, `append_custom_title` (on temporary directories) |
@@ -41,7 +42,9 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |
 | `test_result_handlers.py` | `handle_result` of both kittens — building the remote-control command (the kitty-process side) |
+| `test_overlay.py` | `modules.overlay.mark_overlay`: the OSC 1337 `SetUserVar` escape with the base64-encoded plugin name |
 | `test_theme.py` | color themes: every role defined in every palette, Darcula's truecolor values against the JetBrains scheme, `FAMILIAR_THEME` parsing and the fallback to default |
+| `test_familiar_cli.py` | the `bin/familiar` CLI: `--version` against the formula's tag, rendering the generated config (includes, themes, unmaps), the managed block (insert/upsert/remove), `enable` selection flags, every theme has a palette file |
 
 Interactive rendering in real kitty is not covered by tests (it cannot be run outside kitty);
 `styled` in the mock is the identity function, so handler output is deterministic and is checked against substrings.

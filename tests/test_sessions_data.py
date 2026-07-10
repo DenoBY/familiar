@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import kittymock  # noqa: F401
 import modules.session.data as Dt
@@ -466,12 +467,9 @@ class TestLoadSessions(TmpDirTest):
         self.assertEqual(Dt.load_sessions(project)[0]['title'], 'first')
 
         # без изменения файла — из кэша, parse не зовётся
-        orig = Dt.load_session_meta
-        Dt.load_session_meta = lambda path: self.fail('parse must be cached')
-        try:
+        with mock.patch.object(Dt, 'load_session_meta',
+                               lambda path: self.fail('parse must be cached')):
             self.assertEqual(Dt.load_sessions(project)[0]['title'], 'first')
-        finally:
-            Dt.load_session_meta = orig
 
         # изменение файла инвалидирует кэш (append меняет size)
         self.assertTrue(Dt.append_custom_title(p, 'SID', 'renamed'))

@@ -14,15 +14,16 @@ import difflib
 import os
 import re
 import sys
+from typing import Callable
 
 from kittens.tui.operations import styled
 
 from .theme import palette
 
 
-def _load_pygments():
-    """Pygments из plugins/vendor. Возвращает (get_lexer_for_filename,
-    ClassNotFound) либо None, если библиотеки нет.
+def _load_pygments() -> 'tuple[Callable, type[Exception]] | None':
+    """(get_lexer_for_filename, ClassNotFound) из plugins/vendor;
+    None — библиотеки нет.
     """
     vendor = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'vendor')
@@ -160,7 +161,7 @@ _WORD_SPLIT = re.compile(r'\w+|\s+|[^\w\s]')
 _LINE_SPLIT = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
 
 
-def word_ranges(old: str, new: str) -> tuple:
+def word_ranges(old: str, new: str) -> tuple[set[int], set[int], float]:
     """(изменившиеся символы old, то же для new, похожесть 0..1)."""
     a, b = _WORD_SPLIT.findall(old), _WORD_SPLIT.findall(new)
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
@@ -183,7 +184,7 @@ def word_ranges(old: str, new: str) -> tuple:
     return dset, aset, sm.ratio()
 
 
-def strong_set(marked: set, ratio: float, line: str) -> 'set | None':
+def strong_set(marked: set[int], ratio: float, line: str) -> 'set[int] | None':
     """Символы строки под word-diff подсветку, либо None — когда пара
     строк непохожа или подсветка накрыла бы почти всю строку.
 
@@ -196,7 +197,7 @@ def strong_set(marked: set, ratio: float, line: str) -> 'set | None':
     return marked if len(marked) <= WORD_DIFF_COVER * len(code) else None
 
 
-def _token_style(token) -> tuple:
+def _token_style(token) -> 'tuple[int | None, bool]':
     """(цвет токена, имя ли это). Цвет — самый частный из объявленных,
     ищем поднимаясь к родителю (Token.Name.Function.Magic → … → Token).
     """
@@ -314,7 +315,8 @@ def _fg_map(code, ext):
     return fgs
 
 
-def fit_fgs(fgs: 'list | None', start: int, length: int) -> 'list | None':
+def fit_fgs(fgs: 'list[int | None] | None', start: int,
+            length: int) -> 'list[int | None] | None':
     """Кусок карты цветов под видимый срез строки: с start, длиной
     length, добитый None (усечение могло дописать многоточие).
     """

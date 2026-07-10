@@ -1,9 +1,10 @@
-"""Построение строк представления review-кита: дифф и дерево.
+"""Построение строк diff-представления: общий слой vcs-китов.
 
-Здесь всё, что превращает данные (два текста файла, список изменений)
-в готовые к печати строки: лёгкая подсветка синтаксиса, word-diff,
-свёртка контекста в гэпы, sticky-скоупы и плоское дерево файлов.
-Без обращения к git и без состояния хендлера.
+Source-agnostic слой без обращения к git и без состояния хендлера:
+превращает данные (два текста файла, список изменений) в готовые к
+печати строки — лёгкая подсветка синтаксиса, word-diff, свёртка
+контекста в гэпы, sticky-скоупы и плоское дерево файлов. Используется
+и review (рабочее дерево), и log (коммиты).
 
 Представлений диффа два, и оба дают одинаковую DiffModel:
 `unified_rows` — классический дифф со знаками +/−, `final_rows` —
@@ -33,6 +34,7 @@ from ..highlight import (
     text_colors,
     word_ranges,
 )
+from ..text import plural
 from .util import truncate
 
 
@@ -46,7 +48,7 @@ _DEF_RE = re.compile(
     r'^\s*(?:export\s+)?(?:default\s+)?(?:public\s+|private\s+|protected\s+|static\s+'
     r'|async\s+|final\s+|abstract\s+)*'
     r'(?:def|class|func|function|fn|module|interface|type|struct|impl|trait|enum|'
-    r'namespace|trait|sub|method)\b')
+    r'namespace|sub|method)\b')
 SEL_BG = CURSOR_BG
 # Оттенок фокуса/выделения для строк со своим фоном: на add/del — ярче
 # того же цвета (иначе курсор сливается с фоном строки), на контексте —
@@ -66,8 +68,10 @@ def _geometry(one_col: bool, width: int) -> tuple[int, int]:
     return gutter_w, max(1, width - gutter_w - 2)
 
 
-def _render_diff_line(gut_plain, sign, sign_fg, code, ext, base_bg, strong, strong_bg,
-                      num_fg, width, fgs=None):
+def _render_diff_line(gut_plain: str, sign: str, sign_fg: 'str | None', code: str,
+                      ext: str, base_bg: 'int | None', strong: 'set[int] | None',
+                      strong_bg: 'int | None', num_fg: 'str | None', width: int,
+                      fgs: 'list[int | None] | None' = None) -> str:
     """Строка диффа: номера, знак, фон на всю ширину,
     синтаксис + word-diff подсветка.
     """
@@ -234,8 +238,7 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
                  gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf)
 
     def emit_gap(hidden, lineno, gid):
-        noun = 'line' if hidden == 1 else 'lines'
-        inner = f' {hidden} {noun} hidden — Enter to expand '           # линии вплотную к тексту
+        inner = f' {plural(hidden, "line")} hidden — Enter to expand '  # линии вплотную к тексту
         dots = max(0, width - len(inner))
         left = dots // 2
         sep = '┈' * left + inner + '┈' * (dots - left)                  # метка по центру
@@ -292,12 +295,12 @@ MARK_FG = {'add': 'green', 'mod': 'blue', 'del': 'red'}
 _MARK_PRIORITY = {'del': 3, 'mod': 2, 'add': 1}
 
 
-def line_marks(src: DiffSource) -> tuple:
+def line_marks(src: DiffSource) -> 'tuple[list[str | None], list[int]]':
     """Разметка строк нового файла: (marks, hunks).
 
-    marks[j] — 'add' | 'mod' | 'del' | None для строки b[j]; 'del'
-    означает «перед этой строкой вырезан код». hunks — индексы строк,
-    с которых начинаются изменения.
+    marks[j] — метка строки b[j]: 'add', 'mod' или 'del' («перед этой
+    строкой вырезан код»). hunks — индексы строк, с которых
+    начинаются изменения.
     """
     b = src.b
     marks: 'list[str | None]' = [None] * len(b)
@@ -436,11 +439,12 @@ def render_match(plain: str, rw: int, query: str) -> str:
 
 
 def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
-                     diff_sel: 'tuple | None', annotated: bool, *,
-                     rows: list, plains: list, linenos: list, kind_bg: list,
-                     gaps: list, cur_match: int, query: str,
-                     char_sel: 'tuple | None' = None, vis: 'list | None' = None,
-                     hscroll: int = 0) -> str:
+                     diff_sel: 'tuple[int, int] | None', annotated: bool, *,
+                     rows: list[str], plains: list[str], linenos: list[int],
+                     kind_bg: 'list[int | None]', gaps: 'list[int | None]',
+                     cur_match: int, query: str,
+                     char_sel: 'tuple[int, int, int] | None' = None,
+                     vis: 'list[str] | None' = None, hscroll: int = 0) -> str:
     """Правая ячейка строки диффа: курсор, выделение, маркер аннотации,
     совпадение поиска или обычная строка. Чистая — все данные и
     состояние приходят параметрами (annotated считает вызывающий: у

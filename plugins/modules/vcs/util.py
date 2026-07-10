@@ -7,21 +7,18 @@
 
 from kittens.tui.operations import styled
 
-from modules.keylayout import (  # noqa: F401  (ре-экспорт для review/log)
-    LAYOUT,
-    chord,
-    to_latin,
-)
-from modules.text import HOME, pad, short_path, truncate  # noqa: F401
+from ..keylayout import chord, to_latin  # noqa: F401  (ре-экспорт для review/log)
+from ..text import pad, short_path, truncate  # noqa: F401
 
 
-# Статус изменения → (буква, цвет) для дерева файлов, в стиле IDE.
+# Статус изменения → цвет имени в дереве файлов, в стиле IDE
+# (букву статуса не печатаем — её несёт цвет).
 STATUS_STYLE = {
-    'modified':  ('M', 'blue'),
-    'added':     ('A', 'green'),
-    'deleted':   ('D', 'gray'),
-    'renamed':   ('R', 'cyan'),
-    'untracked': ('?', 'red'),
+    'modified':  'blue',
+    'added':     'green',
+    'deleted':   'gray',
+    'renamed':   'cyan',
+    'untracked': 'red',
 }
 
 # Папки/файлы, скрытые по умолчанию (как «ignored» в IDE).

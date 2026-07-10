@@ -58,7 +58,7 @@ cp config/*.conf ~/.config/kitty/
 |---|---|
 | `kitty.conf` | Тонкий вход для ручного `cp` — просто `include terminal.conf`. |
 | `terminal.conf` | Хаб «оформления» — подключает остальные по порядку (`restored-defaults` **первым**, чтобы его `clear_all_shortcuts` отработал до всех `map`). Именно его включает `familiar enable --all`. |
-| `keys/restored-defaults.conf` | `clear_all_shortcuts` + выверенный набор macOS-`Cmd`: размер шрифта (`Cmd+=/-/0`), новое окно/таб (`Cmd+N/T/Enter`), навигация по табам (`Cmd+Shift+[ ]`), буфер (`Cmd+C/V`), поиск (`Cmd+F`), очистка экрана (`Cmd+K/L`), скролл, quit/hide/minimize (`Cmd+Q/H/M`), правка/перезагрузка конфига (`Cmd+,` / `Cmd+Ctrl+,`). |
+| `keys/restored-defaults.conf` | `clear_all_shortcuts` + выверенный набор macOS-`Cmd`: размер шрифта (`Cmd+=/-/0`), новое окно/таб (`Cmd+N/T/Enter`), навигация по табам (`Cmd+Shift+[ ]`), переименование таба (`Cmd+Shift+I`), буфер (`Cmd+C/V`), поиск (`Cmd+F`), очистка экрана (`Cmd+K/L`), скролл, quit/hide/minimize (`Cmd+Q/H/M`), правка/перезагрузка конфига (`Cmd+,` / `Cmd+Ctrl+,`). |
 | `look/ghostty.conf` | Оформление: дефолтная палитра Ghostty + JetBrains Mono 12 + титлбар macOS под фон. **Нужен установленный шрифт.** |
 | `keys/russian-ctrl.conf` | Ремапит `Ctrl+<кириллица>` в тот же control-код, что латинская клавиша, по физической позиции ЙЦУКЕН→QWERTY — чтобы `Ctrl+C/V/…` работали при наборе на русском. |
 | `keys/splits.conf` | Панели в стиле Ghostty: `Cmd+D` / `Cmd+Shift+D` — сплит, `Cmd+Shift+стрелки` — фокус, `Cmd+Shift+Enter` — зум (stack), `Cmd+W` — закрыть панель, `Cmd+Shift+W` — закрыть таб. |

@@ -18,6 +18,7 @@ from ..highlight import (
     render_code,
     word_ranges,
 )
+from .data import Entry
 from .markdown import markdown_lines
 from .util import ASK_REJECTED, ASK_TOOL, pad, plural, short_path, truncate, wrap_text
 
@@ -107,6 +108,7 @@ _CMD_SEP_RE = re.compile(r'[;&|\n]+')
 # `cd dir && grep …`: до самой команды сегмент ничего не говорит.
 _CMD_PREFIX = frozenset({'cd'})
 
+
 class _Phrase(NamedTuple):
     category: str
     verb: str
@@ -172,13 +174,13 @@ def bash_category(command: str) -> str:
     return 'command'
 
 
-def tool_category(entry) -> str:
+def tool_category(entry: Entry) -> str:
     if entry.name == 'Bash':
         return bash_category((entry.tool_input or {}).get('command', ''))
     return _CATEGORY.get(entry.name, 'command')
 
 
-def summarize_tools(tools: list, root: str = '') -> str:
+def summarize_tools(tools: list[Entry], root: str = '') -> str:
     """«Searched for 2 patterns, read 1 file, listed 1 directory».
 
     Считаем разные цели, а не вызовы: три Read одного файла —
@@ -197,12 +199,12 @@ def summarize_tools(tools: list, root: str = '') -> str:
     return text[:1].upper() + text[1:]
 
 
-def _failed(entries: list, i: int) -> bool:
+def _failed(entries: list[Entry], i: int) -> bool:
     nxt = entries[i + 1] if i + 1 < len(entries) else None
     return bool(nxt) and nxt.kind == 'result' and nxt.error
 
 
-def _summarizable(entries: list, i: int) -> bool:
+def _summarizable(entries: list[Entry], i: int) -> bool:
     """Упавший вызов из сводки не прячем: красный вывод — ровно то,
     ради чего в транскрипт и заглядывают.
     """
@@ -211,7 +213,7 @@ def _summarizable(entries: list, i: int) -> bool:
             and not _failed(entries, i))
 
 
-def tool_group(entries: list, i: int) -> int:
+def tool_group(entries: list[Entry], i: int) -> int:
     """Конец группы подряд идущих сворачиваемых вызовов; i, если ни
     одного нет (одиночный вызов — тоже группа).
 
@@ -227,7 +229,7 @@ def tool_group(entries: list, i: int) -> int:
     return j if calls else i
 
 
-def transcript_lines(entries: list, width: int,
+def transcript_lines(entries: list[Entry], width: int,
                      expanded: 'set | frozenset' = frozenset(),
                      root: str = '',
                      cache: 'dict | None' = None) -> list[Line]:
@@ -267,14 +269,14 @@ def transcript_lines(entries: list, width: int,
     return lines
 
 
-def group_id(entries: list, start: int) -> int:
+def group_id(entries: list[Entry], start: int) -> int:
     """Идентификатор группы для expanded/клика: индексы записей заняты,
     поэтому группы живут за концом списка.
     """
     return len(entries) + start
 
 
-def _group_head(tools: list, gid: int, width: int, root: str,
+def _group_head(tools: list[Entry], gid: int, width: int, root: str,
                 is_open: bool) -> list[Line]:
     text = summarize_tools([e for e in tools if e.kind == 'tool'], root)
     if not is_open:
@@ -282,7 +284,7 @@ def _group_head(tools: list, gid: int, width: int, root: str,
     return [Line('  ' + truncate(text, width - 2), color=DIM, entry=gid)]
 
 
-def _entry_block(e, i: int, width: int, root: str,
+def _entry_block(e: Entry, i: int, width: int, root: str,
                  is_open: bool) -> 'list[Line] | None':
     if e.kind == 'user':
         return _user(e.text, width)
@@ -298,7 +300,7 @@ def _entry_block(e, i: int, width: int, root: str,
     return None
 
 
-def _next_kind(entries: list, i: int) -> str:
+def _next_kind(entries: list[Entry], i: int) -> str:
     return entries[i + 1].kind if i + 1 < len(entries) else ''
 
 
@@ -333,7 +335,7 @@ def _user(text: str, width: int) -> list[Line]:
 
 
 def _fold(rows: list, is_open: bool, reserved: int = 0,
-          limit: int = FOLD_LINES) -> tuple:
+          limit: int = FOLD_LINES) -> tuple[list, int, bool]:
     """Свернуть список до limit строк: (показанные, скрыто, foldable).
 
     reserved — строки блока сверх rows (заголовок): высоту экрана
@@ -355,7 +357,7 @@ def _fold_marker(hidden: int, idx: int, indent: str = '     ') -> Line:
 ARG_LINES = 2
 
 
-def _tool(entry, idx: int, width: int, root: str = '',
+def _tool(entry: Entry, idx: int, width: int, root: str = '',
           is_open: bool = False) -> list[Line]:
     name = display_name(entry.name)
     if entry.name in _NO_ARG:
@@ -388,7 +390,8 @@ def _tool(entry, idx: int, width: int, root: str = '',
     return out
 
 
-def _plan(entry, idx: int, name: str, width: int, is_open: bool) -> list[Line]:
+def _plan(entry: Entry, idx: int, name: str, width: int,
+          is_open: bool) -> list[Line]:
     """Выход из режима планирования: заголовок и сам план в рамке."""
     head = Line(f'⏺ {name}',
                 render=styled('⏺', fg='green') + ' ' + styled(name, bold=True))
@@ -428,7 +431,7 @@ PAIR_RATIO = 0.6
 _MAX_PAIR_CELLS = 400
 
 
-def _pair_rows(rem: list, add: list) -> list:
+def _pair_rows(rem: list[str], add: list[str]) -> list:
     """Пары ((i, j), (изменения в rem[i], изменения в add[j])).
 
     Каждую удалённую строку тянем к самой похожей добавленной, а не
@@ -480,7 +483,7 @@ def _patch_strong(rows: tuple) -> list:
     return strong
 
 
-def _patch_summary(entry) -> str:
+def _patch_summary(entry: Entry) -> str:
     # счётчики из data (по всему патчу): сами строки обрезаны по
     # MAX_RESULT_LINES и для больших правок занижали бы сводку
     added, removed = entry.patch_stat or (
@@ -494,7 +497,7 @@ def _patch_summary(entry) -> str:
     return ', '.join(parts)
 
 
-def _patch_result(entry, idx: int, width: int, is_open: bool) -> list[Line]:
+def _patch_result(entry: Entry, width: int) -> list[Line]:
     """Diff правки: серый жёлоб с номером, цветной знак, код с
     подсветкой синтаксиса и word-diff. Не сворачивается: правка —
     суть сообщения, прятать её за «… +N lines» незачем.
@@ -523,14 +526,15 @@ def _write_rows(tool_input: dict) -> list:
     return [(f'Wrote {plural(n, "line")}', DIM)]
 
 
-def _result_rows(entry) -> list:
+def _result_rows(entry: Entry) -> list:
     """Строки вывода как (текст, цвет). Правку файла Claude Code
     показывает не техническим «file updated», а сводкой и diff'ом —
     берём их из patch.
     """
     if entry.name == 'ExitPlanMode':
-        return ([('Plan rejected', 'red')] if entry.error
-                else [('Plan approved', DIM)])
+        if entry.error:
+            return [('Plan rejected', 'red')]
+        return [('Plan approved', DIM)]
     if not entry.error and entry.name == 'Write' and entry.tool_input:
         return _write_rows(entry.tool_input)
     color = 'red' if entry.error else DIM
@@ -540,9 +544,9 @@ def _result_rows(entry) -> list:
     return [(ln, color) for ln in body]
 
 
-def _result(entry, idx: int, width: int, is_open: bool) -> list[Line]:
+def _result(entry: Entry, idx: int, width: int, is_open: bool) -> list[Line]:
     if entry.patch and not entry.error and entry.name != 'Write':
-        return _patch_result(entry, idx, width, is_open)
+        return _patch_result(entry, width)
     # строки вывода НЕ переносим и не режем: обрезает отрисовка,
     # а копирование берёт текст строки целиком
     rows = _result_rows(entry)
@@ -550,8 +554,8 @@ def _result(entry, idx: int, width: int, is_open: bool) -> list[Line]:
     # тело по запросу.
     if entry.summary and not entry.error:
         foldable = True
-        shown, hidden = (rows, 0) if is_open else (
-            [(entry.summary + EXPAND_HINT, DIM)], 0)
+        hidden = 0
+        shown = rows if is_open else [(entry.summary + EXPAND_HINT, DIM)]
     else:
         shown, hidden, foldable = _fold(rows, is_open)
 

@@ -20,6 +20,7 @@ modules.vcs.view.DiffTreeView; здесь только review-специфика
 import os
 import subprocess
 import sys
+from typing import Callable, ClassVar
 
 from kittens.tui.handler import result_handler
 from kittens.tui.loop import Loop
@@ -37,10 +38,10 @@ if '__file__' in globals():
 from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
-from modules.text import plural
+from modules.text import plural, short_path, truncate
 from modules.vcs.diff import group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
-from modules.vcs.util import chord, short_path, to_latin, truncate
+from modules.vcs.util import chord, to_latin
 from modules.vcs.view import DiffTreeView
 
 
@@ -49,22 +50,26 @@ UNVERSIONED = 'Unversioned Files'
 
 class ReviewHandler(DiffTreeView):
 
-    multiline_modes = ('comment',)
+    multiline_modes: ClassVar[tuple[str, ...]] = ('comment',)
 
-    def __init__(self, args: list, cwd: str, root: 'str | None') -> None:
+    def __init__(self, args: list[str], cwd: str, root: 'str | None') -> None:
         super().__init__(root)
         self.collapsed.add(group_key(UNVERSIONED))
         self.cli_args = args
         self.cwd = cwd
-        self.action = None           # что сделать после выхода (open in editor)
-        self.annots = {}             # (file_rel, line) -> {'code': str, 'text': str}
-        self.comment_target = None   # (rel, line, code) редактируемой аннотации
-        self.pending_revert = None   # (tracked, untracked), ждёт подтверждения
+        # что сделать после выхода (open in editor)
+        self.action: 'dict | None' = None
+        # (rel, line) → {'code', 'text'}
+        self.annots: dict[tuple[str, int], dict[str, str]] = {}
+        # (rel, line, code) редактируемой аннотации
+        self.comment_target: 'tuple[str, int, str] | None' = None
+        # (tracked, untracked), ждёт подтверждения
+        self.pending_revert: 'tuple[list[str], list[str]] | None' = None
         self.filter_query = ''
 
     # --- хуки DiffTreeView ---
 
-    def _contents(self, it):
+    def _contents(self, it: dict) -> tuple[str, str]:
         path = it['path']
         absp = os.path.join(self.root, path)
         after = read_text(absp) if os.path.exists(absp) else ''
@@ -72,22 +77,22 @@ class ReviewHandler(DiffTreeView):
             return '', after
         return git_blob(self.root, 'HEAD', it.get('orig') or path), after
 
-    def _tree_visible(self, it):
+    def _tree_visible(self, it: dict) -> bool:
         q = self.filter_query.lower()
         return not q or q in os.path.basename(it['rel']).lower()
 
-    def _empty_pane_msg(self):
+    def _empty_pane_msg(self) -> str:
         return 'no matches' if self.filter_query else 'no changes'
 
-    def _focus_landing(self, start):
+    def _focus_landing(self, start: int) -> int:
         return self._first_commentable(start)   # курсор встаёт на строку кода (для аннотаций)
 
-    def _diff_annotated(self, di, cur_rel):
+    def _diff_annotated(self, di: int, cur_rel: 'str | None') -> bool:
         line = self.diff_lineno[di] if di < len(self.diff_lineno) else 0
         return (cur_rel is not None and (cur_rel, line) in self.annots
                 and self._commentable(di))
 
-    def _diff_line_clicked(self, di, double):
+    def _diff_line_clicked(self, di: int, double: bool) -> None:
         if double and self._commentable(di):
             self.start_comment()
         else:
@@ -95,15 +100,15 @@ class ReviewHandler(DiffTreeView):
 
     # --- жизненный цикл ---
 
-    def initialize(self):
+    def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
         self.load_source()
         self.draw_screen()
 
-    def finalize(self):
+    def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
 
-    def _reload_items(self):
+    def _reload_items(self) -> None:
         if not self.root:
             self.items = []
             self.status = 'not a git repository'
@@ -117,7 +122,7 @@ class ReviewHandler(DiffTreeView):
         # а не «no changes»
         self.status = '' if self.items else last_error()
 
-    def load_source(self):
+    def load_source(self) -> None:
         self._reload_items()
         self.filter_query = ''
         self.rebuild_tree()
@@ -125,7 +130,7 @@ class ReviewHandler(DiffTreeView):
         self.left_offset = 0
         self.load_diff()
 
-    def refresh(self):
+    def refresh(self) -> None:
         """Пересканировать изменения, сохранив фильтр,
         сворачивание, выделение и позицию скролла диффа (не
         прыгать на начало) — удобно пока агент дописывает код.
@@ -143,7 +148,7 @@ class ReviewHandler(DiffTreeView):
 
     # --- отрисовка ---
 
-    def _draw_frame(self):
+    def _draw_frame(self) -> None:
         self.cmd.clear_screen()
         cols = self.screen_size.cols
         base = short_path(self.root or self.cwd)
@@ -164,7 +169,7 @@ class ReviewHandler(DiffTreeView):
             self.pending_revert)), end='')
         self.flash = ''
 
-    def _footer(self):
+    def _footer(self) -> str:
         if self.pending_revert:
             return self._revert_prompt()
         if self.input_mode == 'comment':
@@ -179,8 +184,10 @@ class ReviewHandler(DiffTreeView):
             if self.diff_sel is not None or self.diff_char_sel is not None:
                 base = ' [diff]  drag selects (line/text) · ⌘c copy · Esc clear'
             else:
-                act = ('Enter expand' if self._gap_at(self.diff_cur) is not None
-                       else 'Enter/c comment')
+                if self._gap_at(self.diff_cur) is not None:
+                    act = 'Enter expand'
+                else:
+                    act = 'Enter/c comment'
                 base = (f' [diff]  ↑↓ line · {act} · ⌘c copy'
                         f' · [ ] hunk · h/l scroll · {modes} · w export · ←/Tab tree · e edit')
         else:
@@ -200,7 +207,7 @@ class ReviewHandler(DiffTreeView):
     # --- git add ---
 
     @staticmethod
-    def _stageable(it):
+    def _stageable(it: dict) -> bool:
         """Есть ли что добавлять в индекс: вторая буква статуса git —
         рабочее дерево. Полностью staged файл ('M ', 'A ') повторный
         git add не изменит, untracked ('??') — изменит.
@@ -208,7 +215,7 @@ class ReviewHandler(DiffTreeView):
         xy = it['xy']
         return len(xy) > 1 and xy[1] != ' '
 
-    def _items_under_cursor(self, keep):
+    def _items_under_cursor(self, keep: Callable[[dict], bool]) -> list[dict]:
         """Элементы под курсором дерева: у файла — он сам, у папки (и
         у узла Unversioned Files) — все её файлы, прошедшие keep.
         Скрытые фильтром и noise-каталоги не попадают: трогаем ровно
@@ -225,10 +232,10 @@ class ReviewHandler(DiffTreeView):
                 if it.get('group') == row.get('group') and it['rel'].startswith(prefix)
                 and keep(it)]
 
-    def _selected_paths(self):
+    def _selected_paths(self) -> list[str]:
         return [it['path'] for it in self._items_under_cursor(self._stageable)]
 
-    def stage_selected(self):
+    def stage_selected(self) -> None:
         if not self.root:
             return
         paths = self._selected_paths()
@@ -244,13 +251,13 @@ class ReviewHandler(DiffTreeView):
 
     # --- откат изменений (git restore / удаление новых файлов) ---
 
-    def _revert_targets(self):
+    def _revert_targets(self) -> tuple[list[str], list[str]]:
         items = self._items_under_cursor(lambda it: True)
         tracked = [it['path'] for it in items if not it['untracked']]
         untracked = [it['path'] for it in items if it['untracked']]
         return tracked, untracked
 
-    def start_revert(self):
+    def start_revert(self) -> None:
         """Спросить подтверждение: откат необратим, а new-файлы ещё и
         не восстановить из git.
         """
@@ -264,12 +271,12 @@ class ReviewHandler(DiffTreeView):
         self.pending_revert = (tracked, untracked)
         self.draw_screen()
 
-    def cancel_revert(self):
+    def cancel_revert(self) -> None:
         self.pending_revert = None
         self.flash = 'revert cancelled'
         self.draw_screen()
 
-    def confirm_revert(self):
+    def confirm_revert(self) -> None:
         tracked, untracked = self.pending_revert
         self.pending_revert = None
         n = len(tracked) + len(untracked)
@@ -279,16 +286,17 @@ class ReviewHandler(DiffTreeView):
             self.flash = f'revert failed: {last_error()}'
         self.refresh()
 
-    def _revert_prompt(self):
+    def _revert_prompt(self) -> str:
         tracked, untracked = self.pending_revert
         what = plural(len(tracked) + len(untracked), 'file')
-        deleted = (f', {plural(len(untracked), "new file")} will be deleted for good'
-                   if untracked else '')
+        deleted = ''
+        if untracked:
+            deleted = f', {plural(len(untracked), "new file")} will be deleted for good'
         return f' revert {what}{deleted}?   y — yes   any other key — no'
 
     # --- аннотации (комментарии к строкам → markdown в буфер) ---
 
-    def jump_annot(self, direction):
+    def jump_annot(self, direction: int) -> None:
         """Прыжок курсора между строками с аннотациями (●) в
         текущем файле, по кругу.
         """
@@ -309,7 +317,7 @@ class ReviewHandler(DiffTreeView):
         self._ensure_cursor_visible()
         self.draw_screen()
 
-    def start_comment(self):
+    def start_comment(self) -> None:
         if self.focus != 'diff' or not self._commentable(self.diff_cur):
             self.flash = 'Tab → diff, hover a line, then c'
             self.draw_screen()
@@ -324,7 +332,7 @@ class ReviewHandler(DiffTreeView):
         existing = self.annots.get((cur['rel'], line))
         self.start_input('comment', existing['text'] if existing else '')
 
-    def _save_comment(self):
+    def _save_comment(self) -> None:
         rel, line, code = self.comment_target
         text = self.input_buffer.strip()
         key = (rel, line)
@@ -334,7 +342,7 @@ class ReviewHandler(DiffTreeView):
             self.annots.pop(key, None)   # пустой комментарий = удалить
         self.comment_target = None
 
-    def export_review(self):
+    def export_review(self) -> None:
         if not self.annots:
             self.flash = 'no comments — Tab→diff, hover a line, c'
             self.draw_screen()
@@ -359,17 +367,17 @@ class ReviewHandler(DiffTreeView):
         self.flash = f'copied {plural(n, "comment")} to clipboard — cleared'
         self.draw_screen()
 
-    def clear_annotations(self):
+    def clear_annotations(self) -> None:
         if not self.annots:
             self.flash = 'no comments'
         else:
-            self.flash = f'cleared {len(self.annots)} comments'
+            self.flash = f'cleared {plural(len(self.annots), "comment")}'
             self.annots = {}
         self.draw_screen()
 
     # --- открытие файла в редакторе ---
 
-    def open_editor(self):
+    def open_editor(self) -> None:
         """Открыть текущий файл на видимой сверху строке.
         GUI-редактор (IDE) запускаем тут же, не закрывая
         оверлей; терминальный ($EDITOR=vim) — выходим и
@@ -402,42 +410,30 @@ class ReviewHandler(DiffTreeView):
 
     # --- фильтр/поиск/комментарий (ввод в строке) ---
 
-    def start_filter(self):
+    def start_filter(self) -> None:
         self.start_input('filter', self.filter_query)
 
-    def start_search(self):
-        self.start_input('search', self.search_query)
-
-    def _input_live(self):
+    def _input_live(self) -> None:
         if self.input_mode == 'filter':
             self._apply_filter()
         elif self.input_mode == 'search':
-            self._apply_search()
+            self.apply_search_input()
         else:
             self.draw_screen()
 
-    def _apply_filter(self):
+    def _apply_filter(self) -> None:
         self.filter_query = self.input_buffer
         self.tsel = 0
         self.rebuild_tree()
         self.load_diff()
         self.draw_screen()
 
-    def _apply_search(self):
-        self.search_query = self.input_buffer
-        self._recompute_matches()
-        if self.search_matches:
-            self.search_idx = next((n for n, r in enumerate(self.search_matches)
-                                    if r >= self.diff_offset), 0)
-            self._scroll_to_match()
-        self.draw_screen()
-
-    def commit_input(self):
+    def commit_input(self) -> None:
         if self.input_mode == 'comment' and self.comment_target:
             self._save_comment()
         super().commit_input()
 
-    def _input_cancelled(self, mode):
+    def _input_cancelled(self, mode: str) -> None:
         if mode == 'filter':
             self.filter_query = ''
             self.tsel = 0
@@ -451,7 +447,7 @@ class ReviewHandler(DiffTreeView):
 
     # --- ввод ---
 
-    def on_key(self, key_event):
+    def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:
             return
         if self.pending_revert:
@@ -488,17 +484,9 @@ class ReviewHandler(DiffTreeView):
         if chord(key_event, 'super', 'c'):
             self.smart_copy()
             return
-        if k == 'TAB':
-            self.toggle_focus()
-        elif k == 'UP':
-            self.nav(-1)
-        elif k == 'DOWN':
-            self.nav(1)
-        elif k == 'PAGE_UP':
-            self.diff_scroll(-self.visible_rows())
-        elif k == 'PAGE_DOWN':
-            self.diff_scroll(self.visible_rows())
-        elif k == 'HOME':
+        if self.diff_common_key(k):
+            return
+        if k == 'HOME':
             self.set_tsel(0)
             self.load_diff()
             self.draw_screen()
@@ -507,30 +495,11 @@ class ReviewHandler(DiffTreeView):
             self.load_diff()
             self.draw_screen()
         elif k == 'ENTER':
-            if self.focus == 'diff':
-                if self._gap_at(self.diff_cur) is not None:
-                    self.expand_gap(self.diff_cur)
-                else:
-                    self.start_comment()
-            else:
-                self.toggle_fold()
-        elif k == 'RIGHT':
-            self.set_focus('diff')
-        elif k == 'LEFT':
-            self.set_focus('tree')
+            self.start_comment()   # общий разбор оставил Enter на строке кода диффа
         elif k == 'ESCAPE':
-            if self.diff_sel is not None or self.diff_char_sel is not None:
-                self.diff_sel = self.diff_char_sel = None   # сначала снимаем выделение
-                self.draw_screen()
-            elif self.search_query:
-                self.clear_search()
-            elif self.focus == 'diff':
-                self.focus = 'tree'
-                self.draw_screen()
-            else:
-                self.quit_loop(0)
+            self.quit_loop(0)      # каскад ESC исчерпан — выходим
 
-    def on_text(self, text, in_bracketed_paste=False):
+    def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
         if self.pending_revert:
             if to_latin(text[:1]) in ('y', 'Y'):
                 self.confirm_revert()
@@ -556,32 +525,10 @@ class ReviewHandler(DiffTreeView):
             if c in ('q', 'Q'):
                 self.quit_loop(0)
                 return
-            elif c == '/':
-                self.start_search()
-            elif c in ('f', 'F'):
+            if self.diff_common_text(ch):
+                continue
+            if c in ('f', 'F'):
                 self.start_filter()
-            elif c == 'n':
-                self.search_next(1)
-            elif c == 'N':
-                self.search_next(-1)
-            elif c == '[':
-                self.jump_hunk(-1)
-            elif c == ']':
-                self.jump_hunk(1)
-            elif ch == '\t':
-                self.toggle_focus()
-            elif c in ('l', 'L'):
-                self.hscroll_by(8)
-            elif c in ('h', 'H'):
-                self.hscroll_by(-8)
-            elif c == 'g':
-                self.jump_edge(False)
-            elif c == 'G':
-                self.jump_edge(True)
-            elif c in ('a', 'A'):
-                self.toggle_expand()
-            elif c in ('v', 'V'):
-                self.toggle_view_mode()
             elif c in ('r', 'R'):
                 self.refresh()
             elif c in ('e', 'E'):
@@ -593,29 +540,25 @@ class ReviewHandler(DiffTreeView):
                 self.export_review()
             elif c in ('x', 'X'):
                 self.clear_annotations()
-            elif c in ('u', 'U'):
-                self.toggle_noise()
             elif ch == '+':
                 self.stage_selected()
             elif ch == '-':
                 self.start_revert()
-            elif ch == ' ':
-                self.toggle_fold()
 
-    def on_resize(self, new_size):
+    def on_resize(self, new_size) -> None:
         self.build_diff_rows()
         self.draw_screen()
 
-    def on_interrupt(self):
+    def on_interrupt(self) -> None:
         self.quit_loop(0)
 
-    def on_eot(self):
+    def on_eot(self) -> None:
         # Ctrl+D — скролл диффа на полстраницы вниз, а НЕ
         # закрытие оверлея.
         self.diff_scroll(self.visible_rows() // 2)
 
 
-def main(args: list) -> 'dict | None':
+def main(args: list[str]) -> 'dict | None':
     mark_overlay('review')
     cwd = os.getcwd()
     root = git_root(cwd)
@@ -626,7 +569,8 @@ def main(args: list) -> 'dict | None':
 
 
 @result_handler()
-def handle_result(args, answer, target_window_id, boss):
+def handle_result(args: list[str], answer: 'dict | None',
+                  target_window_id: int, boss) -> None:
     if not answer or answer.get('action') != 'edit':
         return
     project, path, line = answer['cwd'], answer['path'], answer['line']

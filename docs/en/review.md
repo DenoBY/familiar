@@ -86,8 +86,6 @@ overlay.
 
 ## Keys
 
-| Key | Action |
-|---|---|
 Two focus areas: the **tree** (left, navigate files) and the **diff** (right, cursor over
 lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff).
 

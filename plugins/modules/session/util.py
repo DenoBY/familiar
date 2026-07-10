@@ -5,9 +5,8 @@
 общая, из modules.keylayout.
 """
 
-from modules.keylayout import LAYOUT, to_latin  # noqa: F401  (ре-экспорт для session)
-from modules.text import (  # noqa: F401  (ре-экспорт для session)
-    HOME,
+from ..keylayout import to_latin  # noqa: F401  (ре-экспорт для session)
+from ..text import (  # noqa: F401  (ре-экспорт для session)
     pad,
     plural,
     short_path,

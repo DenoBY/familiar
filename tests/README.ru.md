@@ -32,6 +32,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_review_util.py` / `test_sessions_util.py` | обрезка/паддинг строк, раскладка, `human_age`, перенос, `is_noise`, `compose` |
 | `test_review_git.py` | git-слой review на **настоящем временном репозитории**: незакоммиченные правки, untracked, rename, numstat |
 | `test_review_diff.py` | ядро `modules.vcs.diff`: подсветка (`_fg_map`), word-diff, `unified_rows` (модификация, гэпы, expand, one-column, скоупы), дерево, отрисовка ячейки (`render_diff_cell`/`render_match`/`is_code_row`) |
+| `test_highlight.py` | подсветка синтаксиса `modules.highlight`: vendored Pygments, цвета токенов по ролям (ключевые слова, строки, комментарии, классы), многострочные docstring, пропуск огромных файлов, `fit_fgs`, кэш цветов по сторонам диффа |
 | `test_log_git.py` | git-слой log на **настоящем временном репозитории**: `load_commits` (ветка/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (корневой коммит через пустое дерево), `commit_contents` |
 | `test_log_graph.py` | движок графа веток `modules.log.graph.build_graph`: линейная история, ветка+мерж (глифы/лейны), цвета лейнов, выравнивание ширины |
 | `test_sessions_data.py` | парсинг сессий/проектов, реестр живых pid, `append_custom_title` (на временных каталогах) |
@@ -41,7 +42,9 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |
 | `test_result_handlers.py` | `handle_result` обоих китов — построение команды remote-control (сторона процесса kitty) |
+| `test_overlay.py` | `modules.overlay.mark_overlay`: escape-последовательность OSC 1337 `SetUserVar` с именем плагина в base64 |
 | `test_theme.py` | цветовые темы: каждая роль определена в каждой палитре, truecolor-значения Darcula против схемы JetBrains, разбор `FAMILIAR_THEME` и откат к дефолту |
+| `test_familiar_cli.py` | CLI `bin/familiar`: `--version` против тега формулы, рендер генерируемого конфига (include'ы, темы, unmap'ы), managed-блок (insert/upsert/remove), флаги выбора для `enable`, у каждой темы есть файл палитры |
 
 Интерактивная отрисовка в реальном kitty тестами не покрывается (её нельзя запустить вне kitty);
 `styled` в моке — тождество, поэтому вывод хендлеров детерминирован и проверяется по подстрокам.

@@ -107,7 +107,7 @@ In the diff — as in review (click to place the cursor, click on `┈` to expan
 Both panes have a scrollbar; the wheel scrolls the pane it's over, without moving the selection.
 
 File statuses and "noisy" folders — as in [review](./review.md). Unlike review, log is
-**read-only**: no comments, scopes, refresh, or opening in an editor.
+**read-only**: no comments, refresh, or opening in an editor.
 
 ## Working with Claude Code
 

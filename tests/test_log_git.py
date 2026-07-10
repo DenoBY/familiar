@@ -22,18 +22,18 @@ class LogGitTest(unittest.TestCase):
         self.repo = tempfile.mkdtemp(prefix='cclog_git_')
         self._git('init', '-b', 'main')
         # c1 (корневой): добавлены два файла
-        self.write('a.txt', 'a1\na2\na3\n')
-        self.write('dir/b.txt', 'b1\n')
+        self._write('a.txt', 'a1\na2\na3\n')
+        self._write('dir/b.txt', 'b1\n')
         self._git('add', '-A')
         self._commit('first')
         # c2: правка a.txt, новый c.txt
-        self.write('a.txt', 'a1\na2 changed\na3\na4\n')
-        self.write('c.txt', 'c1\n')
+        self._write('a.txt', 'a1\na2 changed\na3\na4\n')
+        self._write('c.txt', 'c1\n')
         self._git('add', '-A')
         self._commit('second')
         # ветка feature с ещё одним коммитом (для --all)
         self._git('checkout', '-q', '-b', 'feature')
-        self.write('d.txt', 'd1\n')
+        self._write('d.txt', 'd1\n')
         self._git('add', '-A')
         self._commit('on feature')
         self._git('checkout', '-q', 'main')
@@ -53,7 +53,7 @@ class LogGitTest(unittest.TestCase):
     def _commit(self, msg):
         self._git('commit', '-m', msg)
 
-    def write(self, rel, content):
+    def _write(self, rel, content):
         p = os.path.join(self.repo, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, 'w') as f:
@@ -68,7 +68,7 @@ class LogGitTest(unittest.TestCase):
     def test_load_commits_current_branch(self):
         cs = G.load_commits(self.repo)
         subjects = [c['subject'] for c in cs]
-        self.assertEqual(subjects, ['second', 'first'])   # newest first, без feature
+        self.assertEqual(subjects, ['second', 'first'])   # новые сверху, без feature
         self.assertEqual(len(cs[0]['sha']), 40)
         self.assertTrue(cs[0]['short'])
         self.assertEqual(cs[0]['author'], 'Alice')
@@ -80,7 +80,7 @@ class LogGitTest(unittest.TestCase):
         self.assertIn('second', subjects)
 
     def test_load_commits_excludes_stash(self):
-        self.write('a.txt', 'dirty change\n')
+        self._write('a.txt', 'dirty change\n')
         self._git('stash')                                # создаём stash (a.txt изменён)
         subjects = [c['subject'] for c in G.load_commits(self.repo, all_branches=True)]
         self.assertFalse([s for s in subjects
@@ -180,11 +180,17 @@ class LogGitTest(unittest.TestCase):
             subprocess.run(['git', '-C', other, 'commit', '-m', 'remote work'],
                            check=True, capture_output=True, env=os.environ)
             self._git('remote', 'add', 'origin', other)
-            self.assertTrue(G.fetch(self.repo))
+            self.assertIsNone(G.fetch(self.repo))         # None — успех
             subs = [c['subject'] for c in G.load_commits(self.repo, all_branches=True)]
             self.assertIn('remote work', subs)            # коммит с origin подтянут
         finally:
             shutil.rmtree(other, ignore_errors=True)
+
+    def test_fetch_failure_returns_error_text(self):
+        self._git('remote', 'add', 'origin', '/nonexistent/remote/path')
+        err = G.fetch(self.repo)
+        self.assertIsInstance(err, str)
+        self.assertTrue(err)
 
     # --- commit_detail ---
 
@@ -199,7 +205,7 @@ class LogGitTest(unittest.TestCase):
     def test_commit_detail_body_with_separator_char(self):
         # \x1e в теле коммита не должен ломать разбор полей
         # (rsplit по трём последним)
-        self.write('sep.txt', 's\n')
+        self._write('sep.txt', 's\n')
         self._git('add', '-A')
         self._commit('subject\n\nbody with \x1e inside')
         head = G.load_commits(self.repo)[0]['sha']
@@ -222,7 +228,7 @@ class LogGitTest(unittest.TestCase):
             pushed = {c['sha'] for c in G.load_commits(self.repo)}
             self.assertEqual(G.unpushed_shas(self.repo), set())
 
-            self.write('e.txt', 'e1\n')
+            self._write('e.txt', 'e1\n')
             self._git('add', '-A')
             self._commit('unpushed local')
             new_sha = G.load_commits(self.repo)[0]['sha']
@@ -256,7 +262,7 @@ class LogGitTest(unittest.TestCase):
                            capture_output=True, env=os.environ)
             self._git('remote', 'add', 'origin', remote)
             branch, up, _ = G.push_target(self.repo)
-            self.assertTrue(G.push(self.repo, branch, up is not None))
+            self.assertIsNone(G.push(self.repo, branch, up is not None))   # None — успех
 
             self.assertIsNone(G.push_target(self.repo))      # пушить больше нечего
             # unpushed_shas смотрит на все локальные ветки, а уехала
@@ -266,12 +272,17 @@ class LogGitTest(unittest.TestCase):
             self.assertEqual(G.run_git(self.repo, 'rev-parse', '--abbrev-ref',
                                        '@{upstream}').strip(), 'origin/main')
 
-            self.write('n.txt', 'n\n')
+            self._write('n.txt', 'n\n')
             self._git('add', '-A')
             self._commit('after push')
             self.assertEqual(G.push_target(self.repo), ('main', 'origin/main', 1))
         finally:
             shutil.rmtree(remote, ignore_errors=True)
+
+    def test_push_failure_returns_error_text(self):
+        err = G.push(self.repo, 'main', False)   # удалёнки origin нет
+        self.assertIsInstance(err, str)
+        self.assertTrue(err)
 
     def test_push_target_on_detached_head_is_none(self):
         remote = tempfile.mkdtemp(prefix='cclog_remote_')

@@ -42,9 +42,9 @@ from modules.log.git import (
 )
 from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay
-from modules.text import plural, wrap_text
+from modules.text import pad, plural, short_path, truncate, wrap_text
 from modules.vcs.git import git_root, last_error
-from modules.vcs.util import chord, compose, pad, short_path, to_latin, truncate
+from modules.vcs.util import chord, compose, to_latin
 from modules.vcs.view import DiffTreeView
 
 
@@ -73,50 +73,51 @@ _DATE_W = 15     # фикс-колонка даты (справа)
 
 class CommitLogHandler(DiffTreeView):
 
-    def __init__(self, args: list, root: 'str | None') -> None:
+    def __init__(self, args: list[str], root: 'str | None') -> None:
         super().__init__(root)
         self.cli_args = args
         self.screen = 'commits'          # 'commits' → список; 'diff' → изменения коммита
         self.all_branches = False        # режим: HEAD (текущая ветка) ↔ все ветки (--all)
-        self.all_commits = []
-        self.commits = []
-        self.graph = []                  # раскладка лейнов графа для self.commits
-        self.unpushed = set()
+        self.all_commits: list[dict] = []
+        self.commits: list[dict] = []
+        self.graph: list[dict] = []      # раскладка лейнов графа для self.commits
+        self.unpushed: set[str] = set()
         self.show_graph = True           # рисовать граф веток слева (тумблер g)
         self.show_detail = True          # панель подробностей коммита справа (тумблер i)
-        self._detail_cache = {}          # sha -> commit_detail (ленивая подгрузка)
+        self._detail_cache: dict[str, dict] = {}   # ленивая подгрузка commit_detail
         self._detail_later = None        # таймер отложенной подгрузки
         self._fetching = False
         self._pushing = False
-        self.pending_push = None         # (ветка, upstream|None, коммитов), ждёт «y»
+        # (ветка, upstream|None, коммитов), ждёт «y»
+        self.pending_push: 'tuple[str, str | None, int] | None' = None
         self.exhausted = False
-        self.sel = 0                     # выбранный коммит
-        self.offset = 0                  # скролл списка коммитов
-        self.commit = None               # открытый коммит (на экране diff)
-        self._parent = None              # первый родитель открытого коммита (кэш)
+        self.sel = 0
+        self.offset = 0
+        self.commit: 'dict | None' = None
+        self._parent: 'str | None' = None   # первый родитель открытого коммита (кэш)
         self.filter_query = ''
 
     # --- хуки DiffTreeView ---
 
-    def _contents(self, it):
+    def _contents(self, it: dict) -> tuple[str, str]:
         return commit_contents(self.root, self.commit['sha'], it, self._parent)
 
-    def _empty_pane_msg(self):
+    def _empty_pane_msg(self) -> str:
         return 'no file changes'
 
     # --- жизненный цикл ---
 
-    def initialize(self):
+    def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
         self.reload_commits()
         self.draw_screen()
 
-    def finalize(self):
+    def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
 
     # --- список коммитов ---
 
-    def reload_commits(self):
+    def reload_commits(self) -> None:
         if not self.root:
             self.status = 'not a git repository'
             self.all_commits = self.commits = []
@@ -130,7 +131,7 @@ class CommitLogHandler(DiffTreeView):
         self.status = '' if self.all_commits else (last_error() or 'no commits')
         self.rebuild_commits()
 
-    def load_more(self):
+    def load_more(self) -> None:
         if self.exhausted or self.filter_query:
             return
         more = load_commits(self.root, self.all_branches, BATCH, len(self.all_commits))
@@ -140,7 +141,7 @@ class CommitLogHandler(DiffTreeView):
             self.all_commits.extend(more)
             self.rebuild_commits()
 
-    def rebuild_commits(self):
+    def rebuild_commits(self) -> None:
         q = self.filter_query.lower()
         if q:
             self.commits = [c for c in self.all_commits
@@ -152,11 +153,11 @@ class CommitLogHandler(DiffTreeView):
         self.sel = min(self.sel, max(0, len(self.commits) - 1))
         self._schedule_detail()
 
-    def toggle_graph(self):
+    def toggle_graph(self) -> None:
         self.show_graph = not self.show_graph
         self.draw_screen()
 
-    def _graph_gutter(self, i, gw):
+    def _graph_gutter(self, i: int, gw: int) -> str:
         """Цветной граф-гаттер строки коммита i, добитый
         пробелами до ширины gw.
         """
@@ -173,14 +174,14 @@ class CommitLogHandler(DiffTreeView):
                 out += styled(glyph, fg=_GRAPH_COLORS[color % len(_GRAPH_COLORS)])
         return out + ' ' * max(0, gw - len(cells))
 
-    def toggle_mode(self):
+    def toggle_mode(self) -> None:
         self.all_branches = not self.all_branches
         self.sel = 0
         self.offset = 0
         self.reload_commits()
         self.draw_screen()
 
-    def do_fetch(self):
+    def do_fetch(self) -> None:
         """Подтянуть изменения с удалёнок и перечитать список.
 
         git fetch — сеть до минуты; в колбэке ждать нельзя (UI и
@@ -194,9 +195,9 @@ class CommitLogHandler(DiffTreeView):
         fut = self.asyncio_loop.run_in_executor(None, fetch, self.root)
         fut.add_done_callback(self._fetch_done)
 
-    def _fetch_done(self, fut):
+    def _fetch_done(self, fut) -> None:
         self._fetching = False
-        ok = not fut.cancelled() and fut.exception() is None and fut.result()
+        ok = not fut.cancelled() and fut.exception() is None and fut.result() is None
         self._detail_cache = {}          # ветки/содержимое могли измениться
         self.sel = 0
         self.offset = 0
@@ -204,7 +205,7 @@ class CommitLogHandler(DiffTreeView):
         self.flash = 'fetched' if ok else 'fetch failed'
         self.draw_screen()
 
-    def start_push(self):
+    def start_push(self) -> None:
         """Спросить подтверждение: push публикует коммиты в удалёнку,
         промах по клавише не должен этого делать.
         """
@@ -218,12 +219,12 @@ class CommitLogHandler(DiffTreeView):
         self.pending_push = target
         self.draw_screen()
 
-    def cancel_push(self):
+    def cancel_push(self) -> None:
         self.pending_push = None
         self.flash = 'push cancelled'
         self.draw_screen()
 
-    def confirm_push(self):
+    def confirm_push(self) -> None:
         branch, up, _ = self.pending_push
         self.pending_push = None
         self._pushing = True
@@ -232,20 +233,25 @@ class CommitLogHandler(DiffTreeView):
         fut = self.asyncio_loop.run_in_executor(None, push, self.root, branch, up is not None)
         fut.add_done_callback(self._push_done)
 
-    def _push_done(self, fut):
+    def _push_done(self, fut) -> None:
         self._pushing = False
-        ok = not fut.cancelled() and fut.exception() is None and fut.result()
-        self.flash = 'pushed' if ok else f'push failed: {last_error()}'
-        if ok:
+        if fut.cancelled():
+            err = 'cancelled'
+        elif fut.exception() is not None:
+            err = str(fut.exception())
+        else:
+            err = fut.result()
+        self.flash = 'pushed' if err is None else f'push failed: {err}'
+        if err is None:
             self.reload_commits()   # ref-метки уехали, узлы графа больше не «свои»
         self.draw_screen()
 
-    def _push_prompt(self):
+    def _push_prompt(self) -> str:
         branch, up, n = self.pending_push
         dest = up or f'origin/{branch} (new branch)'
         return f' push {plural(n, "commit")} to {dest}?   y — yes   any other key — no'
 
-    def move(self, delta):
+    def move(self, delta: int) -> None:
         if not self.commits:
             return
         self.sel = max(0, min(len(self.commits) - 1, self.sel + delta))
@@ -254,14 +260,14 @@ class CommitLogHandler(DiffTreeView):
         self._schedule_detail()
         self.draw_screen()
 
-    def ensure_commit_visible(self):
+    def ensure_commit_visible(self) -> None:
         vis = self.visible_rows()
         if self.sel < self.offset:
             self.offset = self.sel
         elif self.sel >= self.offset + vis:
             self.offset = self.sel - vis + 1
 
-    def open_commit(self):
+    def open_commit(self) -> None:
         if not self.commits or not (0 <= self.sel < len(self.commits)):
             return
         self.commit = self.commits[self.sel]
@@ -279,14 +285,14 @@ class CommitLogHandler(DiffTreeView):
         self.load_diff()
         self.draw_screen()
 
-    def back_to_commits(self):
+    def back_to_commits(self) -> None:
         self.screen = 'commits'
         self.commit = None
         self.draw_screen()
 
     # --- отрисовка ---
 
-    def _draw_frame(self):
+    def _draw_frame(self) -> None:
         self.cmd.clear_screen()
         if self.screen == 'commits':
             self._draw_commits()
@@ -302,7 +308,7 @@ class CommitLogHandler(DiffTreeView):
                           bold=bool(self.pending_push)), end='')
         self.flash = ''
 
-    def _draw_commits(self):
+    def _draw_commits(self) -> None:
         cols = self.screen_size.cols
         mode = 'all branches' if self.all_branches else 'current branch'
         # «+» — загружена лишь пачка (BATCH), докрутка подтянет ещё:
@@ -326,8 +332,11 @@ class CommitLogHandler(DiffTreeView):
         # ширина графа — максимум по ВИДИМЫМ строкам, а не
         # глобальный: на линейных экранах граф прижат к тексту,
         # на мержах — расширяется ровно сколько нужно
-        gw = max((len(self.graph[i]['cells']) for i in range(self.offset, end)
-                  if i < len(self.graph)), default=0) if self.show_graph else 0
+        if self.show_graph:
+            gw = max((len(self.graph[i]['cells']) for i in range(self.offset, end)
+                      if i < len(self.graph)), default=0)
+        else:
+            gw = 0
         detail = self._detail_lines(panel_w) if panel else []
         sep = styled(' │ ', fg='gray')
         for r in range(vis):
@@ -343,7 +352,7 @@ class CommitLogHandler(DiffTreeView):
             else:
                 self.print(left)
 
-    def _schedule_detail(self):
+    def _schedule_detail(self) -> None:
         """Подтянуть подробности выбранного коммита, когда прокрутка
         утихнет.
 
@@ -363,15 +372,15 @@ class CommitLogHandler(DiffTreeView):
             self._detail_later = self.asyncio_loop.call_later(
                 DETAIL_DELAY, self._load_detail, sha)
 
-    def _load_detail(self, sha):
+    def _load_detail(self, sha: str) -> None:
         self._detail_later = None
         self._detail_cache[sha] = commit_detail(self.root, sha)
         self.draw_screen()
 
-    def _commit_detail(self, sha):
+    def _commit_detail(self, sha: str) -> 'dict | None':
         return self._detail_cache.get(sha)
 
-    def _detail_lines_brief(self, c, width):
+    def _detail_lines_brief(self, c: dict, width: int) -> list[str]:
         """Панель на время прокрутки: только то, что уже есть в списке
         коммитов, без обращений к git. Показывает то же, что и полная
         панель, минус тело сообщения, email и ветки, — чтобы при
@@ -383,7 +392,7 @@ class CommitLogHandler(DiffTreeView):
         out.append(styled(truncate(c['date'], width), fg='gray'))
         return out
 
-    def _detail_lines(self, width):
+    def _detail_lines(self, width: int) -> list[str]:
         """Строки правой панели: подробности выбранного коммита
         (как в IDE).
         """
@@ -414,7 +423,7 @@ class CommitLogHandler(DiffTreeView):
                 out.append(styled(truncate('  ' + b, width), fg='gray'))
         return out
 
-    def _commit_row(self, c, width, selected):
+    def _commit_row(self, c: dict, width: int, selected: bool) -> str:
         badge = '⑂ ' if c.get('merge') else ''
         refs = display_refs(c.get('refs') or [])
         refs_plain = '  '.join(name for name, _ in refs)
@@ -441,7 +450,7 @@ class CommitLogHandler(DiffTreeView):
                  ('  ', None), (f'{date:<{_DATE_W}}', {'fg': 'gray'})]
         return compose(segs, width)
 
-    def _draw_diff_header(self):
+    def _draw_diff_header(self) -> None:
         cols = self.screen_size.cols
         c = self.commit
         badge = '⑂ ' if c.get('merge') else ''
@@ -453,7 +462,7 @@ class CommitLogHandler(DiffTreeView):
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
 
-    def _footer(self):
+    def _footer(self) -> str:
         if self.pending_push:
             return self._push_prompt()
         if self.input_mode:
@@ -493,27 +502,19 @@ class CommitLogHandler(DiffTreeView):
 
     # --- ввод (фильтр коммитов / поиск по диффу) ---
 
-    def start_filter(self):
+    def start_filter(self) -> None:
         self.start_input('filter', self.filter_query)
 
-    def start_search(self):
-        self.start_input('search', self.search_query)
-
-    def _input_live(self):
+    def _input_live(self) -> None:
         if self.input_mode == 'filter':
             self.filter_query = self.input_buffer
             self.sel = 0
             self.rebuild_commits()
+            self.draw_screen()
         else:
-            self.search_query = self.input_buffer
-            self._recompute_matches()
-            if self.search_matches:
-                self.search_idx = next((n for n, r in enumerate(self.search_matches)
-                                        if r >= self.diff_offset), 0)
-                self._scroll_to_match()
-        self.draw_screen()
+            self.apply_search_input()
 
-    def _input_cancelled(self, mode):
+    def _input_cancelled(self, mode: str) -> None:
         if mode == 'filter':
             self.filter_query = ''
             self.sel = 0
@@ -524,7 +525,7 @@ class CommitLogHandler(DiffTreeView):
 
     # --- клавиатура ---
 
-    def on_key(self, key_event):
+    def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:
             return
         if chord(key_event, 'ctrl', 'c'):
@@ -548,14 +549,14 @@ class CommitLogHandler(DiffTreeView):
                 self.smart_copy_location()
                 return
         elif chord(key_event, 'super', 'c'):
-            self.copy_commit()                 # список коммитов — скопировать hash
+            self.copy_commit()
             return
         if self.screen == 'commits':
             self._commits_key(k)
         else:
             self._diff_key(k)
 
-    def copy_commit(self):
+    def copy_commit(self) -> None:
         if not self.commits or not (0 <= self.sel < len(self.commits)):
             return
         c = self.commits[self.sel]
@@ -563,7 +564,7 @@ class CommitLogHandler(DiffTreeView):
         self.flash = f'copied {c["short"]}'
         self.draw_screen()
 
-    def _commits_key(self, k):
+    def _commits_key(self, k: str) -> None:
         if k == 'UP':
             self.move(-1)
         elif k == 'DOWN':
@@ -585,41 +586,13 @@ class CommitLogHandler(DiffTreeView):
         elif k == 'ESCAPE':
             self.quit_loop(0)
 
-    def _diff_key(self, k):
-        if k == 'TAB':
-            self.toggle_focus()
-        elif k == 'UP':
-            self.nav(-1)
-        elif k == 'DOWN':
-            self.nav(1)
-        elif k == 'PAGE_UP':
-            self.diff_scroll(-self.visible_rows())
-        elif k == 'PAGE_DOWN':
-            self.diff_scroll(self.visible_rows())
-        elif k == 'ENTER':
-            if self.focus == 'diff' and self._gap_at(self.diff_cur) is not None:
-                self.expand_gap(self.diff_cur)
-            elif self.focus == 'tree':
-                self.toggle_fold()
-        elif k == 'RIGHT':
-            self.set_focus('diff')
-        elif k == 'LEFT':
-            if self.focus == 'diff':
-                self.set_focus('tree')
-            else:
-                self.back_to_commits()
-        elif k == 'ESCAPE':
-            if self.diff_sel is not None or self.diff_char_sel is not None:
-                self.diff_sel = self.diff_char_sel = None
-                self.draw_screen()
-            elif self.search_query:
-                self.clear_search()
-            elif self.focus == 'diff':
-                self.set_focus('tree')
-            else:
-                self.back_to_commits()
+    def _diff_key(self, k: str) -> None:
+        if self.diff_common_key(k):
+            return
+        if k in ('LEFT', 'ESCAPE'):
+            self.back_to_commits()   # каскад общего разбора исчерпан — к списку
 
-    def on_text(self, text, in_bracketed_paste=False):
+    def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
         if self.pending_push:
             if to_latin(text[:1]) in ('y', 'Y'):
                 self.confirm_push()
@@ -648,38 +621,11 @@ class CommitLogHandler(DiffTreeView):
                 elif c in ('p', 'P'):
                     self.start_push()
                 continue
-            if c == '/':
-                self.start_search()
-            elif c == 'g':
-                self.jump_edge(False)
-            elif c == 'G':
-                self.jump_edge(True)
-            elif c in ('a', 'A'):
-                self.toggle_expand()
-            elif c in ('v', 'V'):
-                self.toggle_view_mode()
-            elif ch == '\t':
-                self.toggle_focus()
-            elif c == 'n':
-                self.search_next(1)
-            elif c == 'N':
-                self.search_next(-1)
-            elif c == '[':
-                self.jump_hunk(-1)
-            elif c == ']':
-                self.jump_hunk(1)
-            elif c in ('l', 'L'):
-                self.hscroll_by(8)
-            elif c in ('h', 'H'):
-                self.hscroll_by(-8)
-            elif c in ('u', 'U'):
-                self.toggle_noise()
-            elif ch == ' ':
-                self.toggle_fold()
+            self.diff_common_text(ch)
 
     # --- мышь: список коммитов сам, дифф — базовый класс ---
 
-    def on_mouse_event(self, ev):
+    def on_mouse_event(self, ev) -> None:
         if self.screen == 'commits':
             if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
                 self.move(-1 if ev.buttons == MouseButton.WHEEL_UP else 1)
@@ -688,7 +634,7 @@ class CommitLogHandler(DiffTreeView):
             return
         super().on_mouse_event(ev)
 
-    def on_click(self, ev):
+    def on_click(self, ev) -> None:
         if self.input_mode:
             return
         if self.screen == 'commits':
@@ -707,24 +653,23 @@ class CommitLogHandler(DiffTreeView):
             return
         super().on_click(ev)
 
-    def on_resize(self, new_size):
+    def on_resize(self, new_size) -> None:
         if self.screen == 'diff':
             self.build_diff_rows()
         self.draw_screen()
 
-    def on_interrupt(self):
+    def on_interrupt(self) -> None:
         self.quit_loop(0)
 
-    def on_eot(self):
+    def on_eot(self) -> None:
         self.quit_loop(0)
 
 
-def main(args: list) -> None:
+def main(args: list[str]) -> None:
     mark_overlay('log')
     root = git_root(os.getcwd())
     handler = CommitLogHandler(args, root)
     Loop().loop(handler)
-    return None
 
 
 if __name__ == '__main__':

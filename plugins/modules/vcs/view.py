@@ -7,16 +7,14 @@
 через хуки `_contents`; review показывает незакоммиченные правки,
 log — изменения коммита.
 
-Хуки для подклассов:
-- `_contents(it) -> (before, after)` — содержимое файла (обязателен);
-- `_tree_visible(it) -> bool` — доп. фильтр дерева (по
-  умолчанию всё видно);
-- `_focus_landing(start) -> int` — куда встаёт курсор при входе в дифф;
-- `_diff_annotated(di, cur_rel) -> bool` — маркер аннотации
-  на строке (review);
-- `_diff_line_clicked(di, double)` — клик по строке диффа
+Хуки для подклассов (контракты — в аннотациях методов):
+- `_contents` — содержимое файла (before, after; обязателен);
+- `_tree_visible` — доп. фильтр дерева (по умолчанию всё видно);
+- `_focus_landing` — куда встаёт курсор при входе в дифф;
+- `_diff_annotated` — маркер аннотации на строке (review);
+- `_diff_line_clicked` — клик по строке диффа
   (review — двойной = коммент);
-- `_empty_pane_msg() -> str` — сообщение, когда файлов нет.
+- `_empty_pane_msg` — сообщение, когда файлов нет.
 """
 
 import os
@@ -26,12 +24,11 @@ from kittens.tui.handler import Handler
 from kittens.tui.loop import MouseButton
 from kittens.tui.operations import MouseTracking, styled
 
-from modules.clipboard import osc52
-from modules.dragselect import DragSelect
-from modules.draw import AtomicDraw
-from modules.inputline import InputLine
-from modules.text import plural
-
+from ..clipboard import osc52
+from ..dragselect import DragSelect
+from ..draw import AtomicDraw
+from ..inputline import InputLine
+from ..text import plural
 from .diff import (
     MARK_FG,
     DiffModel,
@@ -39,30 +36,29 @@ from .diff import (
     build_tree,
     change_map,
     final_rows,
-    is_code_row,
     kinds_to_marks,
     line_marks,
     max_hscroll,
     render_diff_cell,
     unified_rows,
 )
-from .util import STATUS_STYLE, compose, is_noise, pad, truncate
+from .util import STATUS_STYLE, compose, is_noise, pad, to_latin, truncate
 
 
-THUMB_FG = 244   # ползунок скролла дерева: заметнее серого текста, тише белого
+THUMB_FG = 244   # ползунки обеих панелей: заметнее серого текста, тише белого
 
 
 class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     mouse_tracking = MouseTracking.buttons_and_drag
 
-    def __init__(self, root):
+    def __init__(self, root: 'str | None') -> None:
         self.root = root
-        self.items = []
-        self.filtered = []
-        self.rows = []
+        self.items: list[dict] = []
+        self.filtered: list[dict] = []
+        self.rows: list[dict] = []
         self.n_files = 0
-        self.collapsed = set()
+        self.collapsed: set[str] = set()
         self.show_noise = False
         self.tsel = 0
         self.left_offset = 0
@@ -70,29 +66,32 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.diff_before = ''
         self.diff_after = ''
         self.diff_ext = ''
-        self.diff_src = None
-        self.diff_rows = []
-        self.diff_plain = []
-        self.diff_vis = []
-        self.diff_hunks = []
-        self.diff_lineno = []
-        self.diff_scope = []
-        self.diff_gap = []
-        self.diff_kind_bg = []
-        self.diff_marks = []            # 'add'/'mod'/'del'/None по строкам — карта справа
-        self.expanded = set()
+        self.diff_src: 'DiffSource | None' = None
+        self.diff_rows: list[str] = []
+        self.diff_plain: list[str] = []
+        self.diff_vis: list[str] = []
+        self.diff_hunks: list[int] = []
+        self.diff_lineno: list[int] = []
+        self.diff_scope: list[str] = []
+        self.diff_gap: 'list[int | None]' = []
+        self.diff_kind_bg: 'list[int | None]' = []
+        # 'add'/'mod'/'del' по строкам — карта изменений справа
+        self.diff_marks: 'list[str | None]' = []
+        self.expanded: set[int] = set()
         self.diff_offset = 0
         self.hscroll = 0
         self.hscroll_max = 0
         self.expand = False
         self.view_mode = 'diff'         # 'diff' — unified, 'final' — финальный файл
+        # (lo, hi) — выделение целых строк (drag через строки)
+        self.diff_sel: 'tuple[int, int] | None' = None
+        # (row, cs, ce) — выделение куска в одной строке
+        self.diff_char_sel: 'tuple[int, int, int] | None' = None
         self.diff_cur = 0
-        self.diff_sel = None            # (lo, hi) — выделение целых строк (drag через строки)
-        self.diff_char_sel = None       # (row, cs, ce) — выделение куска в одной строке
         self._click_di = -1
         self._click_t = 0.0
         self.search_query = ''
-        self.search_matches = []
+        self.search_matches: list[int] = []
         self.search_idx = 0
         self.status = ''
         self.flash = ''
@@ -100,27 +99,27 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- хуки подкласса ---
 
-    def _contents(self, it):
+    def _contents(self, it: dict) -> tuple[str, str]:
         raise NotImplementedError
 
-    def _tree_visible(self, it):
+    def _tree_visible(self, it: dict) -> bool:
         return True
 
-    def _focus_landing(self, start):
+    def _focus_landing(self, start: int) -> int:
         return self._first_landable(start)
 
-    def _diff_annotated(self, di, cur_rel):
+    def _diff_annotated(self, di: int, cur_rel: 'str | None') -> bool:
         return False
 
-    def _diff_line_clicked(self, di, double):
+    def _diff_line_clicked(self, di: int, double: bool) -> None:
         self.draw_screen()
 
-    def _empty_pane_msg(self):
+    def _empty_pane_msg(self) -> str:
         return 'no files'
 
     # --- геометрия ---
 
-    def input_rows(self):
+    def input_rows(self) -> int:
         """Высота области ввода. Растёт с текстом, но не съедает
         больше трети экрана — хвост длинного комментария виден,
         начало уезжает вверх.
@@ -130,26 +129,26 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         cap = max(1, self.screen_size.rows // 3)
         return min(cap, len(self.input_lines(self.screen_size.cols)))
 
-    def visible_rows(self):
+    def visible_rows(self) -> int:
         return max(1, self.screen_size.rows - 3 - self.input_rows())
 
-    def left_width(self):
+    def left_width(self) -> int:
         return max(18, min(48, self.screen_size.cols * 2 // 5))
 
-    def diff_width(self):
+    def diff_width(self) -> int:
         # два последних столбца заняты: карта изменений и ползунок
         # (порознь, иначе риска сливается с ползунком). Оба
         # зарезервированы всегда, иначе появление полосы дёргало бы
         # перенос строк диффа
         return max(10, self.screen_size.cols - self.left_width() - 5)
 
-    def left_limit(self):
+    def left_limit(self) -> int:
         return max(0, len(self.rows) - self.visible_rows())
 
-    def clamp_left(self):
+    def clamp_left(self) -> None:
         self.left_offset = max(0, min(self.left_offset, self.left_limit()))
 
-    def ensure_left_visible(self):
+    def ensure_left_visible(self) -> None:
         """Подтянуть скролл дерева к выделенной строке. Зовётся при
         смене выделения, но НЕ при отрисовке: колесо скроллит
         дерево независимо от курсора.
@@ -163,13 +162,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.left_offset = self.tsel - vis + 1
         self.clamp_left()
 
-    def set_tsel(self, i):
+    def set_tsel(self, i: int) -> None:
         self.tsel = max(0, min(i, max(0, len(self.rows) - 1)))
         self.ensure_left_visible()
 
     # --- дерево файлов ---
 
-    def rebuild_tree(self):
+    def rebuild_tree(self) -> None:
         prev = self.rows[self.tsel] if (self.rows and 0 <= self.tsel < len(self.rows)) else None
         self.filtered = [it for it in self.items
                          if (self.show_noise or not is_noise(it['rel']))
@@ -190,19 +189,19 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                     break
         self.ensure_left_visible()
 
-    def _first_file(self):
+    def _first_file(self) -> int:
         for i, r in enumerate(self.rows):
             if r['type'] == 'file':
                 return i
         return 0
 
-    def current_item(self):
+    def current_item(self) -> 'dict | None':
         if not self.rows or not (0 <= self.tsel < len(self.rows)):
             return None
         row = self.rows[self.tsel]
         return self.filtered[row['idx']] if row['type'] == 'file' else None
 
-    def toggle_noise(self):
+    def toggle_noise(self) -> None:
         self.show_noise = not self.show_noise
         self.tsel = 0
         was = self.n_files
@@ -216,7 +215,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.load_diff()
         self.draw_screen()
 
-    def set_fold(self, collapse):
+    def set_fold(self, collapse: bool) -> None:
         if not self.rows or self.rows[self.tsel]['type'] != 'dir':
             return
         key = self.rows[self.tsel]['key']
@@ -228,11 +227,11 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.load_diff()
         self.draw_screen()
 
-    def toggle_fold(self):
+    def toggle_fold(self) -> None:
         if self.rows and self.rows[self.tsel]['type'] == 'dir':
             self.set_fold(self.rows[self.tsel]['key'] not in self.collapsed)
 
-    def tree_move(self, delta):
+    def tree_move(self, delta: int) -> None:
         if not self.rows:
             return
         prev = self.tsel
@@ -241,7 +240,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self._schedule_load_diff()
         self.draw_screen()
 
-    def tree_scroll(self, delta):
+    def tree_scroll(self, delta: int) -> None:
         """Двигает окно, но не выделение: колесо не должно
         перезагружать дифф на каждый щелчок.
         """
@@ -250,7 +249,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.left_offset = max(0, min(self.left_limit(), self.left_offset + delta))
         self.draw_screen()
 
-    def _schedule_load_diff(self):
+    def _schedule_load_diff(self) -> None:
         """Дифф при прокрутке дерева грузим отложенно: git show +
         разбор дороже кадра, синхронная загрузка на каждый шаг колеса
         копит очередь событий и курсор «догоняет» с лагом. Курсор
@@ -260,19 +259,19 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self._load_later.cancel()
         self._load_later = self.asyncio_loop.call_later(0.08, self._load_deferred)
 
-    def _load_deferred(self):
+    def _load_deferred(self) -> None:
         self._load_later = None
         self.load_diff()
         self.draw_screen()
 
-    def _left_cell(self, row, width, selected):
+    def _left_cell(self, row: 'dict | None', width: int, selected: bool) -> str:
         if row is None:
             return ' ' * width
         indent = '  ' * row['depth']
         if row['type'] == 'dir':
             chev = '▾' if not row['collapsed'] else '▸'
             n = row['count']
-            count = f'{n} file{"s" if n != 1 else ""}' if row.get('group_root') else str(n)
+            count = plural(n, 'file') if row.get('group_root') else str(n)
             if selected:
                 return styled(pad(f'{indent}{chev} {row["name"]}  {count}', width),
                               reverse=True)
@@ -283,7 +282,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         # статус (M/A/D/…) не пишем — его несёт цвет имени;
         # префикс-пробелы держат выравнивание имён под
         # колонкой шеврона папок
-        color = STATUS_STYLE.get(row['kind'], ('?', 'gray'))[1]
+        color = STATUS_STYLE.get(row['kind'], 'gray')
         stat = row.get('stat')
         radd = f'+{stat[0]}' if stat and stat[0] else ''
         rdel = f'−{stat[1]}' if stat and stat[1] else ''
@@ -305,7 +304,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- дифф выбранного файла ---
 
-    def _set_diff(self, model, marks=None):
+    def _set_diff(self, model: DiffModel, marks: 'list[str | None] | None' = None) -> None:
         """marks — метки строк для карты изменений на полосе прокрутки;
         у unified их несёт фон строки, у final приходят готовыми.
         """
@@ -317,7 +316,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         if self.search_query:
             self._recompute_matches()
 
-    def _set_placeholder(self, msg):
+    def _set_placeholder(self, msg: str) -> None:
         # lineno 0: плейсхолдер — не строка кода, копирование/комменты
         # по нему не работают
         self.hscroll_max = 0
@@ -325,10 +324,10 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                                  [None], [None], [msg]))
 
     @staticmethod
-    def _is_binary(it, before, after):
+    def _is_binary(it: dict, before: str, after: str) -> bool:
         return it.get('stat') == (None, None) or '\x00' in before or '\x00' in after
 
-    def load_diff(self):
+    def load_diff(self) -> None:
         if self._load_later is not None:    # прямая загрузка отменяет отложенную
             self._load_later.cancel()
             self._load_later = None
@@ -354,7 +353,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.diff_src = DiffSource(self.diff_before, self.diff_after)
         self.build_diff_rows()
 
-    def build_diff_rows(self):
+    def build_diff_rows(self) -> None:
         if self.current_item() is None or self.diff_src is None:
             return
         rw = self.diff_width()
@@ -379,10 +378,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         else:
             self._set_placeholder('  (no textual changes)')
 
-    def _is_code_row(self, di):
-        return is_code_row(di, self.diff_lineno, self.diff_gap)
-
-    def _diff_cell(self, di, rw, cur_rel, cur_match):
+    def _diff_cell(self, di: int, rw: int, cur_rel: 'str | None', cur_match: int) -> str:
         return render_diff_cell(
             di, rw, self.focus == 'diff', self.diff_cur, self.diff_sel,
             self._diff_annotated(di, cur_rel),
@@ -393,21 +389,21 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- навигация по диффу ---
 
-    def _commentable(self, di):
+    def _commentable(self, di: int) -> bool:
         return (0 <= di < len(self.diff_lineno) and self.diff_lineno[di] > 0
                 and self._gap_at(di) is None)
 
-    def _gap_at(self, di):
+    def _gap_at(self, di: int) -> 'int | None':
         return self.diff_gap[di] if 0 <= di < len(self.diff_gap) else None
 
-    def _landable(self, di):
+    def _landable(self, di: int) -> bool:
         if not (0 <= di < len(self.diff_rows)):
             return False
         if self._gap_at(di) is not None:
             return bool(self.diff_plain[di])
         return True
 
-    def _first_landable(self, start):
+    def _first_landable(self, start: int) -> int:
         for i in range(max(0, start), len(self.diff_rows)):
             if self._landable(i):
                 return i
@@ -416,7 +412,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                 return i
         return start
 
-    def _first_commentable(self, start):
+    def _first_commentable(self, start: int) -> int:
         for i in range(max(0, start), len(self.diff_rows)):
             if self._commentable(i):
                 return i
@@ -425,7 +421,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                 return i
         return start
 
-    def move_cursor(self, delta):
+    def move_cursor(self, delta: int) -> None:
         if not self.diff_rows:
             return
         n = len(self.diff_rows)
@@ -439,13 +435,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self._ensure_cursor_visible()
         self.draw_screen()
 
-    def nav(self, delta):
+    def nav(self, delta: int) -> None:
         if self.focus == 'diff':
             self.move_cursor(delta)
         else:
             self.tree_move(delta)
 
-    def jump_edge(self, to_end):
+    def jump_edge(self, to_end: bool) -> None:
         """g/G: в фокусе диффа — курсор к началу/концу диффа;
         в дереве — первый/последний файл (поведение зависит от
         текущего фокуса).
@@ -467,7 +463,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.load_diff()
         self.draw_screen()
 
-    def diff_scroll(self, delta):
+    def diff_scroll(self, delta: int) -> None:
         limit = max(0, len(self.diff_rows) - self.visible_rows())
         self.diff_offset = max(0, min(limit, self.diff_offset + delta))
         if self.focus == 'diff':
@@ -477,14 +473,14 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                 self.diff_cur = self._focus_landing(lo)
         self.draw_screen()
 
-    def _ensure_cursor_visible(self):
+    def _ensure_cursor_visible(self) -> None:
         vis = self.visible_rows()
         if self.diff_cur < self.diff_offset:
             self.diff_offset = self.diff_cur
         elif self.diff_cur >= self.diff_offset + vis:
             self.diff_offset = self.diff_cur - vis + 1
 
-    def hscroll_by(self, delta):
+    def hscroll_by(self, delta: int) -> None:
         new = min(self.hscroll_max, max(0, self.hscroll + delta))
         if new == self.hscroll:
             return
@@ -492,7 +488,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.build_diff_rows()
         self.draw_screen()
 
-    def jump_hunk(self, direction):
+    def jump_hunk(self, direction: int) -> None:
         if not self.diff_hunks:
             return
         base = self.diff_cur if self.focus == 'diff' else self.diff_offset
@@ -510,7 +506,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.diff_offset = min(nxt, limit)
         self.draw_screen()
 
-    def expand_gap(self, di):
+    def expand_gap(self, di: int) -> None:
         gid = self._gap_at(di)
         if gid is None:
             return
@@ -521,7 +517,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.diff_cur = min(self.diff_cur, len(self.diff_rows) - 1)
         self.draw_screen()
 
-    def toggle_expand(self):
+    def toggle_expand(self) -> None:
         if self.view_mode == 'final':
             self.flash = 'final view always shows the whole file'
             self.draw_screen()
@@ -531,7 +527,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.build_diff_rows()
         self.draw_screen()
 
-    def toggle_view_mode(self):
+    def toggle_view_mode(self) -> None:
         """unified-дифф ↔ финальный файл. Курсор остаётся на той же
         строке кода: номер строки нового файла общий для обоих видов.
         """
@@ -548,7 +544,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                       if self.view_mode == 'final' else 'unified diff')
         self.draw_screen()
 
-    def _mode_hints(self):
+    def _mode_hints(self) -> str:
         """Подсказка футера про вид панели: `a` осмыслен только в
         unified — final и так показывает файл целиком.
         """
@@ -557,7 +553,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         exp = 'a full-file' if not self.expand else 'a hunks'
         return f'{exp} · v final-view'
 
-    def _center_on_line(self, line):
+    def _center_on_line(self, line: int) -> None:
         """Курсор на строку нового файла с номером line (нет такой —
         на первое изменение), окно — вокруг курсора.
         """
@@ -569,7 +565,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         limit = max(0, len(self.diff_rows) - self.visible_rows())
         self.diff_offset = max(0, min(limit, self.diff_cur - self.visible_rows() // 2))
 
-    def set_focus(self, target):
+    def set_focus(self, target: str) -> None:
         if target == self.focus:
             return
         if target == 'diff':
@@ -581,15 +577,15 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.focus = 'tree'
         self.draw_screen()
 
-    def toggle_focus(self):
+    def toggle_focus(self) -> None:
         self.set_focus('tree' if self.focus == 'diff' else 'diff')
 
     # --- копирование в буфер ---
 
-    def _copy_clipboard(self, text):
+    def _copy_clipboard(self, text: str) -> None:
         self.print(osc52(text), end='')
 
-    def _yank_code(self, lo, hi):
+    def _yank_code(self, lo: int, hi: int) -> 'tuple[str, int, int] | None':
         if self.current_item() is None:
             return None
         nums = [self.diff_lineno[d] for d in range(lo, hi + 1)
@@ -600,10 +596,10 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         code = '\n'.join(self.diff_after.splitlines()[a - 1:b])
         return code, a, b
 
-    def _sel_range(self):
+    def _sel_range(self) -> tuple[int, int]:
         return self.diff_sel if self.diff_sel is not None else (self.diff_cur, self.diff_cur)
 
-    def copy_selection(self):
+    def copy_selection(self) -> None:
         if self.diff_char_sel is not None:          # выделен кусок внутри строки
             row, cs, ce = self.diff_char_sel
             text = self.diff_plain[row][cs:ce].strip() if 0 <= row < len(self.diff_plain) else ''
@@ -629,7 +625,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.focus = 'tree'
         self.draw_screen()
 
-    def _current_rel(self):
+    def _current_rel(self) -> 'str | None':
         """Путь под курсором от корня репозитория; у папки — со
         слэшем на конце (Claude Code так отличает её от файла).
         """
@@ -643,7 +639,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             return None
         return row['path'] + '/'
 
-    def copy_location(self):
+    def copy_location(self) -> None:
         res = self._yank_code(*self._sel_range())
         rel = self._current_rel()
         if res is None or rel is None:
@@ -655,7 +651,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.flash = f'copied {ref}'
         self.draw_screen()
 
-    def copy_path(self):
+    def copy_path(self) -> None:
         rel = self._current_rel()
         if rel is None:
             self.flash = 'select a file or dir'
@@ -664,13 +660,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             self.flash = f'copied @{rel}'
         self.draw_screen()
 
-    def smart_copy(self):
+    def smart_copy(self) -> None:
         if self.focus == 'diff':
             self.copy_selection()
         else:
             self.copy_path()
 
-    def smart_copy_location(self):
+    def smart_copy_location(self) -> None:
         if self.focus == 'diff':
             self.copy_location()
         else:
@@ -678,37 +674,135 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- поиск по диффу ---
 
-    def _recompute_matches(self):
+    def _recompute_matches(self) -> None:
         q = self.search_query.lower()
         self.search_matches = [i for i, p in enumerate(self.diff_plain)
                                if q and q in p.lower()]
         if self.search_idx >= len(self.search_matches):
             self.search_idx = 0
 
-    def _scroll_to_match(self):
+    def _scroll_to_match(self) -> None:
         if not self.search_matches:
             return
         row = self.search_matches[self.search_idx]
         limit = max(0, len(self.diff_rows) - self.visible_rows())
         self.diff_offset = max(0, min(limit, row - self.visible_rows() // 2))
 
-    def search_next(self, direction):
+    def search_next(self, direction: int) -> None:
         if not self.search_matches:
             return
         self.search_idx = (self.search_idx + direction) % len(self.search_matches)
         self._scroll_to_match()
         self.draw_screen()
 
-    def clear_search(self):
+    def clear_search(self) -> None:
         self.search_query = ''
         self.search_matches = []
         self.search_idx = 0
         self.draw_screen()
 
+    def start_search(self) -> None:
+        self.start_input('search', self.search_query)
+
+    def apply_search_input(self) -> None:
+        """Живое применение строки поиска: пересчитать совпадения и
+        встать на ближайшее к текущей позиции скролла.
+        """
+        self.search_query = self.input_buffer
+        self._recompute_matches()
+        if self.search_matches:
+            self.search_idx = next((n for n, r in enumerate(self.search_matches)
+                                    if r >= self.diff_offset), 0)
+            self._scroll_to_match()
+        self.draw_screen()
+
+    # --- общий разбор ввода diff-панели (специфика — в подклассах) ---
+
+    def diff_common_key(self, k: str) -> bool:
+        """Общие клавиши двухпанельного экрана. True — обработано;
+        False — подкласс разбирает свою специфику (комментарии у
+        review, возврат к списку коммитов у log).
+        """
+        if k == 'TAB':
+            self.toggle_focus()
+        elif k == 'UP':
+            self.nav(-1)
+        elif k == 'DOWN':
+            self.nav(1)
+        elif k == 'PAGE_UP':
+            self.diff_scroll(-self.visible_rows())
+        elif k == 'PAGE_DOWN':
+            self.diff_scroll(self.visible_rows())
+        elif k == 'ENTER':
+            if self.focus == 'diff' and self._gap_at(self.diff_cur) is not None:
+                self.expand_gap(self.diff_cur)
+            elif self.focus == 'tree':
+                self.toggle_fold()
+            else:
+                return False
+        elif k == 'RIGHT':
+            self.set_focus('diff')
+        elif k == 'LEFT':
+            if self.focus != 'diff':
+                return False
+            self.set_focus('tree')
+        elif k == 'ESCAPE':
+            # каскад: выделение → поиск → фокус; последний шаг
+            # (выход/назад) — за подклассом
+            if self.diff_sel is not None or self.diff_char_sel is not None:
+                self.diff_sel = self.diff_char_sel = None
+                self.draw_screen()
+            elif self.search_query:
+                self.clear_search()
+            elif self.focus == 'diff':
+                self.set_focus('tree')
+            else:
+                return False
+        else:
+            return False
+        return True
+
+    def diff_common_text(self, ch: str) -> bool:
+        """Общие печатаемые команды двухпанельного экрана (один
+        символ). True — обработано.
+        """
+        c = to_latin(ch)
+        if ch == '\t':
+            self.toggle_focus()
+        elif c == '/':
+            self.start_search()
+        elif c == 'n':
+            self.search_next(1)
+        elif c == 'N':
+            self.search_next(-1)
+        elif c == '[':
+            self.jump_hunk(-1)
+        elif c == ']':
+            self.jump_hunk(1)
+        elif c in ('h', 'H'):
+            self.hscroll_by(-8)
+        elif c in ('l', 'L'):
+            self.hscroll_by(8)
+        elif c == 'g':
+            self.jump_edge(False)
+        elif c == 'G':
+            self.jump_edge(True)
+        elif c in ('a', 'A'):
+            self.toggle_expand()
+        elif c in ('v', 'V'):
+            self.toggle_view_mode()
+        elif c in ('u', 'U'):
+            self.toggle_noise()
+        elif ch == ' ':
+            self.toggle_fold()
+        else:
+            return False
+        return True
+
     # --- отрисовка панели (заголовок и футер печатает подкласс) ---
 
     @staticmethod
-    def _thumb(offset, total, vis):
+    def _thumb(offset: int, total: int, vis: int) -> 'tuple[int, int] | None':
         """(начало, длина) ползунка в строках окна, либо None, когда
         содержимое помещается целиком.
         """
@@ -719,17 +813,17 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         pos = round(offset * span / (total - vis)) if span else 0
         return pos, size
 
-    def _scrollbar(self):
+    def _scrollbar(self) -> 'tuple[int, int] | None':
         return self._thumb(self.left_offset, len(self.rows), self.visible_rows())
 
     @staticmethod
-    def _thumb_cell(bar, r):
+    def _thumb_cell(bar: 'tuple[int, int] | None', r: int) -> str:
         # трека нет: рядом уже линия-разделитель панелей и рамка
         # окна, лишняя вертикаль во всю высоту только рябит
         return styled('┃', fg=THUMB_FG) if bar and bar[0] <= r < bar[0] + bar[1] else ' '
 
     @staticmethod
-    def _change_cell(cmap, r):
+    def _change_cell(cmap: 'list[str | None]', r: int) -> str:
         """Ячейка карты изменений — своя колонка слева от ползунка,
         иначе риска и ползунок сливаются в одну вертикаль. Риска
         тонкая (│) против жирного ползунка (┃): толщина сама говорит,
@@ -738,7 +832,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         mark = cmap[r] if r < len(cmap) else None
         return styled('│', fg=MARK_FG[mark]) if mark is not None else ' '
 
-    def _draw_pane_body(self):
+    def _draw_pane_body(self) -> None:
         lw = self.left_width()
         self.clamp_left()
         vis = self.visible_rows()
@@ -782,7 +876,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
                 tail += thumb_col + thumb
             self.print(left + sep + right + tail)
 
-    def _draw_input_line(self):
+    def _draw_input_line(self) -> None:
         if not self.input_mode:
             return
         cols = self.screen_size.cols
@@ -791,7 +885,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- мышь ---
 
-    def _diff_row_at(self, ev):
+    def _diff_row_at(self, ev) -> 'int | None':
         r = ev.cell_y - 2
         if not (0 <= r < self.visible_rows()):
             return None
@@ -806,13 +900,13 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             return None
         return di
 
-    def _diff_col_at(self, ev):
+    def _diff_col_at(self, ev) -> int:
         """Позиция символа под курсором в diff_plain строки
         (с учётом hscroll).
         """
         return max(0, ev.cell_x - (self.left_width() + 3) + self.hscroll)
 
-    def on_mouse_event(self, ev):
+    def on_mouse_event(self, ev) -> None:
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
             up = ev.buttons == MouseButton.WHEEL_UP
             if ev.cell_x < self.left_width():
@@ -830,28 +924,28 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
 
     # --- хуки DragSelect (выделение мышью в диффе) ---
 
-    def _sel_row_at(self, ev):
+    def _sel_row_at(self, ev) -> 'int | None':
         return self._diff_row_at(ev)
 
-    def _sel_col_at(self, ev):
+    def _sel_col_at(self, ev) -> int:
         return self._diff_col_at(ev)
 
-    def _apply_char_sel(self, row, cs, ce):
+    def _apply_char_sel(self, row: int, cs: int, ce: int) -> None:
         self.diff_char_sel = (row, cs, ce)
         self.diff_sel = None
         self.focus = 'diff'
         self.diff_cur = row
 
-    def _apply_line_sel(self, lo, hi, row):
+    def _apply_line_sel(self, lo: int, hi: int, row: int) -> None:
         self.diff_sel = (lo, hi)
         self.diff_char_sel = None
         self.focus = 'diff'
         self.diff_cur = row
 
-    def _sel_done(self):
+    def _sel_done(self) -> None:
         self.flash = 'selected — ⌘c to copy'
 
-    def on_click(self, ev):
+    def on_click(self, ev) -> None:
         if self.input_mode:
             return
         self.diff_sel = None

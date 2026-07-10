@@ -92,7 +92,6 @@ class LogHandlerTest(unittest.TestCase):
 
     def test_detail_panel_shows_commit_info(self):
         self.h.sel = 0
-        self.h._detail_lines(50)                # промах кэша заводит таймер
         text = '\n'.join(self.h._detail_lines(50))
         self.assertIn('add feature', text)                 # сообщение коммита
         self.assertIn('a@e', text)                         # email автора
@@ -226,9 +225,13 @@ class LogHandlerTest(unittest.TestCase):
         self.h._detail_cache.clear()
         calls = []
         self.addCleanup(setattr, L, 'commit_detail', L.commit_detail)
-        L.commit_detail = lambda root, sha: calls.append(sha) or {
-            'body': '', 'author_email': '', 'committer': '',
-            'committer_email': '', 'branches': []}
+
+        def fake_detail(root, sha):
+            calls.append(sha)
+            return {'body': '', 'author_email': '', 'committer': '',
+                    'committer_email': '', 'branches': []}
+
+        L.commit_detail = fake_detail
 
         self.h.sel = 0
         self.h.draw_screen()

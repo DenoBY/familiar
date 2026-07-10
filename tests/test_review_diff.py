@@ -120,7 +120,7 @@ class TestUnifiedRows(unittest.TestCase):
 
     def test_expanded_gap_shows_context(self):
         before, after = self._big()
-        rows, plains, *_ , gaps, kinds = unified(
+        rows, plains, *_ = unified(
             before, after, '.py', 40, context=3, expanded={0})
         self.assertFalse(any('hidden' in p for p in plains))
 

@@ -16,7 +16,9 @@ Enter/Esc/Backspace и печатаемый текст. Раньше эта ма
   а длинный текст переносится по словам.
 """
 
-from modules.text import wrap_text
+from typing import ClassVar
+
+from .text import wrap_text
 
 
 CURSOR = '▏'
@@ -26,7 +28,7 @@ class InputLine:
 
     input_mode: 'str | None' = None
     input_buffer: str = ''
-    multiline_modes: tuple = ()
+    multiline_modes: ClassVar[tuple[str, ...]] = ()
 
     def start_input(self, mode: str, initial: str = '') -> None:
         self.input_mode = mode

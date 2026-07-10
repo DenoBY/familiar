@@ -39,7 +39,7 @@ Kitten для [kitty](https://sw.kovidgoyal.net/kitty/): оверлей прос
 familiar enable log
 ```
 
-Перезагрузить конфиг: `Cmd+Ctrl+,`. Открыть: `cmd+shift+l`.
+Перезагрузить конфиг: `Cmd+Ctrl+,` (или перезапустить kitty). Открыть: `cmd+shift+l`.
 
 Минимальный fallback — ручной `map` в `~/.config/kitty/kitty.conf` (или
 include-файле):
@@ -106,7 +106,7 @@ map cmd+shift+l kitten /path/to/familiar/plugins/log.py
 В обеих панелях есть полоса прокрутки; колесо скроллит панель под курсором, не двигая выделение.
 
 Статусы файлов и «шумные» папки — как в [review](./review.md). В отличие от review, log —
-**просмотр только для чтения**: без аннотаций, скоупов, refresh и открытия в редакторе.
+**просмотр только для чтения**: без аннотаций, refresh и открытия в редакторе.
 
 ## Работа с Claude Code
 

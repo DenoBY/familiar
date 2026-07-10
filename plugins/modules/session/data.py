@@ -22,7 +22,7 @@ PROJECTS_DIR = os.path.join(CONFIG_DIR, 'projects')
 SESSIONS_DIR = os.path.join(CONFIG_DIR, 'sessions')
 
 # ANSI-escape (CSI/OSC/прочие) + управляющие байты. В JSONL они
-# лежат как  и при json.loads становятся настоящими ESC — если
+# лежат как \u001b и при json.loads становятся настоящими ESC — если
 # печатать их в превью как есть, терминал исполняет
 # очистку экрана/alt-screen/скрытие курсора и рендер ломается.
 _ANSI_RE = re.compile(
@@ -41,6 +41,7 @@ def _sanitize(s: str) -> str:
     truncate/wrap считают символы — строка с табом вылезала бы за экран.
     """
     return _CTRL_RE.sub('', _ANSI_RE.sub('', s)).expandtabs()
+
 
 # Метки статуса живой сессии (из реестра ~/.claude/sessions/<pid>.json)
 STATUS_LABEL = {
@@ -298,7 +299,9 @@ _META_MARKERS = ('"user"', '"assistant"', '"custom-title"', '"ai-title"',
 
 
 def load_session_meta(path: str) -> dict:
-    """Разобрать файл сессии: заголовок, число сообщений, cwd."""
+    """Разобрать файл сессии: заголовки (custom/auto), число
+    сообщений, cwd и ветка git.
+    """
     custom_title = None   # из /rename (запись custom-title) — высший приоритет
     ai_title = None
     first_human = None
