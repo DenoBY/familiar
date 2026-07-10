@@ -114,7 +114,7 @@ class CommitLogHandler(DiffTreeView):
 
     def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
-        self._reset_pointer()
+        self.reset_pointer()
 
     # --- список коммитов ---
 

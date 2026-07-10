@@ -37,6 +37,7 @@ from modules.draw import AtomicDraw
 from modules.inputline import InputLine
 from modules.keylayout import chord
 from modules.overlay import mark_overlay
+from modules.pointer import PointerCursor
 from modules.session.data import (
     STATUS_COLOR,
     STATUS_LABEL,
@@ -50,9 +51,11 @@ from modules.session.preview import Preview
 from modules.session.util import human_age, short_path, to_latin, truncate
 
 
-class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
+class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
 
-    mouse_tracking = MouseTracking.buttons_and_drag
+    # full (не buttons_and_drag): нужны события движения без нажатой
+    # кнопки — иначе не поймать наведение для смены формы указателя.
+    mouse_tracking = MouseTracking.full
 
     def __init__(self, args: list[str], now: float) -> None:
         self.cli_args = args
@@ -96,6 +99,7 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
 
     def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
+        self.reset_pointer()
 
     # --- переходы между экранами ---
 
@@ -740,7 +744,26 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, Handler):
         row = self.preview.offset + r
         return row if 0 <= row < len(self.preview.lines) else None
 
+    def _item_row_at(self, ev) -> bool:
+        head = 0 if self.screen == 'projects' else 2   # на проектах шапки нет
+        r = ev.cell_y - head
+        if r < 0:
+            return False
+        idx = self.offset + r
+        return 0 <= idx < len(self.items())
+
+    def _wanted_pointer(self, ev) -> 'str | None':
+        # рука — на кликабельном (строка списка, сворачиваемая запись
+        # превью), текст — на прочих строках превью (drag-select)
+        if self.screen == 'preview':
+            row = self._preview_row_at(ev)
+            if row is None:
+                return None
+            return 'pointer' if self.preview.lines[row].entry >= 0 else 'text'
+        return 'pointer' if self._item_row_at(ev) else None
+
     def on_mouse_event(self, ev) -> None:
+        self.update_pointer(ev)
         # колесо мыши: в предпросмотре — скролл текста, в списках —
         # движение по строкам
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):

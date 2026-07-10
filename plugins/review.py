@@ -107,7 +107,7 @@ class ReviewHandler(DiffTreeView):
 
     def finalize(self) -> None:
         self.cmd.set_cursor_visible(True)
-        self._reset_pointer()
+        self.reset_pointer()
 
     def _reload_items(self) -> None:
         if not self.root:

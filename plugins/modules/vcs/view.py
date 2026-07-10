@@ -28,7 +28,7 @@ from ..clipboard import osc52
 from ..dragselect import DragSelect
 from ..draw import AtomicDraw
 from ..inputline import InputLine
-from ..pointer import pop_pointer, push_pointer
+from ..pointer import PointerCursor
 from ..text import plural
 from .diff import (
     MARK_FG,
@@ -49,7 +49,7 @@ from .util import STATUS_STYLE, compose, is_noise, pad, to_latin, truncate
 THUMB_FG = 244   # ползунки обеих панелей: заметнее серого текста, тише белого
 
 
-class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
+class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
 
     # full (не buttons_and_drag): нужны события движения без нажатой
     # кнопки — иначе не поймать наведение для смены формы указателя.
@@ -99,7 +99,6 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
         self.status = ''
         self.flash = ''
         self._load_later = None
-        self._pointer_shape: 'str | None' = None
 
     # --- хуки подкласса ---
 
@@ -927,23 +926,8 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             return 'pointer'
         return None
 
-    def _update_pointer(self, ev) -> None:
-        want = self._wanted_pointer(ev)
-        if want == self._pointer_shape:
-            return
-        if self._pointer_shape is not None:
-            self.print(pop_pointer(), end='')
-        if want is not None:
-            self.print(push_pointer(want), end='')
-        self._pointer_shape = want
-
-    def _reset_pointer(self) -> None:
-        if self._pointer_shape is not None:
-            self.print(pop_pointer(), end='')
-            self._pointer_shape = None
-
     def on_mouse_event(self, ev) -> None:
-        self._update_pointer(ev)
+        self.update_pointer(ev)
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
             up = ev.buttons == MouseButton.WHEEL_UP
             if ev.cell_x < self.left_width():
