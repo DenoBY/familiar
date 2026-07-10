@@ -43,6 +43,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |
 | `test_result_handlers.py` | `handle_result` обоих китов — построение команды remote-control (сторона процесса kitty) |
 | `test_overlay.py` | `modules.overlay.mark_overlay`: escape-последовательность OSC 1337 `SetUserVar` с именем плагина в base64 |
+| `test_pointer.py` | `modules.pointer`: escape-последовательности OSC 22 — push текстового (I-beam) указателя мыши и pop обратно |
 | `test_theme.py` | цветовые темы: формат `palette/*.conf` и наследование ролей, truecolor-значения Darcula против схемы JetBrains, разбор `FAMILIAR_THEME` и откат к дефолту |
 | `test_familiar_cli.py` | CLI `bin/familiar`: `--version` против тега формулы, рендер генерируемого конфига (include'ы, темы, unmap'ы), managed-блок (insert/upsert/remove), флаги выбора для `enable`, скан тем и наличие look-файла у каждой темы |
 
