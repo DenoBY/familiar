@@ -41,6 +41,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |
 | `test_result_handlers.py` | `handle_result` обоих китов — построение команды remote-control (сторона процесса kitty) |
+| `test_theme.py` | цветовые темы: каждая роль определена в каждой палитре, truecolor-значения Darcula против схемы JetBrains, разбор `FAMILIAR_THEME` и откат к дефолту |
 
 Интерактивная отрисовка в реальном kitty тестами не покрывается (её нельзя запустить вне kitty);
 `styled` в моке — тождество, поэтому вывод хендлеров детерминирован и проверяется по подстрокам.

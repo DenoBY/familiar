@@ -69,6 +69,28 @@ class EventType:
     MOVE = 'MOVE'
 
 
+class Color:
+    """kitty.fast_data_types.Color: truecolor для styled(). Сравнимый —
+    тесты палитры проверяют цвет роли на равенство.
+    """
+
+    def __init__(self, red=0, green=0, blue=0):
+        self.red, self.green, self.blue = red, green, blue
+
+    def as_sgr(self):
+        return f'2:{self.red}:{self.green}:{self.blue}'
+
+    def __eq__(self, other):
+        return (isinstance(other, Color) and (self.red, self.green, self.blue)
+                == (other.red, other.green, other.blue))
+
+    def __hash__(self):
+        return hash((self.red, self.green, self.blue))
+
+    def __repr__(self):
+        return f'Color({self.red}, {self.green}, {self.blue})'
+
+
 def _install():
     if 'kittens' in sys.modules:
         return
@@ -79,12 +101,14 @@ def _install():
     operations = types.ModuleType('kittens.tui.operations')
     kitty = types.ModuleType('kitty')
     key_encoding = types.ModuleType('kitty.key_encoding')
+    fast_data_types = types.ModuleType('kitty.fast_data_types')
 
     kittens.tui = tui
     tui.handler = handler
     tui.loop = loop
     tui.operations = operations
     kitty.key_encoding = key_encoding
+    kitty.fast_data_types = fast_data_types
 
     handler.Handler = Handler
     handler.result_handler = result_handler
@@ -95,12 +119,14 @@ def _install():
     operations.MouseTracking = MouseTracking
     operations.Mode = Mode
     key_encoding.EventType = EventType
+    fast_data_types.Color = Color
 
     for name, mod in [
         ('kittens', kittens), ('kittens.tui', tui),
         ('kittens.tui.handler', handler), ('kittens.tui.loop', loop),
         ('kittens.tui.operations', operations),
         ('kitty', kitty), ('kitty.key_encoding', key_encoding),
+        ('kitty.fast_data_types', fast_data_types),
     ]:
         sys.modules[name] = mod
 

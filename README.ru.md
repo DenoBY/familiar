@@ -79,11 +79,17 @@ kitty. (`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки
 | `familiar enable --kittens` | только все киты, конфиг терминала не трогает |
 | `familiar enable session review log` | только названные оверлеи (`--terminal` добавит и конфиг терминала) |
 | `familiar enable --terminal` | только конфиг терминала, без китов |
+| `familiar enable --all --theme darcula` | то же, но с палитрой [Darcula](config/look/darcula.conf) (JetBrains) вместо дефолтной |
 | `familiar disable` | снять familiar-блок (`--restore` вернёт `kitty.conf` из копии, снятой при первом enable) |
 | `familiar status` | показать, что подключено сейчас |
 
 Кириллические дубли клавиш (`S→ы`, `R→к`, `L→д`) для русской раскладки
 генерируются автоматически.
+
+`--theme darcula` перекрашивает и палитру терминала, и подсветку синтаксиса
+внутри китов. Без `--terminal`/`--all` перекрашиваются только киты — внешний вид
+терминала familiar не трогает, пока его об этом не попросят. Цвета взяты из
+официальной схемы JetBrains; `--theme default` (по умолчанию) оставляет прежний вид.
 
 ### Удаление / откат
 

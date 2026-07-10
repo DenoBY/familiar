@@ -79,11 +79,17 @@ kitty. (`Ctrl+Shift+F5` is kitty's *Linux* reload default; on macOS it's
 | `familiar enable --kittens` | all kittens only, leaves your terminal config untouched |
 | `familiar enable session review log` | only the named overlays (add `--terminal` for the terminal config too) |
 | `familiar enable --terminal` | only the terminal config, no kittens |
+| `familiar enable --all --theme darcula` | same, but with the [Darcula](config/look/darcula.conf) palette (JetBrains) instead of the default one |
 | `familiar disable` | remove the familiar block (`--restore` reverts `kitty.conf` from the backup taken on first enable) |
 | `familiar status` | show what's currently enabled |
 
 Cyrillic key duplicates (`S→ы`, `R→к`, `L→д`) for the Russian layout are
 generated automatically.
+
+`--theme darcula` recolors both the terminal palette and the syntax highlighting
+inside the kittens. Without `--terminal`/`--all` only the kittens are recolored —
+familiar never touches your terminal look unless you ask for it. Colors come from
+the official JetBrains scheme; `--theme default` (the default) keeps the previous look.
 
 ### Uninstall / rollback
 

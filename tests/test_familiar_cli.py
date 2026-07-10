@@ -61,6 +61,43 @@ class RenderTests(unittest.TestCase):
         self.assertIn("cmd+shift+ы", conf)
 
 
+class ThemeTests(unittest.TestCase):
+    def test_default_theme_writes_nothing(self):
+        conf = familiar.render_generated_conf(["review"], True)
+        self.assertNotIn("FAMILIAR_THEME", conf)
+        self.assertNotIn("look/default.conf", conf)
+
+    def test_theme_sets_env_and_palette_include(self):
+        conf = familiar.render_generated_conf(["review"], True, "darcula")
+        self.assertIn("env FAMILIAR_THEME=darcula", conf)
+        self.assertIn("look/darcula.conf", conf)
+
+    def test_palette_override_comes_after_terminal_conf(self):
+        # terminal.conf тянет look/ghostty.conf; в kitty побеждает
+        # последний include, поэтому палитра темы обязана идти следом
+        conf = familiar.render_generated_conf(["review"], True, "darcula")
+        self.assertLess(conf.index("terminal.conf"), conf.index("look/darcula.conf"))
+
+    def test_theme_without_terminal_skips_the_palette(self):
+        # без --terminal familiar не трогает внешний вид kitty,
+        # но подсветку в китах тема задаёт всё равно
+        conf = familiar.render_generated_conf(["review"], False, "darcula")
+        self.assertIn("env FAMILIAR_THEME=darcula", conf)
+        self.assertNotIn("look/darcula.conf", conf)
+
+    def test_wired_theme_reads_back_what_was_written(self):
+        for theme in familiar.THEMES:
+            conf = familiar.render_generated_conf(["review"], True, theme)
+            self.assertEqual(familiar.wired_theme(conf), theme)
+
+    def test_every_theme_has_a_palette_file(self):
+        for theme in familiar.THEMES:
+            if theme == familiar.DEFAULT_THEME:
+                continue
+            path = familiar._theme_include_line(theme)[len("include "):]
+            self.assertTrue(os.path.exists(path), path)
+
+
 class BlockTests(unittest.TestCase):
     def test_insert_appends_block(self):
         out = familiar.upsert_managed_block("font_size 14\n", "include familiar.conf")

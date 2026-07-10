@@ -5,6 +5,20 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.9.0] — 2026-07-10
+
+### Added
+
+- **Color themes** (`familiar enable --theme darcula`): the JetBrains Darcula palette for
+  the terminal *and* for the syntax highlighting inside the kittens. Colors are taken from
+  the official `Darcula` scheme in JetBrains/intellij-community, so keywords, strings,
+  numbers, docstrings and decorators land on the exact hues the IDE uses. Without
+  `--terminal`/`--all` only the kittens are recolored — familiar leaves your terminal look
+  alone unless asked. `--theme default` keeps the previous appearance, and `familiar status`
+  reports the active theme.
+- The kittens now render truecolor when a theme calls for it (`kitty.fast_data_types.Color`),
+  instead of rounding every hue to the 256-color cube.
+
 ## [0.8.0] — 2026-07-10
 
 ### Removed

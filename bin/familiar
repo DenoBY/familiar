@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 MARKER_BEGIN = "# >>> familiar >>> (managed by `familiar enable` — do not edit)"
 MARKER_END = "# <<< familiar <<<"
@@ -80,7 +80,17 @@ def _terminal_include_line() -> str:
     return "include " + os.path.join(config_source_dir(), "terminal.conf")
 
 
+def _theme_include_line(theme: str) -> str:
+    return "include " + os.path.join(config_source_dir(), "look", f"{theme}.conf")
+
+
 TERMINAL_SUFFIX = "/config/terminal.conf"
+
+# Тема по умолчанию — вид, который был до появления флага: палитра из
+# look/ghostty.conf и One Dark в подсветке китов.
+DEFAULT_THEME = "default"
+THEMES = (DEFAULT_THEME, "darcula")
+THEME_ENV = "FAMILIAR_THEME"
 
 
 def wired_root(generated: str) -> str | None:
@@ -98,6 +108,18 @@ def wired_root(generated: str) -> str | None:
         elif line.startswith("include ") and line.endswith(TERMINAL_SUFFIX):
             return line[len("include "):-len(TERMINAL_SUFFIX)]
     return None
+
+
+def wired_theme(generated: str) -> str:
+    """Тема, запечённая в familiar.conf. Её отсутствие — DEFAULT_THEME:
+    так выглядит конфиг, сгенерированный без --theme.
+    """
+    prefix = f"env {THEME_ENV}="
+    for raw in generated.splitlines():
+        line = raw.strip()
+        if line.startswith(prefix):
+            return line[len(prefix):].strip() or DEFAULT_THEME
+    return DEFAULT_THEME
 
 
 def _has_terminal_include(generated: str) -> bool:
@@ -133,7 +155,8 @@ def _clipboard_unmaps(names: list[str]) -> list[str]:
     return lines
 
 
-def render_generated_conf(names: list[str], with_terminal: bool) -> str:
+def render_generated_conf(names: list[str], with_terminal: bool,
+                          theme: str = DEFAULT_THEME) -> str:
     """Содержимое ~/.config/kitty/familiar.conf под выбранный режим."""
     ordered = [n for n in KITTENS if n in names]
     out = [
@@ -145,6 +168,15 @@ def render_generated_conf(names: list[str], with_terminal: bool) -> str:
     if with_terminal:
         out += ["# Terminal config (look, splits, tabs, layout):",
                 _terminal_include_line(), ""]
+    if theme != DEFAULT_THEME:
+        # Палитра терминала — только вместе с terminal.conf: без него
+        # familiar не трогает внешний вид kitty. Подсветку в китах тема
+        # задаёт всегда — её рисует сам kitten, читая переменную.
+        if with_terminal:
+            out += [f"# {theme} palette — overrides the colors from look/ghostty.conf:",
+                    _theme_include_line(theme), ""]
+        out += ["# Syntax highlighting theme for the kittens:",
+                f"env {THEME_ENV}={theme}", ""]
     plugins = plugins_dir()
     for name in ordered:
         out += _kitten_maps(name, plugins)
@@ -270,12 +302,15 @@ def cmd_enable(args: argparse.Namespace) -> None:
 
     backup = _backup_once(kitty_conf)
     _write(os.path.join(config_dir, GENERATED_CONF),
-           render_generated_conf(names, with_terminal))
+           render_generated_conf(names, with_terminal, args.theme))
     _write(kitty_conf, upsert_managed_block(_read(kitty_conf),
                                             f"include {GENERATED_CONF}"))
 
     enabled = ", ".join(names + (["terminal"] if with_terminal else []))
     print(f"enabled: {enabled}")
+    if args.theme != DEFAULT_THEME:
+        print(f"theme:   {args.theme}"
+              + ("" if with_terminal else " (kittens only — no --terminal)"))
     if backup:
         print(f"backup:  {backup}")
     print("reload kitty (Cmd+Ctrl+, on macOS) or restart it to apply")
@@ -330,6 +365,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         active = [n for n in KITTENS if f"cc_plugin={n} " in generated]
         print(f"kittens:    {', '.join(active) or '—'}")
         print(f"terminal:   {'yes' if _has_terminal_include(generated) else 'no'}")
+        print(f"theme:      {wired_theme(generated)}")
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(backup):
         print(f"backup:     {backup}")
@@ -362,6 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     enable.add_argument("--terminal", action="store_true",
                         help="add the terminal config to the selection "
                              "(alone — terminal config only)")
+    enable.add_argument("--theme", choices=THEMES, default=DEFAULT_THEME,
+                        help="color theme: kitten syntax highlighting, plus the "
+                             "terminal palette when --terminal/--all is used")
     enable.add_argument("-y", "--yes", action="store_true",
                         help="skip the terminal-config confirmation")
     enable.set_defaults(func=cmd_enable)

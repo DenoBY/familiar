@@ -64,6 +64,7 @@ hubs (`kitty.conf`, `terminal.conf`) stay at the root.
 | `keys/russian-ctrl.conf` | Remaps `Ctrl+<Cyrillic>` to the same control code as the Latin key, by physical ЙЦУКЕН→QWERTY position — so `Ctrl+C/V/…` keep working while typing Russian. |
 | `keys/splits.conf` | Ghostty-style panes: `Cmd+D` / `Cmd+Shift+D` split, `Cmd+Shift+arrows` move focus, `Cmd+Shift+Enter` zoom (stack), `Cmd+W` close pane, `Cmd+Shift+W` close tab. |
 | `look/tabs.conf` | Top rounded powerline "pill" tabs + colors, `Cmd+1…9` go to tab. |
+| `look/darcula.conf` | Optional JetBrains Darcula palette (`familiar enable --theme darcula`). Loaded **after** `ghostty.conf` and overrides its colors only — font and titlebar stay. |
 
 Note: `clear_all_shortcuts` wipes **all** of kitty's built-in shortcuts,
 including the cross-platform `Ctrl+Shift` (`kitty_mod`) defaults — only the

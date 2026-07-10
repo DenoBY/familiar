@@ -63,6 +63,7 @@ cp config/*.conf ~/.config/kitty/
 | `keys/russian-ctrl.conf` | Ремапит `Ctrl+<кириллица>` в тот же control-код, что латинская клавиша, по физической позиции ЙЦУКЕН→QWERTY — чтобы `Ctrl+C/V/…` работали при наборе на русском. |
 | `keys/splits.conf` | Панели в стиле Ghostty: `Cmd+D` / `Cmd+Shift+D` — сплит, `Cmd+Shift+стрелки` — фокус, `Cmd+Shift+Enter` — зум (stack), `Cmd+W` — закрыть панель, `Cmd+Shift+W` — закрыть таб. |
 | `look/tabs.conf` | Скруглённые powerline-«пилюли» сверху + цвета, `Cmd+1…9` — переход к табу. |
+| `look/darcula.conf` | Необязательная палитра JetBrains Darcula (`familiar enable --theme darcula`). Грузится **после** `ghostty.conf` и переопределяет только цвета — шрифт и титлбар остаются. |
 
 Важно: `clear_all_shortcuts` снимает **все** встроенные шорткаты kitty, включая
 кросс-платформенные `Ctrl+Shift` (`kitty_mod`) — обратно возвращается только

@@ -41,6 +41,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |
 | `test_result_handlers.py` | `handle_result` of both kittens — building the remote-control command (the kitty-process side) |
+| `test_theme.py` | color themes: every role defined in every palette, Darcula's truecolor values against the JetBrains scheme, `FAMILIAR_THEME` parsing and the fallback to default |
 
 Interactive rendering in real kitty is not covered by tests (it cannot be run outside kitty);
 `styled` in the mock is the identity function, so handler output is deterministic and is checked against substrings.
