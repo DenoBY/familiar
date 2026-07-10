@@ -115,20 +115,20 @@ grabs it, so `Cmd+W` closed the *tab* instead of the pane, even in Russian.
 
 ## Your own theme
 
-A theme is two files and one tuple. Say you want `nord`:
+A theme is two files named after it. Say you want `nord`:
 
 1. **`look/nord.conf`** — the terminal side: `foreground`, `background`, `cursor`,
    `selection_background`, `color0`…`color15`, and the tab colors if you want them.
    It is included *after* `ghostty.conf` and `tabs.conf`, so it only needs the keys
    it actually changes.
-2. **`plugins/modules/theme.py`** — the kitten side: add a `_NORD_PALETTE` dict to
-   `_PALETTES` under the key `'nord'`. Every role of the existing palettes must be
-   present; a value is either a 256-color number or `'#rrggbb'` (rendered as truecolor).
-3. **`bin/familiar`** — add `"nord"` to `THEMES`, which is what `--theme` validates against.
+2. **`palette/nord.conf`** — the kitten side: syntax highlighting and diff
+   backgrounds, one `role value` per line; a value is either a 256-color number or
+   `#rrggbb` (rendered as truecolor). Any role you leave out keeps the default
+   (`ghostty`) color. `palette/darcula.conf` shows the full list of roles.
 
-Steps 2 and 3 are two separate lists on purpose (the CLI must not import the kitten
-package), so a test asserts they agree — forget one and `--theme nord` would pass
-validation and silently paint with the default palette.
+There is no list to update: both the `--theme` flag and the kittens discover themes
+by scanning `config/palette/` (two independent scans — the CLI must not import the
+kitten package — so a test asserts they agree).
 
 Then `familiar enable --all --theme nord`. The terminal picks the colors up on a config
 reload; the kittens read `FAMILIAR_THEME` at startup, so they need kitty restarted.

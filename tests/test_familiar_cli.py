@@ -94,7 +94,13 @@ class ThemeTests(unittest.TestCase):
             conf = familiar.render_generated_conf(["review"], True, theme)
             self.assertEqual(familiar.wired_theme(conf), theme)
 
-    def test_every_theme_has_a_palette_file(self):
+    def test_themes_are_discovered_from_palette_files(self):
+        self.assertIn("darcula", familiar.THEMES)
+        self.assertEqual(familiar.THEMES[0], familiar.DEFAULT_THEME)
+
+    def test_every_theme_has_a_look_file(self):
+        # render_generated_conf подключает look/<тема>.conf — палитры
+        # без терминальной половины быть не должно
         for theme in familiar.THEMES:
             path = familiar._theme_include_line(theme)[len("include "):]
             self.assertTrue(os.path.exists(path), path)

@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 
 # Color берём из мока: он и зарегистрирован как
@@ -30,10 +31,54 @@ class PaletteTests(unittest.TestCase):
         self.assertEqual(T.palette('no-such-theme'), T.palette(T.DEFAULT))
 
 
+class PaletteFileTests(unittest.TestCase):
+    """Формат palette/*.conf и наследование ролей — на временной
+    директории палитр.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._saved_dir = T.PALETTE_DIR
+        T.PALETTE_DIR = self._tmp.name
+        T._cache.clear()
+        self._write(T.DEFAULT, 'comment 1\nstring 2\n')
+
+    def tearDown(self):
+        T.PALETTE_DIR = self._saved_dir
+        T._cache.clear()
+        self._tmp.cleanup()
+
+    def _write(self, name, text):
+        with open(os.path.join(self._tmp.name, f'{name}.conf'), 'w') as f:
+            f.write(text)
+
+    def test_hex_value_becomes_color(self):
+        self._write('mine', 'comment #112233\n')
+        self.assertEqual(T.palette('mine')['comment'], Color(0x11, 0x22, 0x33))
+
+    def test_missing_role_inherits_default(self):
+        self._write('mine', 'comment #112233\n')
+        self.assertEqual(T.palette('mine')['string'], 2)
+
+    def test_unknown_role_is_dropped(self):
+        self._write('mine', 'no_such_role 5\n')
+        self.assertNotIn('no_such_role', T.palette('mine'))
+
+    def test_malformed_value_inherits_default(self):
+        # опечатка в значении не должна ронять kitten
+        self._write('mine', 'comment notacolor\ndoc #12345\nstring 999\n')
+        self.assertEqual(T.palette('mine'), T.palette(T.DEFAULT))
+
+    def test_comments_blanks_and_trailing_text_ignored(self):
+        self._write('mine', '# шапка\n\ncomment 7  # серый\n  # отступ\n')
+        self.assertEqual(T.palette('mine')['comment'], 7)
+
+
 class CliAgreementTests(unittest.TestCase):
-    """Тему объявляют в двух местах: палитра — здесь, флаг --theme —
-    в CLI. Разойдутся — `--theme x` пройдёт валидацию и молча даст
-    цвета дефолтной темы.
+    """Список тем оба выводят из файлов config/palette/, но двумя
+    независимыми сканами: палитры читает модуль китов, флаг --theme —
+    CLI (он не импортирует пакет китов). Разойдутся сканы — `--theme x`
+    пройдёт валидацию и молча даст цвета дефолтной темы.
     """
 
     def setUp(self):

@@ -96,8 +96,23 @@ TERMINAL_SUFFIX = "/config/terminal.conf"
 # look/ghostty.conf и её подсветка в китах. Её include уже сидит в
 # terminal.conf, поэтому render_generated_conf для неё ничего не пишет.
 DEFAULT_THEME = "ghostty"
-THEMES = (DEFAULT_THEME, "darcula")
 THEME_ENV = "FAMILIAR_THEME"
+
+
+def _available_themes() -> tuple[str, ...]:
+    # Имена тем — файлы config/palette/*.conf: киты читают палитры из
+    # той же директории (modules/theme.py), поэтому отдельного списка
+    # тем нет, а CLI по-прежнему не импортирует пакет китов.
+    palette_dir = os.path.join(config_source_dir(), "palette")
+    try:
+        found = sorted(os.path.splitext(f)[0] for f in os.listdir(palette_dir)
+                       if f.endswith(".conf"))
+    except OSError:
+        return (DEFAULT_THEME,)
+    return (DEFAULT_THEME,) + tuple(n for n in found if n != DEFAULT_THEME)
+
+
+THEMES = _available_themes()
 
 
 def wired_root(generated: str) -> str | None:
