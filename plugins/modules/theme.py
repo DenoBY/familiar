@@ -1,4 +1,5 @@
-"""Палитры подсветки синтаксиса: цвет для каждой роли токена.
+"""Палитры китов: цвет для каждой роли — токена подсветки и фона
+строки диффа.
 
 Тему выбирает `familiar enable --theme`: она пишет в kitty.conf
 `env FAMILIAR_THEME=<имя>`, и kitty передаёт переменную процессу
@@ -14,12 +15,13 @@ styled() выводит как truecolor. Точные оттенки IDE ина
 import os
 
 
-DEFAULT = 'default'
+DEFAULT = 'ghostty'
 
-# One Dark: оттенки, которыми kitty-киты жили до появления тем.
-# 256-цвет — исторически: truecolor не у всех тем терминала ложится
-# ровно, а 256 kitty рисует одинаково.
-_DEFAULT_PALETTE = {
+# Подсветка под палитру look/ghostty.conf — оттенки в духе One Dark,
+# которыми kitty-киты жили до появления тем. 256-цвет — исторически:
+# truecolor не у всех тем терминала ложится ровно, а 256 kitty рисует
+# одинаково.
+_GHOSTTY_PALETTE = {
     'comment': 244,     # серый
     'doc': 114,         # докстринг — как строка
     'string': 114,      # зелёный
@@ -35,12 +37,20 @@ _DEFAULT_PALETTE = {
     'operator': 73,     # бирюзовый: = + - > и прочие знаки
     'punct': 145,       # тусклый: скобки, запятые, точки с запятой
     'error': 203,       # красный: то, что лексер не смог разобрать
+    'add_bg': 22,
+    'del_bg': 52,
+    'add_word_bg': 28,  # ярче — на изменившихся словах (word-diff)
+    'del_word_bg': 88,
+    'add_focus_bg': 34,   # строка под курсором: ярче своего фона
+    'del_focus_bg': 124,
+    'cursor_bg': 238,     # строка под курсором там, где своего фона нет
+    'sel_range_bg': 25,   # выделение: читается и поверх add/del
 }
 
-# Darcula. Значения — из первоисточника JetBrains: схема "Darcula" в
-# platform/platform-resources/src/DefaultColorSchemesManager.xml
-# (intellij-community). Роли, которых в схеме нет (класс, оператор,
-# скобки), наследуют цвет текста — так их и рисует IDE.
+# Darcula. Справа от каждой роли — ключ, из которого взято значение:
+# схема "Darcula" в platform/platform-resources/src/
+# DefaultColorSchemesManager.xml (JetBrains/intellij-community).
+# TEXT — цвет обычного кода: его наследуют роли, которых в схеме нет.
 _DARCULA_PALETTE = {
     'comment': '#808080',    # DEFAULT_LINE_COMMENT
     'doc': '#629755',        # DEFAULT_DOC_COMMENT — зеленее строки
@@ -57,10 +67,26 @@ _DARCULA_PALETTE = {
     'operator': '#a9b7c6',   # TEXT
     'punct': '#a9b7c6',      # TEXT
     'error': '#f0524f',      # CONSOLE_RED_OUTPUT
+    # Фоны диффа НЕ из схемы: её DIFF_INSERTED/DIFF_DELETED считаны под
+    # светлый фон редактора и на тёмном терминале выцветают в грязь.
+    #
+    # Слово из word-diff отделяет от своей строки контраст ≈2x. Растить
+    # его осветлением слова нельзя — на светлом фоне тонет сам текст,
+    # поэтому темнее делается строка, а слово остаётся насыщенным.
+    # Строка под курсором тоже приглушена: поверх неё код рисуется одним
+    # цветом, и на кислотно-ярком фоне он нечитаем.
+    'add_bg': '#004d00',
+    'del_bg': '#4d0000',
+    'add_word_bg': '#008700',
+    'del_word_bg': '#a00000',
+    'add_focus_bg': '#007a00',
+    'del_focus_bg': '#8f0000',
+    'cursor_bg': '#323232',     # CARET_ROW_COLOR
+    'sel_range_bg': '#214283',  # SELECTION_BACKGROUND
 }
 
 _PALETTES = {
-    DEFAULT: _DEFAULT_PALETTE,
+    DEFAULT: _GHOSTTY_PALETTE,
     'darcula': _DARCULA_PALETTE,
 }
 
@@ -78,5 +104,5 @@ def _rgb(spec: str):
 
 def palette(name: 'str | None' = None) -> dict:
     """Роль токена → цвет для styled(): int (256-цвет) или Color."""
-    raw = _PALETTES.get(name or theme_name(), _DEFAULT_PALETTE)
+    raw = _PALETTES.get(name or theme_name(), _GHOSTTY_PALETTE)
     return {role: _rgb(v) if isinstance(v, str) else v for role, v in raw.items()}

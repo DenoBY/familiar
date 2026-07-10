@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """familiar — включение/выключение kitty-оверлеев в конфиге kitty.
 
-Ставит выбранные китены (и опционально настройки терминала) в kitty.conf,
-не заставляя пользователя руками править абсолютные пути. kitty требует
-абсолютный путь к kitten (относительный резолвит от ~/.config/kitty, а не от
-файла с `map`) — поэтому familiar подставляет реальный путь установки сам,
-находя его от собственного расположения. Работает и из клона репозитория, и
-из brew-префикса.
+Ставит выбранные китены (и опционально настройки терминала) в
+kitty.conf, не заставляя пользователя руками править абсолютные
+пути. kitty требует абсолютный путь к kitten (относительный
+резолвит от ~/.config/kitty, а не от файла с `map`) — поэтому
+familiar подставляет реальный путь установки сам, находя его от
+собственного расположения. Работает и из клона репозитория, и из
+brew-префикса.
 
-Правки идут в размеченный блок между маркерами, поэтому `disable` снимает
-ровно то, что добавил familiar, не трогая остальной kitty.conf. Перед первой
-правкой снимается резервная копия kitty.conf — для отката терминал-режима,
-который может переопределить чужие настройки.
+Правки идут в размеченный блок между маркерами, поэтому `disable`
+снимает ровно то, что добавил familiar, не трогая остальной
+kitty.conf. Перед первой правкой снимается резервная копия
+kitty.conf — для отката терминал-режима, который может
+переопределить чужие настройки.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import sys
 import tempfile
 
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 
 MARKER_BEGIN = "# >>> familiar >>> (managed by `familiar enable` — do not edit)"
 MARKER_END = "# <<< familiar <<<"
@@ -31,10 +33,11 @@ MARKER_END = "# <<< familiar <<<"
 GENERATED_CONF = "familiar.conf"
 BACKUP_SUFFIX = ".familiar.bak"
 
-# Порядок ключей канонический (session, review, log) — render_generated_conf
-# выводит киты именно в нём, независимо от порядка аргументов.
-# clipboard=True — внутри review/log копирование по cmd+c/cmd+shift+c должно
-# доходить до kitten, поэтому глобальный маппинг снимаем, пока оверлей в фокусе.
+# Порядок ключей канонический (session, review, log) —
+# render_generated_conf выводит киты именно в нём, независимо от
+# порядка аргументов. clipboard=True — внутри review/log копирование
+# по cmd+c/cmd+shift+c должно доходить до kitten, поэтому глобальный
+# маппинг снимаем, пока оверлей в фокусе.
 KITTENS = {
     "session": {"key": "s", "ru": "ы", "file": "session.py",
                 "clipboard": False, "desc": "Claude Code sessions"},
@@ -46,13 +49,16 @@ KITTENS = {
 
 
 def app_root() -> str:
-    # FAMILIAR_ROOT задаёт brew-обёртка стабильным opt-путём (…/opt/familiar/libexec):
-    # он переживает `brew upgrade`, тогда как realpath схлопнул бы симлинк до версионного
-    # …/Cellar/familiar/<ver>/… — и запечённые в конфиг пути ломались бы при обновлении.
+    # FAMILIAR_ROOT задаёт brew-обёртка стабильным opt-путём
+    # (…/opt/familiar/libexec): он переживает `brew upgrade`, тогда
+    # как realpath схлопнул бы симлинк до версионного
+    # …/Cellar/familiar/<ver>/… — и запечённые в конфиг пути
+    # ломались бы при обновлении.
     env = os.environ.get("FAMILIAR_ROOT")
     if env:
         return env
-    # Клон: <root>/bin/familiar → <root>. Папка клона стабильна, realpath безопасен.
+    # Клон: <root>/bin/familiar → <root>. Папка клона стабильна,
+    # realpath безопасен.
     return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
@@ -65,8 +71,8 @@ def config_source_dir() -> str:
 
 
 def kitty_config_dir() -> str:
-    # Порядок как у самого kitty: KITTY_CONFIG_DIRECTORY → XDG_CONFIG_HOME/kitty
-    # → ~/.config/kitty.
+    # Порядок как у самого kitty: KITTY_CONFIG_DIRECTORY →
+    # XDG_CONFIG_HOME/kitty → ~/.config/kitty.
     env = os.environ.get("KITTY_CONFIG_DIRECTORY")
     if env:
         return os.path.expanduser(env)
@@ -86,17 +92,18 @@ def _theme_include_line(theme: str) -> str:
 
 TERMINAL_SUFFIX = "/config/terminal.conf"
 
-# Тема по умолчанию — вид, который был до появления флага: палитра из
-# look/ghostty.conf и One Dark в подсветке китов.
-DEFAULT_THEME = "default"
+# Тема по умолчанию — вид, который был до появления флага: палитра
+# look/ghostty.conf и её подсветка в китах. Её include уже сидит в
+# terminal.conf, поэтому render_generated_conf для неё ничего не пишет.
+DEFAULT_THEME = "ghostty"
 THEMES = (DEFAULT_THEME, "darcula")
 THEME_ENV = "FAMILIAR_THEME"
 
 
 def wired_root(generated: str) -> str | None:
-    """Корень установки, запечённый в familiar.conf — то, что kitty реально
-    исполняет. Может отличаться от app_root() вызванной копии: клон подключён,
-    brew стоит рядом.
+    """Корень установки, запечённый в familiar.conf — то, что kitty
+    реально исполняет. Может отличаться от app_root() вызванной
+    копии: клон подключён, brew стоит рядом.
     """
     for raw in generated.splitlines():
         line = raw.strip()
@@ -123,8 +130,9 @@ def wired_theme(generated: str) -> str:
 
 
 def _has_terminal_include(generated: str) -> bool:
-    # По суффиксу, а не по пути вызванной копии: иначе brew-бинарь сообщал бы
-    # «terminal: no» о терминал-конфиге, подключённом из клона.
+    # По суффиксу, а не по пути вызванной копии: иначе brew-бинарь
+    # сообщал бы «terminal: no» о терминал-конфиге, подключённом из
+    # клона.
     return any(line.startswith("include ") and line.endswith(TERMINAL_SUFFIX)
                for line in (raw.strip() for raw in generated.splitlines()))
 
@@ -229,8 +237,8 @@ def _read(path: str) -> str:
 
 
 def _write(path: str, text: str) -> None:
-    # Атомарно: temp-файл в том же каталоге + os.replace — упавшая запись
-    # не оставит kitty.conf обрезанным.
+    # Атомарно: temp-файл в том же каталоге + os.replace — упавшая
+    # запись не оставит kitty.conf обрезанным.
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".familiar-")
@@ -250,7 +258,8 @@ def _write(path: str, text: str) -> None:
 
 
 def _backup_once(kitty_conf: str) -> str | None:
-    # Снимаем копию только один раз — чтобы .bak хранил состояние ДО familiar.
+    # Снимаем копию только один раз — чтобы .bak хранил состояние
+    # ДО familiar.
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(kitty_conf) and not os.path.exists(backup):
         shutil.copy2(kitty_conf, backup)
@@ -331,8 +340,8 @@ def cmd_disable(args: argparse.Namespace) -> None:
     else:
         print("familiar is not enabled — nothing to remove")
 
-    # --restore работает и при уже снятом блоке: откат из .bak — отдельное
-    # действие, а не продолжение disable.
+    # --restore работает и при уже снятом блоке: откат из .bak —
+    # отдельное действие, а не продолжение disable.
     restored = False
     if args.restore:
         if os.path.exists(backup):
@@ -370,8 +379,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     if os.path.exists(backup):
         print(f"backup:     {backup}")
 
-    # realpath с обеих сторон: brew-обёртка задаёт opt-путь (симлинк на Cellar),
-    # и запечённый opt-путь — та же установка, а не расхождение.
+    # realpath с обеих сторон: brew-обёртка задаёт opt-путь (симлинк
+    # на Cellar), и запечённый opt-путь — та же установка, а не
+    # расхождение.
     if wired and os.path.realpath(wired) != os.path.realpath(app_root()):
         print()
         print("warning: kitty.conf points at a different familiar installation")

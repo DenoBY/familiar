@@ -64,7 +64,7 @@ hubs (`kitty.conf`, `terminal.conf`) stay at the root.
 | `keys/russian-ctrl.conf` | Remaps `Ctrl+<Cyrillic>` to the same control code as the Latin key, by physical ЙЦУКЕН→QWERTY position — so `Ctrl+C/V/…` keep working while typing Russian. |
 | `keys/splits.conf` | Ghostty-style panes: `Cmd+D` / `Cmd+Shift+D` split, `Cmd+Shift+arrows` move focus, `Cmd+Shift+Enter` zoom (stack), `Cmd+W` close pane, `Cmd+Shift+W` close tab. |
 | `look/tabs.conf` | Top rounded powerline "pill" tabs + colors, `Cmd+1…9` go to tab. |
-| `look/darcula.conf` | Optional JetBrains Darcula palette (`familiar enable --theme darcula`). Loaded **after** `ghostty.conf` and overrides its colors only — font and titlebar stay. |
+| `look/darcula.conf` | Optional JetBrains Darcula theme (`familiar enable --theme darcula`). Loaded **after** `ghostty.conf` and `tabs.conf`, so it overrides their colors (terminal palette and tab bar); the font, the titlebar and the pill shape of the tabs stay. |
 
 Note: `clear_all_shortcuts` wipes **all** of kitty's built-in shortcuts,
 including the cross-platform `Ctrl+Shift` (`kitty_mod`) defaults — only the
@@ -112,6 +112,26 @@ grabs it, so `Cmd+W` closed the *tab* instead of the pane, even in Russian.
 - **Different font?** Change `font_family` in `ghostty.conf`.
 - **Terminal only?** `familiar enable --terminal` wires in just this config,
   without any kittens (or use the manual `cp` above).
+
+## Your own theme
+
+A theme is two files and one tuple. Say you want `nord`:
+
+1. **`look/nord.conf`** — the terminal side: `foreground`, `background`, `cursor`,
+   `selection_background`, `color0`…`color15`, and the tab colors if you want them.
+   It is included *after* `ghostty.conf` and `tabs.conf`, so it only needs the keys
+   it actually changes.
+2. **`plugins/modules/theme.py`** — the kitten side: add a `_NORD_PALETTE` dict to
+   `_PALETTES` under the key `'nord'`. Every role of the existing palettes must be
+   present; a value is either a 256-color number or `'#rrggbb'` (rendered as truecolor).
+3. **`bin/familiar`** — add `"nord"` to `THEMES`, which is what `--theme` validates against.
+
+Steps 2 and 3 are two separate lists on purpose (the CLI must not import the kitten
+package), so a test asserts they agree — forget one and `--theme nord` would pass
+validation and silently paint with the default palette.
+
+Then `familiar enable --all --theme nord`. The terminal picks the colors up on a config
+reload; the kittens read `FAMILIAR_THEME` at startup, so they need kitty restarted.
 
 ## License
 

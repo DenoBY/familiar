@@ -47,6 +47,9 @@ from modules.vcs.view import DiffTreeView
 
 
 BATCH = 300   # сколько коммитов тянем за раз (докрутка подгружает следующую пачку)
+# Пауза в прокрутке, после которой подтягиваются подробности коммита.
+# Тот же порядок, что у отложенной загрузки диффа в дереве файлов.
+DETAIL_DELAY = 0.08
 
 # Цвет ref-меток в списке коммитов по типу
 # (см. modules.log.git.parse_refs).
@@ -80,6 +83,7 @@ class CommitLogHandler(DiffTreeView):
         self.show_graph = True           # рисовать граф веток слева (тумблер g)
         self.show_detail = True          # панель подробностей коммита справа (тумблер i)
         self._detail_cache = {}          # sha -> commit_detail (ленивая подгрузка)
+        self._detail_later = None        # таймер отложенной подгрузки
         self._fetching = False
         self.exhausted = False
         self.sel = 0                     # выбранный коммит
@@ -142,6 +146,7 @@ class CommitLogHandler(DiffTreeView):
             self.commits = list(self.all_commits)
         self.graph = build_graph(self.commits)
         self.sel = min(self.sel, max(0, len(self.commits) - 1))
+        self._schedule_detail()
 
     def toggle_graph(self):
         self.show_graph = not self.show_graph
@@ -201,6 +206,7 @@ class CommitLogHandler(DiffTreeView):
         self.sel = max(0, min(len(self.commits) - 1, self.sel + delta))
         if self.sel >= len(self.commits) - 1:
             self.load_more()
+        self._schedule_detail()
         self.draw_screen()
 
     def ensure_commit_visible(self):
@@ -250,8 +256,11 @@ class CommitLogHandler(DiffTreeView):
     def _draw_commits(self):
         cols = self.screen_size.cols
         mode = 'all branches' if self.all_branches else 'current branch'
+        # «+» — загружена лишь пачка (BATCH), докрутка подтянет ещё:
+        # иначе счётчик читается как «в ветке всего столько коммитов»
+        more = '' if self.exhausted else '+'
         header = f' {short_path(self.root or os.getcwd())} · {mode} ({len(self.commits)}'
-        header += f'/{len(self.all_commits)})' if self.filter_query else ')'
+        header += f'/{len(self.all_commits)}{more})' if self.filter_query else f'{more})'
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
         vis = self.visible_rows()
@@ -285,10 +294,45 @@ class CommitLogHandler(DiffTreeView):
             else:
                 self.print(left)
 
-    def _commit_detail(self, sha):
+    def _schedule_detail(self):
+        """Подтянуть подробности выбранного коммита, когда прокрутка
+        утихнет.
+
+        commit_detail() — два git-вызова, и `branch --contains` среди
+        них обходит все ветки репозитория. На каждый шаг курсора это
+        заметно: при зажатой стрелке список отвечает рывками. Зовётся
+        при смене выделения, а не из отрисовки — рендер не должен
+        ходить в git.
+        """
+        if self._detail_later is not None:
+            self._detail_later.cancel()
+            self._detail_later = None
+        if not self.commits or not (0 <= self.sel < len(self.commits)):
+            return
+        sha = self.commits[self.sel]['sha']
         if sha not in self._detail_cache:
-            self._detail_cache[sha] = commit_detail(self.root, sha)
-        return self._detail_cache[sha]
+            self._detail_later = self.asyncio_loop.call_later(
+                DETAIL_DELAY, self._load_detail, sha)
+
+    def _load_detail(self, sha):
+        self._detail_later = None
+        self._detail_cache[sha] = commit_detail(self.root, sha)
+        self.draw_screen()
+
+    def _commit_detail(self, sha):
+        return self._detail_cache.get(sha)
+
+    def _detail_lines_brief(self, c, width):
+        """Панель на время прокрутки: только то, что уже есть в списке
+        коммитов, без обращений к git. Показывает то же, что и полная
+        панель, минус тело сообщения, email и ветки, — чтобы при
+        подгрузке она не прыгала.
+        """
+        out = [styled(truncate(w, width), bold=True) for w in wrap_text(c['subject'], width)]
+        out.append('')
+        out.append(styled(truncate(f'{c["short"]}  {c["author"]}', width), fg='cyan'))
+        out.append(styled(truncate(c['date'], width), fg='gray'))
+        return out
 
     def _detail_lines(self, width):
         """Строки правой панели: подробности выбранного коммита
@@ -298,6 +342,8 @@ class CommitLogHandler(DiffTreeView):
             return []
         c = self.commits[self.sel]
         d = self._commit_detail(c['sha'])
+        if d is None:
+            return self._detail_lines_brief(c, width)
         out = []
         msg = (d['body'] or c['subject']).split('\n')
         for i, ml in enumerate(msg):
@@ -467,9 +513,11 @@ class CommitLogHandler(DiffTreeView):
             self.move(self.visible_rows())
         elif k == 'HOME':
             self.sel = 0
+            self._schedule_detail()
             self.draw_screen()
         elif k == 'END':
             self.sel = max(0, len(self.commits) - 1)
+            self._schedule_detail()
             self.draw_screen()
         elif k in ('ENTER', 'RIGHT'):
             self.open_commit()
@@ -585,6 +633,7 @@ class CommitLogHandler(DiffTreeView):
                 self.open_commit()
             else:
                 self.sel = i
+                self._schedule_detail()
                 self.draw_screen()
             return
         super().on_click(ev)

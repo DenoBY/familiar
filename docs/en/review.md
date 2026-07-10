@@ -91,7 +91,8 @@ overlay.
 Two focus areas: the **tree** (left, navigate files) and the **diff** (right, cursor over
 lines for comments). Switch with `Tab` or the arrows `←` (tree) / `→` (diff).
 
-**Mouse**: click a file in the tree to select it; click a diff line to place the cursor,
+**Mouse**: click a file in the tree to select it; click a folder to select it, click it
+again to fold/unfold; click a diff line to place the cursor,
 **double-click** to open a comment; click the `┈` separator to reveal hidden lines.
 (While mouse capture is on, select text for copying with `Shift` held down.)
 

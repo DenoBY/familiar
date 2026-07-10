@@ -7,6 +7,8 @@ line-length = 99
 target-version = "py311"
 # Вендоренный Pygments — сторонний код, его стиль не наша забота.
 extend-exclude = ["plugins/vendor"]
+# CLI — исполняемый скрипт без .py, иначе ruff его не увидит.
+extend-include = ["bin/familiar"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

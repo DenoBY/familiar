@@ -20,8 +20,11 @@ from kittens.tui.operations import styled
 
 from ..highlight import (
     ADD_BG,
+    ADD_FOCUS_BG,
     ADD_WORD_BG,
+    CURSOR_BG,
     DEL_BG,
+    DEL_FOCUS_BG,
     DEL_WORD_BG,
     SEL_RANGE_BG,
     fit_fgs,
@@ -44,11 +47,11 @@ _DEF_RE = re.compile(
     r'|async\s+|final\s+|abstract\s+)*'
     r'(?:def|class|func|function|fn|module|interface|type|struct|impl|trait|enum|'
     r'namespace|trait|sub|method)\b')
-SEL_BG = 238       # фон строки-курсора для контекста (там своего фона нет)
+SEL_BG = CURSOR_BG
 # Оттенок фокуса/выделения для строк со своим фоном: на add/del — ярче
-# того же цвета
-# (иначе курсор сливается с зелёным/красным), на контексте — серый.
-_FOCUS_SHADE = {ADD_BG: 34, DEL_BG: 124, None: SEL_BG}
+# того же цвета (иначе курсор сливается с фоном строки), на контексте —
+# серый.
+_FOCUS_SHADE = {ADD_BG: ADD_FOCUS_BG, DEL_BG: DEL_FOCUS_BG, None: SEL_BG}
 
 
 def _bg(text: str, bg: 'int | None') -> str:

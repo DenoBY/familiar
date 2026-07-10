@@ -5,6 +5,40 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.10.0] — 2026-07-10
+
+### Changed
+
+- The default theme is now named `ghostty` after the palette it actually is, not `default`.
+  Switch back with `familiar enable --theme ghostty`; the old `--theme default` is gone.
+- The Darcula theme also restyles the tab bar and the diff backgrounds inside the kittens.
+  Writing your own theme: see `config/README.md`.
+- log: the header counter now reads `300+` while the history is not fully loaded. It used to
+  print the number of loaded commits with no hint, so `(300)` read as "this branch has 300
+  commits".
+
+### Fixed
+
+- log: fast scrolling stuttered — the detail panel called git on every cursor step (`show`
+  plus `branch --contains`, which walks every ref in the repository). Details are now
+  fetched once the scrolling settles, the way the diff already loads in the file tree;
+  until then the panel shows what the commit list already knows.
+- The Darcula terminal text was tinted blue: it took the editor's `TEXT` (`#a9b7c6`) where
+  the JetBrains scheme has a separate `CONSOLE_NORMAL_OUTPUT` (`#bbbbbb`) for the console.
+- Darcula: word-diff highlighting drowned in the line background. The line is darker now and
+  the word stayed saturated — twice the contrast between them, and text on top reads better.
+- review, log: clicking a folder in the tree folded it right away, so a slightly-off click
+  rearranged the tree under the cursor. The first click now selects the folder, a second
+  click on it folds it — the way the commit list in `log` already behaved.
+- log: the footer offered `a current branch` while you were already on the current branch.
+
+### Internal
+
+- `ruff` never checked `bin/familiar` (no `.py` extension), where 22 line-length violations
+  had piled up. It does now, and `ruff check .` runs in CI.
+- A test asserts the CLI's theme list matches the kittens' palettes: were they to drift,
+  `--theme` would accept a name and silently paint with the default palette.
+
 ## [0.9.0] — 2026-07-10
 
 ### Added

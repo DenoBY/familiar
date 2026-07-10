@@ -89,7 +89,15 @@ generated automatically.
 `--theme darcula` recolors both the terminal palette and the syntax highlighting
 inside the kittens. Without `--terminal`/`--all` only the kittens are recolored —
 familiar never touches your terminal look unless you ask for it. Colors come from
-the official JetBrains scheme; `--theme default` (the default) keeps the previous look.
+the official JetBrains scheme; `--theme ghostty` (the default) keeps the previous look.
+
+To switch, run `enable` again with another `--theme`: the config is rewritten in full,
+so nothing of the previous theme is left behind. Terminal and tab colors are picked up
+by a config reload (`Cmd+Ctrl+,`), but the highlighting inside the kittens is driven by
+`FAMILIAR_THEME`, which kitty hands to the kitten process on startup — that one needs a
+**kitty restart**. `familiar status` shows what is active.
+
+Writing your own theme: see [config/README.md](config/README.md#your-own-theme).
 
 ### Uninstall / rollback
 

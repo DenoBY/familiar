@@ -6,7 +6,7 @@ import unittest
 
 import kittymock  # noqa: F401
 import review as R
-from kittymock import draw_text, wire
+from kittymock import MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key
 
 
@@ -507,6 +507,34 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertIn(key, self.h.collapsed)
         self.h.set_fold(False)
         self.assertNotIn(key, self.h.collapsed)
+
+    def _dir_row(self):
+        return next(i for i, r in enumerate(self.h.rows) if r['type'] == 'dir')
+
+    def _click_tree(self, row_idx):
+        self.h.on_click(MouseEvent(cell_x=1, cell_y=row_idx - self.h.left_offset + 2))
+
+    def test_first_click_on_folder_only_selects_it(self):
+        di = self._dir_row()
+        self.h.tsel = self.h._first_file()
+        self._click_tree(di)
+        self.assertEqual(self.h.tsel, di)
+        self.assertNotIn(self.h.rows[di]['key'], self.h.collapsed)
+
+    def test_second_click_on_the_selected_folder_folds_it(self):
+        di = self._dir_row()
+        self.h.tsel = self.h._first_file()
+        self._click_tree(di)
+        self._click_tree(di)
+        self.assertIn(self.h.rows[di]['key'], self.h.collapsed)
+
+    def test_click_from_diff_focus_selects_before_folding(self):
+        di = self._dir_row()
+        self.h.tsel = di
+        self.h.focus = 'diff'
+        self._click_tree(di)
+        self.assertEqual(self.h.focus, 'tree')
+        self.assertNotIn(self.h.rows[di]['key'], self.h.collapsed)
 
     # --- фокус и курсор по диффу ---
 

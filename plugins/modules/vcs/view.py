@@ -864,10 +864,16 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, Handler):
             li = self.left_offset + r
             if li >= len(self.rows):
                 return
+            # промах по соседней строке (и возврат в дерево из диффа)
+            # не должен перестраивать дерево под курсором
+            already_selected = self.focus == 'tree' and self.tsel == li
             self.focus = 'tree'
             self.tsel = li
             if self.rows[li]['type'] == 'dir':
-                self.set_fold(self.rows[li]['key'] not in self.collapsed)
+                if already_selected:
+                    self.set_fold(self.rows[li]['key'] not in self.collapsed)
+                else:
+                    self.draw_screen()
             else:
                 self.load_diff()
                 self.draw_screen()

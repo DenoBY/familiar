@@ -92,11 +92,69 @@ class LogHandlerTest(unittest.TestCase):
 
     def test_detail_panel_shows_commit_info(self):
         self.h.sel = 0
-        lines = self.h._detail_lines(50)
-        text = '\n'.join(lines)
+        self.h._detail_lines(50)                # промах кэша заводит таймер
+        text = '\n'.join(self.h._detail_lines(50))
         self.assertIn('add feature', text)                 # сообщение коммита
         self.assertIn('a@e', text)                         # email автора
-        self.assertIn('branches', text)                    # список веток
+        self.assertIn('branches', text)
+
+    def test_header_marks_that_more_commits_may_follow(self):
+        # счётчик — сколько загружено, а не сколько в ветке; без «+»
+        # он читается как «в истории всего столько коммитов»
+        self.h.exhausted = False
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn(f'({len(self.h.commits)}+)', draw_text(self.h))
+
+        self.h.exhausted = True
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn(f'({len(self.h.commits)})', draw_text(self.h))
+
+    def test_detail_panel_is_brief_until_loaded(self):
+        self.h.sel = 0
+        self.h._detail_cache.clear()
+        text = '\n'.join(self.h._detail_lines(50))
+        self.assertIn('add feature', text)      # то, что уже есть в списке
+        self.assertIn('Alice', text)
+        self.assertNotIn('a@e', text)           # за этим пришлось бы идти в git
+        self.assertNotIn('branches', text)
+
+    def test_fast_scroll_does_not_touch_git_on_every_step(self):
+        scheduled = []
+
+        class Timer:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        class DeferredLoop:
+            def call_later(self, delay, cb, *args):
+                t = Timer()
+                scheduled.append((t, cb, args))
+                return t
+
+        self.h.asyncio_loop = DeferredLoop()
+        self.h._detail_cache.clear()
+        calls = []
+        self.addCleanup(setattr, L, 'commit_detail', L.commit_detail)
+        L.commit_detail = lambda root, sha: calls.append(sha) or {
+            'body': '', 'author_email': '', 'committer': '',
+            'committer_email': '', 'branches': []}
+
+        self.h.sel = 0
+        self.h.draw_screen()
+        self.h.move(1)                          # быстрый скролл: два шага подряд
+        self.h.move(-1)
+        self.assertEqual(calls, [])             # во время прокрутки git не зовём
+        self.assertTrue(scheduled[0][0].cancelled)   # прежний таймер отменён
+        self.assertFalse(scheduled[-1][0].cancelled)
+
+        timer, cb, args = scheduled[-1]
+        cb(*args)                               # прокрутка утихла
+        self.assertEqual(calls, [self.h.commits[self.h.sel]['sha']])
 
     def test_draw_commits_with_panel_smoke(self):
         wire(self.h, rows=30, cols=130)                    # широкий экран → панель видна

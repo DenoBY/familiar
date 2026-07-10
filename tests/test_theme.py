@@ -30,6 +30,30 @@ class PaletteTests(unittest.TestCase):
         self.assertEqual(T.palette('no-such-theme'), T.palette(T.DEFAULT))
 
 
+class CliAgreementTests(unittest.TestCase):
+    """Тему объявляют в двух местах: палитра — здесь, флаг --theme —
+    в CLI. Разойдутся — `--theme x` пройдёт валидацию и молча даст
+    цвета дефолтной темы.
+    """
+
+    def setUp(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'bin', 'familiar')
+        spec = importlib.util.spec_from_loader(
+            'familiar_cli_theme',
+            importlib.machinery.SourceFileLoader('familiar_cli_theme', path))
+        self.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cli)
+
+    def test_cli_offers_exactly_the_themes_that_have_palettes(self):
+        self.assertEqual(sorted(self.cli.THEMES), sorted(T.NAMES))
+
+    def test_cli_default_matches_palette_default(self):
+        self.assertEqual(self.cli.DEFAULT_THEME, T.DEFAULT)
+
+
 class ThemeNameTests(unittest.TestCase):
     def setUp(self):
         self._saved = os.environ.get('FAMILIAR_THEME')

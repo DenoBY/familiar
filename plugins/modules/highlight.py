@@ -62,9 +62,7 @@ _COMMENT_BY_EXT = {
 _TOK_COLOR = {'comment': 'gray', 'string': 'yellow', 'number': 'cyan'}
 _LEX_CACHE = {}
 
-# Палитра активной темы (FAMILIAR_THEME): каждой роли — тот цвет,
-# которым её красит IDE.
-_P = palette()
+_P = palette()   # активная тема — FAMILIAR_THEME
 C_COMMENT = _P['comment']
 C_DOC = _P['doc']
 C_STRING = _P['string']
@@ -121,11 +119,14 @@ _MISSING = object()          # None — валидный цвет («не кра
 _TOKEN_CACHE: dict = {}      # token -> (цвет, это ли имя): str(token) дороже, чем кажется
 _PYG_CACHE: dict = {}
 
-ADD_BG = 22        # тёмно-зелёный фон добавленных строк (256-цвет)
-DEL_BG = 52        # тёмно-красный фон удалённых строк
-ADD_WORD_BG = 28   # ярче — на изменившихся словах (word-diff)
-DEL_WORD_BG = 88
-SEL_RANGE_BG = 25  # фон выделения — синий, чтобы читался и поверх add/del
+ADD_BG = _P['add_bg']
+DEL_BG = _P['del_bg']
+ADD_WORD_BG = _P['add_word_bg']
+DEL_WORD_BG = _P['del_word_bg']
+ADD_FOCUS_BG = _P['add_focus_bg']
+DEL_FOCUS_BG = _P['del_focus_bg']
+CURSOR_BG = _P['cursor_bg']
+SEL_RANGE_BG = _P['sel_range_bg']
 
 # Ниже этой похожести строки считаем разными: подсвечивать в них
 # «изменившиеся слова» бессмысленно — подсветилась бы вся строка.

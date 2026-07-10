@@ -27,7 +27,8 @@ def _run(argv):
 class VersionTests(unittest.TestCase):
     def test_cli_version_matches_formula_tag(self):
         """Формулу при релизе бампят, а VERSION в CLI забывают —
-        тогда brew ставит 0.5.0, а `familiar --version` врёт.
+        тогда brew ставит одну версию, а `familiar --version` врёт
+        про другую.
         """
         formula = os.path.join(os.path.dirname(_TESTS), "Formula", "familiar.rb")
         with open(formula) as f:
@@ -63,9 +64,11 @@ class RenderTests(unittest.TestCase):
 
 class ThemeTests(unittest.TestCase):
     def test_default_theme_writes_nothing(self):
+        # ghostty — дефолт: его палитру уже тянет terminal.conf,
+        # а китам нечего сообщать через env
         conf = familiar.render_generated_conf(["review"], True)
         self.assertNotIn("FAMILIAR_THEME", conf)
-        self.assertNotIn("look/default.conf", conf)
+        self.assertNotIn("look/ghostty.conf", conf)
 
     def test_theme_sets_env_and_palette_include(self):
         conf = familiar.render_generated_conf(["review"], True, "darcula")
@@ -92,8 +95,6 @@ class ThemeTests(unittest.TestCase):
 
     def test_every_theme_has_a_palette_file(self):
         for theme in familiar.THEMES:
-            if theme == familiar.DEFAULT_THEME:
-                continue
             path = familiar._theme_include_line(theme)[len("include "):]
             self.assertTrue(os.path.exists(path), path)
 
