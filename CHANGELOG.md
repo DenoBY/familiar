@@ -5,6 +5,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.11.0] — 2026-07-10
+
+### Added
+
+- log: `p` — `git push` the current branch. It asks first, the way `-` does in review: the
+  footer spells out how many commits will travel and where (`push 3 commits to
+  origin/main?`), and only `y` confirms — a mistyped key publishes nothing. A branch with no
+  upstream is created on `origin` (`push -u`) and bound to it, the way an IDE does. The
+  `p push` hint shows only while something is unpushed; the network call runs in the
+  background, so the UI never freezes.
+
 ## [0.10.0] — 2026-07-10
 
 ### Changed

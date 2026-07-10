@@ -232,6 +232,58 @@ class LogGitTest(unittest.TestCase):
         finally:
             shutil.rmtree(remote, ignore_errors=True)
 
+    # --- push ---
+
+    def test_push_target_without_remote_is_none(self):
+        self.assertIsNone(G.push_target(self.repo))
+
+    def test_push_target_before_upstream_counts_whole_branch(self):
+        remote = tempfile.mkdtemp(prefix='cclog_remote_')
+        try:
+            subprocess.run(['git', 'init', '--bare', '-q', remote], check=True,
+                           capture_output=True, env=os.environ)
+            self._git('remote', 'add', 'origin', remote)
+            branch, up, n = G.push_target(self.repo)
+            self.assertEqual((branch, up), ('main', None))   # upstream ещё нет
+            self.assertEqual(n, len(G.load_commits(self.repo)))
+        finally:
+            shutil.rmtree(remote, ignore_errors=True)
+
+    def test_push_creates_branch_and_binds_upstream(self):
+        remote = tempfile.mkdtemp(prefix='cclog_remote_')
+        try:
+            subprocess.run(['git', 'init', '--bare', '-q', remote], check=True,
+                           capture_output=True, env=os.environ)
+            self._git('remote', 'add', 'origin', remote)
+            branch, up, _ = G.push_target(self.repo)
+            self.assertTrue(G.push(self.repo, branch, up is not None))
+
+            self.assertIsNone(G.push_target(self.repo))      # пушить больше нечего
+            # unpushed_shas смотрит на все локальные ветки, а уехала
+            # только текущая — проверяем именно её вершину
+            head = G.run_git(self.repo, 'rev-parse', 'HEAD').strip()
+            self.assertNotIn(head, G.unpushed_shas(self.repo))
+            self.assertEqual(G.run_git(self.repo, 'rev-parse', '--abbrev-ref',
+                                       '@{upstream}').strip(), 'origin/main')
+
+            self.write('n.txt', 'n\n')
+            self._git('add', '-A')
+            self._commit('after push')
+            self.assertEqual(G.push_target(self.repo), ('main', 'origin/main', 1))
+        finally:
+            shutil.rmtree(remote, ignore_errors=True)
+
+    def test_push_target_on_detached_head_is_none(self):
+        remote = tempfile.mkdtemp(prefix='cclog_remote_')
+        try:
+            subprocess.run(['git', 'init', '--bare', '-q', remote], check=True,
+                           capture_output=True, env=os.environ)
+            self._git('remote', 'add', 'origin', remote)
+            self._git('checkout', '-q', '--detach', 'HEAD')
+            self.assertIsNone(G.push_target(self.repo))
+        finally:
+            shutil.rmtree(remote, ignore_errors=True)
+
 
 if __name__ == '__main__':
     unittest.main()

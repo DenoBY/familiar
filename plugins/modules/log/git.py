@@ -126,6 +126,38 @@ def fetch(root: str) -> bool:
     return run_git(root, 'fetch', '--all', '--prune', timeout=60) is not None
 
 
+def push_target(root: str) -> 'tuple[str, str | None, int] | None':
+    """Что и куда отправит push: (ветка, upstream или None, сколько
+    коммитов уедет). None — пушить нечем или некуда.
+
+    Без upstream считаем от всех удалёнок: ветки на remote ещё нет,
+    поэтому уедет вся её история, которой там нет.
+    """
+    if not run_git(root, 'remote'):
+        return None
+    branch = run_git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+    if not branch:
+        return None                      # detached HEAD — пушить нечего
+    branch = branch.strip()
+    up = run_git(root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}')
+    up = up.strip() if up else None
+    rev = f'{up}..HEAD' if up else 'HEAD'
+    args = ['rev-list', '--count', rev] + ([] if up else ['--not', '--remotes'])
+    out = run_git(root, *args)
+    n = int(out.strip()) if out and out.strip().isdigit() else 0
+    return (branch, up, n) if n else None
+
+
+def push(root: str, branch: str, has_upstream: bool) -> bool:
+    """Отправить текущую ветку. Без upstream — `push -u origin`, чтобы
+    ветка появилась на удалёнке и привязалась (как это делает IDE).
+
+    Сеть, поэтому увеличенный таймаут. True при успехе.
+    """
+    args = ['push'] if has_upstream else ['push', '-u', 'origin', branch]
+    return run_git(root, *args, timeout=120) is not None
+
+
 def unpushed_shas(root: str) -> set[str]:
     """SHA локальных коммитов, которых нет ни в одной
     remote-ветке (не запушены).

@@ -36,11 +36,13 @@ from modules.log.git import (
     fetch,
     first_parent,
     load_commits,
+    push,
+    push_target,
     unpushed_shas,
 )
 from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay
-from modules.text import wrap_text
+from modules.text import plural, wrap_text
 from modules.vcs.git import git_root, last_error
 from modules.vcs.util import chord, compose, pad, short_path, to_latin, truncate
 from modules.vcs.view import DiffTreeView
@@ -85,6 +87,8 @@ class CommitLogHandler(DiffTreeView):
         self._detail_cache = {}          # sha -> commit_detail (ленивая подгрузка)
         self._detail_later = None        # таймер отложенной подгрузки
         self._fetching = False
+        self._pushing = False
+        self.pending_push = None         # (ветка, upstream|None, коммитов), ждёт «y»
         self.exhausted = False
         self.sel = 0                     # выбранный коммит
         self.offset = 0                  # скролл списка коммитов
@@ -200,6 +204,47 @@ class CommitLogHandler(DiffTreeView):
         self.flash = 'fetched' if ok else 'fetch failed'
         self.draw_screen()
 
+    def start_push(self):
+        """Спросить подтверждение: push публикует коммиты в удалёнку,
+        промах по клавише не должен этого делать.
+        """
+        if not self.root or self._pushing or self._fetching:
+            return
+        target = push_target(self.root)
+        if target is None:
+            self.flash = 'nothing to push'
+            self.draw_screen()
+            return
+        self.pending_push = target
+        self.draw_screen()
+
+    def cancel_push(self):
+        self.pending_push = None
+        self.flash = 'push cancelled'
+        self.draw_screen()
+
+    def confirm_push(self):
+        branch, up, _ = self.pending_push
+        self.pending_push = None
+        self._pushing = True
+        self.draw_screen()
+        # сеть — как и fetch, уводим в executor, иначе UI замёрзнет
+        fut = self.asyncio_loop.run_in_executor(None, push, self.root, branch, up is not None)
+        fut.add_done_callback(self._push_done)
+
+    def _push_done(self, fut):
+        self._pushing = False
+        ok = not fut.cancelled() and fut.exception() is None and fut.result()
+        self.flash = 'pushed' if ok else f'push failed: {last_error()}'
+        if ok:
+            self.reload_commits()   # ref-метки уехали, узлы графа больше не «свои»
+        self.draw_screen()
+
+    def _push_prompt(self):
+        branch, up, n = self.pending_push
+        dest = up or f'origin/{branch} (new branch)'
+        return f' push {plural(n, "commit")} to {dest}?   y — yes   any other key — no'
+
     def move(self, delta):
         if not self.commits:
             return
@@ -249,8 +294,12 @@ class CommitLogHandler(DiffTreeView):
             self._draw_diff_header()
             self._draw_pane_body()
         self._draw_input_line()
-        foot_fg = 'green' if self.flash else 'gray'
-        self.print(styled(truncate(self._footer(), self.screen_size.cols), fg=foot_fg), end='')
+        if self.pending_push:
+            foot_fg = 'red'
+        else:
+            foot_fg = 'green' if self.flash else 'gray'
+        self.print(styled(truncate(self._footer(), self.screen_size.cols), fg=foot_fg,
+                          bold=bool(self.pending_push)), end='')
         self.flash = ''
 
     def _draw_commits(self):
@@ -405,19 +454,24 @@ class CommitLogHandler(DiffTreeView):
         self.print(styled('─' * cols, fg='gray'))
 
     def _footer(self):
+        if self.pending_push:
+            return self._push_prompt()
         if self.input_mode:
             return ' Enter — keep   Esc — clear'
         if self.flash:
             return ' ' + self.flash
         if self._fetching:
             return ' fetching…'
+        if self._pushing:
+            return ' pushing…'
         if self.screen == 'commits':
             # в футере — действие по клавише, а не текущий режим
             # (он и так виден в шапке)
             mode = 'a current branch' if self.all_branches else 'a all branches'
             graph = 'g graph off' if self.show_graph else 'g graph on'
             info = 'i info off' if self.show_detail else 'i info on'
-            return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch · {mode}'
+            push_hint = ' · p push' if self.unpushed else ''
+            return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch{push_hint} · {mode}'
                     f' · {graph} · {info} · / filter · q quit')
         modes = self._mode_hints()
         if self.focus == 'diff':
@@ -475,6 +529,13 @@ class CommitLogHandler(DiffTreeView):
             return
         if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
+            return
+        if self.pending_push:
+            # печатаемое (в т.ч. сам «y») разбирает on_text; здесь
+            # гасим Enter/стрелки/Esc: публикация не должна
+            # подтверждаться ничем, кроме явного «y»
+            if not getattr(key_event, 'text', ''):
+                self.cancel_push()
             return
         k = key_event.key
         if self.input_key(k):
@@ -559,6 +620,12 @@ class CommitLogHandler(DiffTreeView):
                 self.back_to_commits()
 
     def on_text(self, text, in_bracketed_paste=False):
+        if self.pending_push:
+            if to_latin(text[:1]) in ('y', 'Y'):
+                self.confirm_push()
+            else:
+                self.cancel_push()
+            return
         if self.input_text(text):
             return
         for ch in text:
@@ -578,6 +645,8 @@ class CommitLogHandler(DiffTreeView):
                     self.draw_screen()
                 elif c in ('f', 'F'):
                     self.do_fetch()
+                elif c in ('p', 'P'):
+                    self.start_push()
                 continue
             if c == '/':
                 self.start_search()

@@ -65,6 +65,7 @@ overlay.
 | `Enter` `→` | open commit changes |
 | `⌘c` | copy hash of the selected commit |
 | `f` | `git fetch` — pull remotes and reread |
+| `p` | `git push` the current branch; asks `y` to confirm. A branch with no upstream is created on `origin` and bound to it. Shown only while something is unpushed |
 | `a` | current branch ↔ all branches (`--all`) |
 | `g` | branch graph on/off |
 | `i` | details panel on/off |

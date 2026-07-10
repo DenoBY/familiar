@@ -98,6 +98,92 @@ class LogHandlerTest(unittest.TestCase):
         self.assertIn('a@e', text)                         # email автора
         self.assertIn('branches', text)
 
+    # --- push ---
+
+    def _push_ready(self):
+        """Репозиторий с удалёнкой и незапушенным коммитом + loop,
+        исполняющий executor синхронно.
+        """
+        remote = tempfile.mkdtemp(prefix='cclog_pushremote_')
+        self.addCleanup(shutil.rmtree, remote, True)
+        subprocess.run(['git', 'init', '--bare', '-q', remote], check=True,
+                       capture_output=True, env=os.environ)
+        self._git('remote', 'add', 'origin', remote)
+
+        class Fut:
+            def __init__(self, v):
+                self.v = v
+
+            def cancelled(self):
+                return False
+
+            def exception(self):
+                return None
+
+            def result(self):
+                return self.v
+
+            def add_done_callback(self, cb):
+                cb(self)
+
+        class Loop(kittymock.ImmediateLoop):
+            def run_in_executor(self, _pool, fn, *a):
+                return Fut(fn(*a))
+
+        self.h.asyncio_loop = Loop()
+        self.h.reload_commits()
+        return remote
+
+    def test_push_asks_before_publishing_anything(self):
+        remote = self._push_ready()
+        self.h.on_text('p')
+        self.assertIsNotNone(self.h.pending_push)
+        branch, up, n = self.h.pending_push
+        self.assertEqual((branch, up), ('main', None))
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('push', draw_text(self.h))
+        self.assertIn('y — yes', draw_text(self.h))
+        heads = subprocess.run(['git', '--git-dir', remote, 'branch'],
+                               capture_output=True, text=True, env=os.environ).stdout
+        self.assertEqual(heads.strip(), '')      # пока ничего не улетело
+
+    def test_any_key_but_y_cancels_push(self):
+        remote = self._push_ready()
+        self.h.on_text('p')
+        self.h.on_text('n')
+        self.assertIsNone(self.h.pending_push)
+        heads = subprocess.run(['git', '--git-dir', remote, 'branch'],
+                               capture_output=True, text=True, env=os.environ).stdout
+        self.assertEqual(heads.strip(), '')
+
+    def test_y_pushes_and_clears_unpushed(self):
+        remote = self._push_ready()
+        self.assertTrue(self.h.unpushed)
+        self.h.on_text('p')
+        self.h.on_text('y')
+        self.assertIsNone(self.h.pending_push)
+        self.assertFalse(self.h._pushing)
+        heads = subprocess.run(['git', '--git-dir', remote, 'branch'],
+                               capture_output=True, text=True, env=os.environ).stdout
+        self.assertIn('main', heads)
+        self.assertEqual(self.h.unpushed, set())
+
+    def test_push_hint_only_while_something_is_unpushed(self):
+        self.h.unpushed = {'deadbeef'}
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('p push', draw_text(self.h))
+
+        self.h.unpushed = set()
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertNotIn('p push', draw_text(self.h))
+
+    def test_nothing_to_push_without_remote(self):
+        self.h.on_text('p')
+        self.assertIsNone(self.h.pending_push)   # удалёнки нет — публиковать некуда
+
     def test_header_marks_that_more_commits_may_follow(self):
         # счётчик — сколько загружено, а не сколько в ветке; без «+»
         # он читается как «в истории всего столько коммитов»
