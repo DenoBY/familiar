@@ -1,10 +1,13 @@
 # familiar
 
-Keyboard-driven overlays for the [kitty](https://sw.kovidgoyal.net/kitty/)
-terminal, built around a Claude Code workflow — a session manager for your AI
-agents, a git working-tree reviewer, and a git-log/diff browser. Pure Python
-standard library plus Pygments for syntax highlighting — it ships alongside,
-in `plugins/vendor`, so there is nothing to install. macOS only.
+Claude Code writes the code in your terminal — familiar gives that terminal the
+missing IDE half. Three full-screen [kitty](https://sw.kovidgoyal.net/kitty/)
+overlays, one hotkey each: review everything the agent just changed in an
+IDE-grade diff and send line comments straight back into the chat; see all your
+sessions live — which agent is busy, which is waiting for your permission — and
+resume, fork or spin up a worktree in a keystroke; walk the git history the same
+way. Pure Python standard library plus vendored Pygments for syntax
+highlighting — nothing to install. macOS only.
 
 > A *familiar* is a helper spirit in a cat's shape — fitting for a set of kitty
 > kittens that tend your coding agents.
@@ -16,11 +19,16 @@ Each kitten is a full-screen overlay opened by a hotkey:
 | Kitten | Hotkey | What it does |
 |---|---|---|
 | [session](https://github.com/DenoBY/familiar/wiki/Session) | `Cmd+Shift+S` | Browse and manage Claude Code sessions — resume, fork, continue, new session, git worktree, transcript preview with tool calls and their output, rename, and live activity (which sessions are running right now). |
-| [review](https://github.com/DenoBY/familiar/wiki/Review) | `Cmd+Shift+R` | Two-pane reviewer for uncommitted git changes: file tree + syntax-highlighted unified diff, word-diff, search, jump-by-change, staging files from the tree, and line comments collected into markdown to paste back to Claude. |
-| [log](https://github.com/DenoBY/familiar/wiki/Log) | `Cmd+Shift+L` | Git history browser: commit list with a branch graph, per-commit two-pane diff (same engine as `review`), `git fetch`, and copying hashes / `@path` / `@path#L42` to feed Claude Code. |
+| [review](https://github.com/DenoBY/familiar/wiki/Review) | `Cmd+Shift+R` | Two-pane reviewer for uncommitted git changes: file tree + syntax-highlighted unified diff, word-diff, go to definition (⌥-click), an IDE-style final-code view, search, jump-by-change, staging files from the tree, and line comments collected into markdown to paste back to Claude. |
+| [log](https://github.com/DenoBY/familiar/wiki/Log) | `Cmd+Shift+L` | Git history browser: commit list with a branch graph, per-commit two-pane diff (same engine as `review`), `git fetch` / `git push`, and copying hashes / `@path` / `@path#L42` to feed Claude Code. |
+
+![familiar — a quick tour of the overlays](https://raw.githubusercontent.com/wiki/DenoBY/familiar/img/preview.gif)
 
 Full keymaps live in the per-kitten pages of the
 [wiki](https://github.com/DenoBY/familiar/wiki).
+
+No Claude Code? `review` and `log` don't need it — they work as plain git
+overlays for any terminal workflow.
 
 ## Requirements
 
@@ -33,10 +41,6 @@ Full keymaps live in the per-kitten pages of the
   (honors `CLAUDE_CONFIG_DIR`).
 - **No external Python dependencies** — the kittens run on kitty's bundled
   Python using only the standard library.
-
-## Demo
-
-![familiar — a quick tour of the overlays](https://raw.githubusercontent.com/wiki/DenoBY/familiar/img/preview.gif)
 
 ## Install
 
@@ -69,8 +73,8 @@ git clone https://github.com/DenoBY/familiar && cd familiar
 ```
 
 Same command either way. Then reload the config — `Cmd+Ctrl+,` — or restart
-kitty. (`Ctrl+Shift+F5` is kitty's *Linux* reload default; on macOS it's
-`Cmd+Ctrl+,`.)
+kitty, and open with `Cmd+Shift+S` / `Cmd+Shift+R` / `Cmd+Shift+L`.
+(`Ctrl+Shift+F5` is kitty's *Linux* reload default; on macOS it's `Cmd+Ctrl+,`.)
 
 **Install modes** — pick how much to wire in:
 
@@ -119,8 +123,6 @@ byte-for-byte; the `.bak` stays afterwards, so you can restore later too.
 Prefer to do it by hand? Delete the block between the
 `# >>> familiar >>>` / `# <<< familiar <<<` markers in `kitty.conf`, remove
 `familiar.conf`, or just copy `kitty.conf.familiar.bak` back over `kitty.conf`.
-
-Open with `Cmd+Shift+S` / `Cmd+Shift+R` / `Cmd+Shift+L`.
 
 ## Config
 

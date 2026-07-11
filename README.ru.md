@@ -1,10 +1,13 @@
 # familiar
 
-Клавиатурные оверлеи для терминала [kitty](https://sw.kovidgoyal.net/kitty/),
-выстроенные вокруг работы с Claude Code — менеджер сессий для твоих ИИ-агентов,
-ревьювер незакоммиченных правок git и просмотрщик истории/диффов git. Чистый
-Python (stdlib) плюс Pygments для подсветки синтаксиса — он лежит рядом,
-в `plugins/vendor`, ставить нечего. Только macOS.
+Claude Code пишет код у тебя в терминале — familiar добавляет этому терминалу
+недостающую половину IDE. Три полноэкранных оверлея для
+[kitty](https://sw.kovidgoyal.net/kitty/), каждый на своём хоткее: ревью всего,
+что агент только что поменял, в диффе уровня IDE — с построчными замечаниями,
+которые уходят обратно в чат; живой список сессий — какой агент работает, какой
+ждёт твоего подтверждения — с resume, fork и worktree в одно нажатие; и такой же
+просмотр истории git. Чистый Python (stdlib) плюс вендорённый Pygments для
+подсветки синтаксиса — ставить нечего. Только macOS.
 
 > *Familiar* — дух-помощник в облике кошки; в самый раз для набора kitty-китов,
 > которые присматривают за твоими кодинг-агентами.
@@ -16,11 +19,16 @@ Python (stdlib) плюс Pygments для подсветки синтаксиса
 | Кит | Хоткей | Что делает |
 |---|---|---|
 | [session](https://github.com/DenoBY/familiar/wiki/Session-(RU)) | `Cmd+Shift+S` | Просмотр и управление сессиями Claude Code — resume, fork, continue, новая сессия, git worktree, предпросмотр диалога транскриптом (с вызовами инструментов и их выводом), переименование и реальная активность (какие сессии запущены прямо сейчас). |
-| [review](https://github.com/DenoBY/familiar/wiki/Review-(RU)) | `Cmd+Shift+R` | Двухпанельный ревьювер незакоммиченных правок git: дерево файлов + unified diff с подсветкой синтаксиса, word-diff, поиск, прыжки по изменениям, git add из дерева и построчные замечания, собираемые в markdown для вставки обратно в Claude. |
-| [log](https://github.com/DenoBY/familiar/wiki/Log-(RU)) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — двухпанельный diff (тот же движок, что у `review`), `git fetch` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
+| [review](https://github.com/DenoBY/familiar/wiki/Review-(RU)) | `Cmd+Shift+R` | Двухпанельный ревьювер незакоммиченных правок git: дерево файлов + unified diff с подсветкой синтаксиса, word-diff, go to definition (⌥-клик), IDE-вид «финальный код», поиск, прыжки по изменениям, git add из дерева и построчные замечания, собираемые в markdown для вставки обратно в Claude. |
+| [log](https://github.com/DenoBY/familiar/wiki/Log-(RU)) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — двухпанельный diff (тот же движок, что у `review`), `git fetch` / `git push` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
+
+![familiar — краткий обзор оверлеев](https://raw.githubusercontent.com/wiki/DenoBY/familiar/img/preview.gif)
 
 Полные раскладки клавиш — на страницах китов в
 [wiki](https://github.com/DenoBY/familiar/wiki/Home-(RU)).
+
+Не пользуешься Claude Code? `review` и `log` без него работают как обычные
+git-оверлеи для любой работы в терминале.
 
 ## Требования
 
@@ -34,10 +42,6 @@ Python (stdlib) плюс Pygments для подсветки синтаксиса
   (учитывает `CLAUDE_CONFIG_DIR`).
 - **Внешних Python-зависимостей нет** — киты исполняются встроенным в kitty
   Python и используют только стандартную библиотеку.
-
-## Демо
-
-![familiar — краткий обзор оверлеев](https://raw.githubusercontent.com/wiki/DenoBY/familiar/img/preview.gif)
 
 ## Установка
 
@@ -69,8 +73,8 @@ git clone https://github.com/DenoBY/familiar && cd familiar
 ```
 
 Команда одна и та же. Затем перезагрузи конфиг — `Cmd+Ctrl+,` — или перезапусти
-kitty. (`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки; на macOS это
-`Cmd+Ctrl+,`.)
+kitty и открывай: `Cmd+Shift+S` / `Cmd+Shift+R` / `Cmd+Shift+L`.
+(`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки; на macOS это `Cmd+Ctrl+,`.)
 
 **Режимы установки** — сколько подключать:
 
@@ -119,8 +123,6 @@ familiar disable --restore  # ...и вернуть kitty.conf из копии
 Хочешь вручную? Удали блок между маркерами `# >>> familiar >>>` /
 `# <<< familiar <<<` в `kitty.conf`, убери `familiar.conf` или просто скопируй
 `kitty.conf.familiar.bak` обратно поверх `kitty.conf`.
-
-Открыть: `Cmd+Shift+S` / `Cmd+Shift+R` / `Cmd+Shift+L`.
 
 ## Конфиг
 
