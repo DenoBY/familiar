@@ -15,12 +15,12 @@ Python (stdlib) плюс Pygments для подсветки синтаксиса
 
 | Кит | Хоткей | Что делает |
 |---|---|---|
-| [session](https://github.com/DenoBY/familiar/wiki/Session-ru) | `Cmd+Shift+S` | Просмотр и управление сессиями Claude Code — resume, fork, continue, новая сессия, git worktree, предпросмотр диалога транскриптом (с вызовами инструментов и их выводом), переименование и реальная активность (какие сессии запущены прямо сейчас). |
-| [review](https://github.com/DenoBY/familiar/wiki/Review-ru) | `Cmd+Shift+R` | Двухпанельный ревьювер незакоммиченных правок git: дерево файлов + unified diff с подсветкой синтаксиса, word-diff, поиск, прыжки по изменениям, git add из дерева и построчные замечания, собираемые в markdown для вставки обратно в Claude. |
-| [log](https://github.com/DenoBY/familiar/wiki/Log-ru) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — двухпанельный diff (тот же движок, что у `review`), `git fetch` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
+| [session](https://github.com/DenoBY/familiar/wiki/Session-(RU)) | `Cmd+Shift+S` | Просмотр и управление сессиями Claude Code — resume, fork, continue, новая сессия, git worktree, предпросмотр диалога транскриптом (с вызовами инструментов и их выводом), переименование и реальная активность (какие сессии запущены прямо сейчас). |
+| [review](https://github.com/DenoBY/familiar/wiki/Review-(RU)) | `Cmd+Shift+R` | Двухпанельный ревьювер незакоммиченных правок git: дерево файлов + unified diff с подсветкой синтаксиса, word-diff, поиск, прыжки по изменениям, git add из дерева и построчные замечания, собираемые в markdown для вставки обратно в Claude. |
+| [log](https://github.com/DenoBY/familiar/wiki/Log-(RU)) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — двухпанельный diff (тот же движок, что у `review`), `git fetch` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
 
 Полные раскладки клавиш — на страницах китов в
-[wiki](https://github.com/DenoBY/familiar/wiki/Home-ru).
+[wiki](https://github.com/DenoBY/familiar/wiki/Home-(RU)).
 
 ## Требования
 
@@ -99,7 +99,7 @@ kitty. (`Ctrl+Shift+F5` — это *Linux*-дефолт перезагрузки
 для неё нужен **перезапуск kitty**. Что включено сейчас, покажет `familiar status`.
 
 Как собрать свою тему — на
-[wiki-странице Темы](https://github.com/DenoBY/familiar/wiki/Themes-ru#своя-тема).
+[wiki-странице Темы](https://github.com/DenoBY/familiar/wiki/Themes-(RU)#своя-тема).
 
 ### Удаление / откат
 

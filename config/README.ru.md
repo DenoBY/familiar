@@ -5,7 +5,7 @@
 плюс фиксы, чтобы `Cmd`/`Ctrl`-шорткаты работали на русской раскладке.
 
 [English](README.md) · [Русский](README.ru.md) · каноническая копия:
-[Конфиг терминала в wiki](https://github.com/DenoBY/familiar/wiki/Terminal-Config-ru)
+[Конфиг терминала в wiki](https://github.com/DenoBY/familiar/wiki/Terminal-Config-(RU))
 
 > Это персональные macOS-биндинги на `Cmd` с кириллическими дублями. **Форкни,
 > прочитай, адаптируй** — не тащи всё вслепую. Что менять под свою машину и
