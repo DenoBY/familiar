@@ -4,7 +4,8 @@ My real, working [kitty](https://sw.kovidgoyal.net/kitty/) configuration — mac
 A Ghostty-flavoured look, Ghostty-style splits and rounded powerline tabs, and
 fixes for driving `Cmd`/`Ctrl` shortcuts on a Russian keyboard layout.
 
-[English](README.md) · [Русский](README.ru.md)
+[English](README.md) · [Русский](README.ru.md) · canonical copy:
+[Terminal config in the wiki](https://github.com/DenoBY/familiar/wiki/Terminal-Config)
 
 > These are personal `Cmd`-centric macOS bindings with Cyrillic key duplicates.
 > **Fork it, read it, adapt it** — don't adopt the whole thing blindly. What to

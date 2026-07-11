@@ -11,7 +11,7 @@ class Familiar < Formula
 
   def install
     # Раскладку репозитория сохраняем целиком в libexec.
-    libexec.install "bin", "plugins", "config", "docs"
+    libexec.install "bin", "plugins", "config"
     # Обёртка задаёт FAMILIAR_ROOT стабильным opt-путём: китены прописываются в
     # kitty.conf через …/opt/familiar/…, а не версионный Cellar, поэтому переживают
     # `brew upgrade`. Python зовём явно — шебанг скрипта не важен.

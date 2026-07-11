@@ -5,6 +5,22 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Documentation moved to the [GitHub wiki](https://github.com/DenoBY/familiar/wiki).**
+  The `docs/` folder (per-kitten pages and screenshots) is gone from the repo and the
+  Homebrew payload; the README links to the wiki instead. The wiki is bilingual
+  (English + Russian pages).
+
+### Added
+
+- **Demo stand generator** (`tools/demo_stand.py`): builds a demo git repo with
+  photogenic history, branches and uncommitted changes plus a fake Claude Code storage
+  with live sessions — a reproducible scene for retaking the wiki screenshots after UI
+  changes.
+
 ## [0.13.0] — 2026-07-11
 
 ### Added
