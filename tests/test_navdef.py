@@ -87,6 +87,10 @@ class TestDefPatterns(unittest.TestCase):
         self.assertTrue(_matches_any(pats, 'fn thing() void {'))
         self.assertTrue(_matches_any(pats, 'struct thing {'))
 
+    def test_php_enum(self):
+        pats = N.def_patterns('.php', 'Status')
+        self.assertTrue(_matches_any(pats, 'enum Status: string'))
+
 
 class TestRankCandidates(unittest.TestCase):
     def test_def_before_assign(self):
@@ -155,6 +159,24 @@ class TestSymbolAt(unittest.TestCase):
 
     def test_none_on_space(self):
         self.assertIsNone(N.symbol_at('a  b', 2))
+
+    def test_php_arrow(self):
+        self.assertEqual(N.symbol_at('$this->handleOrder($id);', 8),
+                         ('handleOrder', True, True, '$this'))
+
+    def test_php_nullsafe_arrow(self):
+        self.assertEqual(N.symbol_at('$o?->save()', 5),
+                         ('save', True, True, '$o'))
+
+    def test_php_double_colon(self):
+        self.assertEqual(N.symbol_at('Order::create($d)', 8),
+                         ('create', True, True, 'Order'))
+
+    def test_php_static_is_self_ref(self):
+        self.assertEqual(N.symbol_at('static::boot()', 9),
+                         ('boot', True, True, 'static'))
+        self.assertIn('static', N._SELF_REFS)
+        self.assertNotIn('parent', N._SELF_REFS)
 
 
 class TestClassifyRankContext(unittest.TestCase):

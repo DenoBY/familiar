@@ -6,8 +6,10 @@ Source-agnostic слой без TUI. Два уровня точности:
   is_call, qualifier)`; `obj.name` — метод, `name(` — вызов; учитывает
   `rank_candidates`;
 - **резолв импортов** (точный файл): плагин-резолвер на язык (Python,
-  JS/TS, PHP, Go) по импортам файла находит модуль → файл и ищет
-  объявление там. Не вышло — падаем на repo-wide `git grep`.
+  JS/TS, PHP, Go) по импортам файла находит модуль → файл (символа или
+  его квалификатора — `Order::create`) и ищет объявление там. Не вышло —
+  `self`-вызовы ищем в текущем файле, затем repo-wide `git grep`
+  (сперва файлы языка, при промахе generic по всем исходникам).
 
 Чистые функции отделены от subprocess (`run_git`), тестируются без git.
 Границы имени в паттернах — классами `[^A-Za-z0-9_]`, а не `\\b`: движок
@@ -78,33 +80,43 @@ def extract_symbol(plain: str, col: int) -> 'str | None':
     return m.group() if m else None
 
 
+def _accessor_len(plain: str, s: int) -> int:
+    """Длина аксессора (`?->`, `->`, `::`, `.`) перед позицией `s`;
+    0 — аксессора нет.
+    """
+    for acc in ('?->', '->', '::', '.'):
+        if plain.endswith(acc, 0, s):
+            return len(acc)
+    return 0
+
+
 def symbol_at(plain: str, col: int) -> 'tuple[str, bool, bool, str | None] | None':
     """`(name, is_attr, is_call, qualifier)` под колонкой.
 
-    is_attr — перед именем стоит `.` (`obj.name`); qualifier — объект
-    слева от точки; is_call — за именем следует `(`.
+    is_attr — перед именем аксессор (`obj.name`, `$o->name`, `C::name`);
+    qualifier — объект слева от аксессора; is_call — за именем `(`.
     """
     m = _match_at(plain, col)
     if not m:
         return None
     s, e = m.span()
-    is_attr = s > 0 and plain[s - 1] == '.'
+    alen = _accessor_len(plain, s)
+    is_attr = alen > 0
     qualifier = None
     if is_attr:
-        k = s - 1                       # позиция точки
-        while k - 1 >= 0 and (plain[k - 1].isalnum() or plain[k - 1] == '_'):
-            k -= 1
-        qualifier = plain[k:s - 1] or None
+        k = s - alen                    # конец квалификатора
+        j = k
+        while j - 1 >= 0 and (plain[j - 1].isalnum() or plain[j - 1] in '_$'):
+            j -= 1
+        qualifier = plain[j:k] or None
     is_call = bool(re.match(r'[ \t]*\(', plain[e:]))
     return (m.group(), is_attr, is_call, qualifier)
 
 
 # ───────────────────── паттерны объявления ─────────────────────
 
-def def_patterns(ext: str, name: str) -> list[str]:
-    """ERE-паттерны объявления `name` по расширению. Всегда добавляем
-    generic-fallback: определение в смежном языке не должно теряться.
-    """
+def _lang_patterns(ext: str, name: str) -> list[str]:
+    """ERE-паттерны объявления `name` для языка по расширению."""
     n = re.escape(name)
     ws = r'[ \t]+'
     lang = {
@@ -113,7 +125,7 @@ def def_patterns(ext: str, name: str) -> list[str]:
             rf'^[ \t]*{n}[ \t]*[:=]',                 # присваивание/аннотация
         ],
         '.php': [
-            rf'{_BB}(function|class|trait|interface|const){ws}{n}{_BA}',
+            rf'{_BB}(function|class|trait|interface|const|enum){ws}{n}{_BA}',
         ],
         '.go': [
             rf'{_BB}func(\s+\([^)]*\))?{ws}{n}{_BA}',
@@ -130,13 +142,42 @@ def def_patterns(ext: str, name: str) -> list[str]:
     ]
     for e in _JS_EXTS:
         lang[e] = js
-    generic = [
-        rf'{_BB}(def|class|func|fn|function|type|struct|interface|trait){ws}{n}{_BA}',
+    return lang.get(ext) or []
+
+
+def _generic_patterns(name: str) -> list[str]:
+    n = re.escape(name)
+    return [
+        rf'{_BB}(def|class|func|fn|function|type|struct|interface|trait)[ \t]+{n}{_BA}',
     ]
-    pats = lang.get(ext) or []
-    # generic дублирует язык-специфичный — дубли grep'у безвредны,
-    # rank_candidates дедупит по (path, line)
-    return pats + generic
+
+
+def def_patterns(ext: str, name: str) -> list[str]:
+    """Языковые + generic-паттерны — для grep по одному файлу, где цена
+    дублей нулевая (rank_candidates дедупит по (path, line)).
+    """
+    return _lang_patterns(ext, name) + _generic_patterns(name)
+
+
+# pathspec файлов языка: сужение отсекает тяжёлое нерелевантное
+# (логи, минифицированные бандлы) — на больших репо это ×50 к скорости
+_JS_PATHSPEC = ['*' + e for e in _JS_EXTS] + ['*.vue', ':(exclude)*.min.js']
+_LANG_PATHSPEC: 'dict[str, list[str]]' = {
+    '.py': ['*.py', '*.pyi'],
+    '.php': ['*.php'],                  # покрывает и *.blade.php
+    '.go': ['*.go'],
+    '.rb': ['*.rb'],
+    **{e: _JS_PATHSPEC for e in _JS_EXTS},
+}
+
+# generic-проход тоже не гоняем по всему репо: его ключевые слова
+# (def/func/fn/...) встречаются только в исходниках
+_CODE_PATHSPEC = _JS_PATHSPEC + [
+    '*.py', '*.pyi', '*.php', '*.go', '*.rb',
+    '*.rs', '*.c', '*.h', '*.cc', '*.cpp', '*.hpp', '*.cs', '*.java',
+    '*.kt', '*.swift', '*.scala', '*.lua', '*.pl', '*.ex', '*.exs',
+    '*.erl', '*.hs', '*.ml', '*.zig', '*.nim', '*.dart', '*.sh',
+]
 
 
 _DECL = r'(def|class|func|fn|function|type|struct|interface|trait|module)'
@@ -198,20 +239,34 @@ def _parse_grep(out: str) -> 'list[tuple[str, int, str]]':
 
 
 def run_git_grep(root: str, patterns: list[str],
-                 pathspec: 'str | None' = None) -> 'list[tuple[str, int, str]]':
+                 pathspec: 'str | list[str] | None' = None) -> 'list[tuple[str, int, str]]':
     """git grep по OR-набору паттернов; пусто при отсутствии совпадений.
 
     `--untracked` — чтобы находить определения в новых (ещё не
     закоммиченных) файлах, частый кейс при ревью. `pathspec` сужает
-    поиск до файла/каталога (резолв импортов).
+    поиск до файла/каталога (резолв импортов) или файлов языка.
     """
     args = ['grep', '-n', '-I', '-E', '--untracked']
     for p in patterns:
         args += ['-e', p]
     if pathspec:
-        args += ['--', pathspec]
+        specs = [pathspec] if isinstance(pathspec, str) else pathspec
+        args += ['--', *specs]
     out = run_git(root, *args)
     return _parse_grep(out) if out else []
+
+
+def _search_repo(root: str, ext: str, name: str) -> 'list[tuple[str, int, str]]':
+    """Repo-wide поиск объявления в два прохода: языковые паттерны по
+    файлам языка, при промахе — generic-паттерн по всем исходникам
+    (определение в смежном языке не должно теряться).
+    """
+    pats, spec = _lang_patterns(ext, name), _LANG_PATHSPEC.get(ext)
+    if pats and spec:
+        raw = run_git_grep(root, pats, pathspec=spec)
+        if raw:
+            return raw
+    return run_git_grep(root, _generic_patterns(name), pathspec=_CODE_PATHSPEC)
 
 
 def _list_files(root: str) -> list[str]:
@@ -441,14 +496,25 @@ def _resolve_import(root: str, ext: str, cur_rel: 'str | None', source: str,
                     symbol: str, qualifier: 'str | None') -> 'ImportHit | None':
     if cur_rel is None or not source:
         return None
-    if ext == '.py':
-        return _py_import(root, cur_rel, source, symbol)
-    if ext in _JS_EXTS:
-        return _js_import(root, cur_rel, source, symbol)
-    if ext == '.php':
-        return _php_import(root, cur_rel, source, symbol)
     if ext == '.go':
         return _go_import(root, source, symbol, qualifier)
+    if ext == '.py':
+        resolver = _py_import
+    elif ext in _JS_EXTS:
+        resolver = _js_import
+    elif ext == '.php':
+        resolver = _php_import
+    else:
+        return None
+    hit = resolver(root, cur_rel, source, symbol)
+    if hit is not None:
+        return hit
+    # символ не импортирован, но импортирован его квалификатор
+    # (`Order::create`, `mod.func`) — символ ищем в файле квалификатора
+    if qualifier and qualifier not in _SELF_REFS:
+        qhit = resolver(root, cur_rel, source, qualifier)
+        if qhit and qhit.path:
+            return ImportHit(qhit.path, symbol)
     return None
 
 
@@ -466,7 +532,15 @@ def resolve_definition(root: str, cur_rel: 'str | None', ext: str, symbol: str, 
         if ranked:
             return ranked
         return [Target(hit.path, 1, 'def', hit.path)]
-    raw = run_git_grep(root, def_patterns(ext, symbol))
+    if qualifier in _SELF_REFS and cur_rel:
+        # `self.x`/`$this->x`: объявление почти всегда в текущем файле —
+        # grep одного файла вместо repo-wide; промах (унаследованный
+        # метод) — общий путь
+        raw = run_git_grep(root, def_patterns(ext, symbol), pathspec=cur_rel)
+        ranked = rank_candidates(raw, cur_rel, symbol, is_attr=is_attr, is_call=is_call)
+        if ranked:
+            return ranked
+    raw = _search_repo(root, ext, symbol)
     ranked = rank_candidates(raw, cur_rel, symbol, is_attr=is_attr, is_call=is_call)
     return _prefer_self(ranked, cur_rel, qualifier)
 
@@ -474,7 +548,9 @@ def resolve_definition(root: str, cur_rel: 'str | None', ext: str, symbol: str, 
 # `self`/`this` привязаны к текущему классу: если объявление есть в этом
 # же файле — это оно, чужие одноимённые методы не предлагаем (пикер не
 # нужен). Нет в файле (метод унаследован) — оставляем всех кандидатов.
-_SELF_REFS = frozenset({'self', 'this', 'cls', '$this'})
+# `static` — PHP late static binding, тоже текущий класс; `parent` —
+# нет: его метод по определению в другом файле.
+_SELF_REFS = frozenset({'self', 'this', 'cls', '$this', 'static'})
 
 
 def _prefer_self(ranked: list[Target], cur_rel: 'str | None',

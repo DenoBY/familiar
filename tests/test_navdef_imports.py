@@ -102,6 +102,34 @@ class ImportResolveTest(unittest.TestCase):
         out = self.resolve('src/main.php', '.php', 'User', is_call=True)
         self.assertEqual(out[0].path, 'src/Models/User.php')
 
+    def test_php_qualifier_static_call(self):
+        # Order::create — импортирован квалификатор, не сам символ
+        self.w('composer.json', '{"autoload":{"psr-4":{"App\\\\":"src/"}}}')
+        self.w('src/Models/Order.php',
+               '<?php\nclass Order {\n    public static function create($d) {}\n}\n')
+        self.w('src/decoy.php', '<?php\nfunction create($d) {}\n')   # обманка
+        self.w('src/main.php', '<?php\nuse App\\Models\\Order;\nOrder::create($d);\n')
+        out = self.resolve('src/main.php', '.php', 'create',
+                           is_attr=True, is_call=True, qualifier='Order')
+        self.assertEqual(out[0].path, 'src/Models/Order.php')
+        self.assertEqual(out[0].line, 3)
+
+    def test_python_qualifier_module_attr(self):
+        self.w('pkg/util.py', 'def helper():\n    return 1\n')
+        self.w('decoy.py', 'def helper():\n    return 2\n')          # обманка
+        self.w('main.py', 'import pkg.util as u\nu.helper()\n')
+        out = self.resolve('main.py', '.py', 'helper',
+                           is_attr=True, is_call=True, qualifier='u')
+        self.assertEqual([t.path for t in out], ['pkg/util.py'])
+
+    def test_js_qualifier_object_method(self):
+        self.w('src/api.ts', 'export const Api = {\n  get(url) {}\n}\n')
+        self.w('src/main.ts', "import { Api } from './api'\nApi.get(x)\n")
+        out = self.resolve('src/main.ts', '.ts', 'get',
+                           is_attr=True, is_call=True, qualifier='Api')
+        self.assertEqual(out[0].path, 'src/api.ts')
+        self.assertEqual(out[0].line, 2)
+
     # --- Go ---
 
     def test_go_package_symbol(self):
@@ -121,6 +149,40 @@ class ImportResolveTest(unittest.TestCase):
         self.w('main.ts', "import { loner } from 'external-pkg'\nloner()\n")
         out = self.resolve('main.ts', '.ts', 'loner', is_call=True)
         self.assertEqual(out[0].path, 'a.ts')
+
+    def test_self_greps_current_file_only(self):
+        self.w('a.php', '<?php\nclass A {\n    public function m() {}\n}\n')
+        self.w('b.php', '<?php\nclass B {\n    public function m() {}\n}\n')
+        calls = []
+        orig = N.run_git_grep
+
+        def spy(root, patterns, pathspec=None):
+            calls.append(pathspec)
+            return orig(root, patterns, pathspec=pathspec)
+
+        N.run_git_grep = spy
+        try:
+            out = self.resolve('a.php', '.php', 'm',
+                               is_attr=True, qualifier='$this')
+        finally:
+            N.run_git_grep = orig
+        self.assertEqual([t.path for t in out], ['a.php'])
+        self.assertEqual(calls, ['a.php'])
+
+    def test_lang_pass_shadows_other_language(self):
+        # хит в файлах языка — generic-проход по смежным не выполняется
+        self.w('a.py', 'def helper():\n    pass\n')
+        self.w('b.go', 'func helper() {}\n')
+        self.w('main.py', 'helper()\n')
+        out = self.resolve('main.py', '.py', 'helper', is_call=True)
+        self.assertEqual([t.path for t in out], ['a.py'])
+
+    def test_cross_language_fallback(self):
+        # в файлах языка пусто → generic находит смежный язык
+        self.w('b.go', 'func helper() {}\n')
+        self.w('main.py', 'helper()\n')
+        out = self.resolve('main.py', '.py', 'helper', is_call=True)
+        self.assertEqual(out[0].path, 'b.go')
 
 
 if __name__ == '__main__':

@@ -14,8 +14,21 @@ versioning follows [SemVer](https://semver.org/).
   Homebrew payload; the README links to the wiki instead. The wiki is bilingual
   (English + Russian pages).
 
+### Fixed
+
+- **Go to definition is fast on large repos.** The definition search now greps only
+  files of the click's language (falling back to a repo-wide pass over source files),
+  so heavy untracked logs and minified bundles no longer stall the viewer — on a real
+  Laravel repo a jump dropped from ~3 s of frozen UI to under 0.1 s.
+
 ### Added
 
+- **Go to definition understands PHP and Ruby syntax.** `$this->method()`,
+  `Order::create()`, `?->`, `static::` and Ruby `Foo::Bar` now resolve the receiver:
+  `$this`/`static` methods are looked up in the current file first, and a call through
+  an imported class (`use App\Models\Order; Order::create()`) jumps straight into that
+  class's file. The same receiver resolution now works for Python (`mod.func`) and JS
+  (`Api.get`) imports too, and PHP 8.1 `enum` declarations are recognized.
 - **Demo stand generator** (`tools/demo_stand.py`): builds a demo git repo with
   photogenic history, branches and uncommitted changes plus a fake Claude Code storage
   with live sessions — a reproducible scene for retaking the wiki screenshots after UI
