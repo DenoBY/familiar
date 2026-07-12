@@ -7,7 +7,7 @@
 
 from kittens.tui.operations import styled
 
-from ..keylayout import chord, to_latin  # noqa: F401  (ре-экспорт для review/log)
+from ..keylayout import chord, ctrl_letter, to_latin  # noqa: F401  (ре-экспорт для review/log)
 from ..text import pad, short_path, truncate  # noqa: F401
 
 

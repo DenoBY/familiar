@@ -252,6 +252,20 @@ class GotoDefinitionTest(unittest.TestCase):
         self.h.on_key(ev)
         self.assertTrue(called)
 
+    def test_russian_ctrl_o_as_c0_text_navigates_back(self):
+        # терминальный конфиг мапит ctrl+щ в send_text C0-байта,
+        # поэтому на кириллице ctrl+o приходит текстом '\x0f'
+        called = []
+        self.h.nav_back = lambda: called.append(True)
+        self.h.on_text('\x0f')
+        self.assertTrue(called)
+
+    def test_c0_in_paste_is_not_a_hotkey(self):
+        called = []
+        self.h.nav_back = lambda: called.append(True)
+        self.h.on_text('\x0f', in_bracketed_paste=True)
+        self.assertEqual(called, [])
+
     def test_word_at_maps_cell_to_symbol(self):
         self._select('changed.py')
         self.h.diff_offset = 0

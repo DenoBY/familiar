@@ -830,6 +830,20 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.on_key(kittymock.KeyEvent('w', ctrl=True))
         self.assertEqual((self.h.input_buffer, exported), ('раз ', []))
 
+    def test_russian_ctrl_w_as_c0_erases_word(self):
+        # на кириллице ctrl+ц приходит текстом '\x17' (send_text
+        # из терминального конфига), а не key-событием
+        self._start_comment()
+        self.h.input_text('раз два')
+        self.h.on_text('\x17')
+        self.assertEqual(self.h.input_buffer, 'раз ')
+
+    def test_russian_ctrl_u_as_c0_scrolls_outside_input(self):
+        scrolls = []
+        self.h.diff_scroll = lambda d: scrolls.append(d)
+        self.h.on_text('\x15')
+        self.assertEqual(len(scrolls), 1)
+
     def test_multiline_comment_exported_with_indent(self):
         self._start_comment()
         self.h.input_buffer = 'первая\nвторая'

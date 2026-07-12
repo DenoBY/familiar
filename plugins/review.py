@@ -43,7 +43,7 @@ from modules.text import plural, short_path, truncate
 from modules.vcs.diff import DiffSource, group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.navdef import Target, resolve_definition, symbol_at, word_span
-from modules.vcs.util import chord, to_latin
+from modules.vcs.util import chord, ctrl_letter, to_latin
 from modules.vcs.view import DiffTreeView
 
 
@@ -692,27 +692,11 @@ class ReviewHandler(DiffTreeView):
             if not getattr(key_event, 'text', ''):
                 self.cancel_revert()
             return
-        if chord(key_event, 'ctrl', 'c'):
-            self.quit_loop(0)
-            return
-        # пока пишем в строку ввода, ⌃u/⌃w правят текст, а не
-        # скроллят дифф: скроллить всё равно незачем
-        if self.input_mode:
-            if chord(key_event, 'ctrl', 'w'):
-                self.input_kill_word()
-                return
-            if chord(key_event, 'ctrl', 'u'):
-                self.input_kill_all()
-                return
-        elif chord(key_event, 'ctrl', 'o'):
-            self.nav_back()
-            return
-        elif chord(key_event, 'ctrl', 'd'):
-            self.diff_scroll(self.visible_rows() // 2)
-            return
-        elif chord(key_event, 'ctrl', 'u'):
-            self.diff_scroll(-self.visible_rows() // 2)
-            return
+        for letter in ('c', 'w', 'u', 'o', 'd'):
+            if chord(key_event, 'ctrl', letter):
+                if self._ctrl_key(letter):
+                    return
+                break
         k = key_event.key
         if self.input_key(k, shift=bool(getattr(key_event, 'shift', False))):
             return
@@ -737,6 +721,34 @@ class ReviewHandler(DiffTreeView):
         elif k == 'ESCAPE':
             self.quit_loop(0)      # каскад ESC исчерпан — выходим
 
+    def _ctrl_key(self, letter: str) -> bool:
+        """Ctrl-хоткеи — общая точка для on_key и on_text: на кириллице
+        ctrl+буква приходит C0-байтом, а не key-событием (ctrl_letter).
+        """
+        if letter == 'c':
+            self.quit_loop(0)
+            return True
+        if self.input_mode:
+            # пока пишем в строку ввода, ⌃u/⌃w правят текст, а не
+            # скроллят дифф: скроллить всё равно незачем
+            if letter == 'w':
+                self.input_kill_word()
+                return True
+            if letter == 'u':
+                self.input_kill_all()
+                return True
+            return False
+        if letter == 'o':
+            self.nav_back()
+            return True
+        if letter == 'd':
+            self.diff_scroll(self.visible_rows() // 2)
+            return True
+        if letter == 'u':
+            self.diff_scroll(-(self.visible_rows() // 2))
+            return True
+        return False
+
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
         if self.pending_revert:
             if to_latin(text[:1]) in ('y', 'Y'):
@@ -749,15 +761,12 @@ class ReviewHandler(DiffTreeView):
             if ch.isdigit() and ch != '0':
                 self._pick(int(ch) - 1)
             return
+        ctrl = ctrl_letter(text, in_bracketed_paste)
+        if ctrl is not None and self._ctrl_key(ctrl):
+            return
         if self.input_text(text):
             return
         for ch in text:
-            if ch == '\x15':   # Ctrl+U — скролл диффа на полстраницы вверх
-                self.diff_scroll(-(self.visible_rows() // 2))
-                continue
-            if ch == '\x04':   # Ctrl+D — на полстраницы вниз (дубль к on_eot)
-                self.diff_scroll(self.visible_rows() // 2)
-                continue
             if ch in ('{', 'Х'):    # прыжок к пред. аннотации (Shift+[ ; на ru — Shift+х)
                 self.jump_annot(-1)
                 continue

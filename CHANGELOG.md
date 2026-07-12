@@ -16,6 +16,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **`⌃o` (back after a definition jump) works on the Russian layout.** The terminal
+  config maps `ctrl+<cyrillic>` to C0 bytes (`send_text`), so on ЙЦУКЕН the chord
+  arrives as text, not as a key event — the review viewer now decodes those bytes for
+  all its ctrl shortcuts (`⌃o` back, `⌃u`/`⌃d` scroll, `⌃w`/`⌃u` while typing a
+  comment).
 - **Go to definition is fast on large repos.** The definition search now greps only
   files of the click's language (falling back to a repo-wide pass over source files),
   so heavy untracked logs and minified bundles no longer stall the viewer — on a real

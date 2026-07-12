@@ -17,6 +17,19 @@ def to_latin(ch: str) -> str:
     return LAYOUT.get(ch, ch)
 
 
+def ctrl_letter(text: str, in_bracketed_paste: bool = False) -> 'str | None':
+    """Буква ctrl-сочетания, пришедшего C0-байтом ('\\x0f' → 'o').
+
+    Терминальный конфиг мапит ctrl+<кириллица> в send_text C0-байта
+    (config/keys/russian-ctrl.conf), поэтому на русской раскладке
+    ctrl+буква приходит хендлеру текстом, а не key-событием. Вставка
+    не в счёт: её C0 (\\n, \\t) — содержимое, а не хоткеи.
+    """
+    if not in_bracketed_paste and len(text) == 1 and '\x01' <= text <= '\x1a':
+        return chr(ord(text) + 96)
+    return None
+
+
 # Все модификаторы KeyEvent, кроме лок-клавиш: сочетание совпадает,
 # только когда зажаты ровно запрошенные (как в KeyEvent.matches) —
 # иначе ctrl+alt+c срабатывал бы как ctrl+c.
