@@ -30,14 +30,14 @@ jobs:
       - name: Tag matches CLI version and formula url
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          cli=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' bin/familiar)
+          cli=$(cat VERSION)
           formula=$(sed -n 's|.*/tags/v\(.*\)\.tar\.gz.*|\1|p' Formula/familiar.rb)
           echo "tag=$tag cli=$cli formula=$formula"
-          test "$tag" = "$cli" || { echo "::error::bin/familiar VERSION=$cli, тег $tag"; exit 1; }
+          test "$tag" = "$cli" || { echo "::error::файл VERSION=$cli, тег $tag"; exit 1; }
           test "$tag" = "$formula" || { echo "::error::формула ссылается на v$formula"; exit 1; }
       - name: Tag carries the installable payload
         run: |
-          # формула делает libexec.install "bin", "plugins", "config"
-          for path in bin/familiar plugins/review.py config/terminal.conf; do
+          # формула делает libexec.install "bin", "plugins", "config", "VERSION"
+          for path in bin/familiar plugins/review.py config/terminal.conf VERSION; do
             test -e "$path" || { echo "::error::в теге нет $path"; exit 1; }
           done
