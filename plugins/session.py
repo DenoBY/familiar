@@ -589,8 +589,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         elif self.screen == 'sessions':
             self.back_to_projects()
             self.draw_screen()
-        else:
-            self.quit_loop(0)
+        # projects — дно каскада: Esc не закрывает оверлей
+        # (выход — q/⌃c)
 
     # --- ввод ---
 

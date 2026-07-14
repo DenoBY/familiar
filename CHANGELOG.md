@@ -5,6 +5,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Esc no longer closes kitten overlays.** In `log`, `review` and `session`
+  Esc still walks the cascade back (selection → search → filter → screen), but
+  at the top level it does nothing instead of quitting — so a stray Esc can't
+  dismiss the overlay. Quit with `q` or `⌃c`. As a bonus, Esc at the top level
+  of `log` and `review` now clears an applied filter.
+
 ## [0.17.0] — 2026-07-14
 
 ### Added

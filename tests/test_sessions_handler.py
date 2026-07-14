@@ -516,8 +516,9 @@ class SessionsHandlerTest(unittest.TestCase):
         self.assertEqual(self.h.screen, 'sessions')
         self.h.go_back()
         self.assertEqual(self.h.screen, 'projects')
-        self.h.go_back()
-        self.assertEqual(self.h.quits, [0])
+        self.h.go_back()                        # дно каскада: Esc не закрывает оверлей
+        self.assertEqual(self.h.screen, 'projects')
+        self.assertEqual(self.h.quits, [])
 
     def test_go_back_clears_filter_first(self):
         self.h.filter_query = 'projA'

@@ -587,8 +587,10 @@ class CommitLogHandler(DiffTreeView):
             self.draw_screen()
         elif k in ('ENTER', 'RIGHT'):
             self.open_commit()
-        elif k == 'ESCAPE':
-            self.quit_loop(0)
+        elif k == 'ESCAPE' and self.filter_query:
+            # дно каскада: Esc не закрывает оверлей (выход — q/⌃c)
+            self._input_cancelled('filter')
+            self.draw_screen()
 
     def _diff_key(self, k: str) -> None:
         if self.diff_common_key(k):

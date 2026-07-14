@@ -721,8 +721,10 @@ class ReviewHandler(DiffTreeView):
             self.draw_screen()
         elif k == 'ENTER':
             self.start_comment()   # общий разбор оставил Enter на строке кода диффа
-        elif k == 'ESCAPE':
-            self.quit_loop(0)      # каскад ESC исчерпан — выходим
+        elif k == 'ESCAPE' and self.filter_query:
+            # дно каскада: Esc не закрывает оверлей (выход — q/⌃c)
+            self._input_cancelled('filter')
+            self.draw_screen()
 
     def _ctrl_key(self, letter: str) -> bool:
         """Ctrl-хоткеи — общая точка для on_key и on_text: на кириллице

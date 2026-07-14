@@ -502,6 +502,14 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(names, ['big.txt'])
         self.assertEqual(self.h.n_files, 1)
 
+    def test_escape_clears_filter_and_never_quits(self):
+        self.h.filter_query = 'big'
+        self.h.rebuild_tree()
+        self.h.on_key(kittymock.KeyEvent('ESCAPE'))   # применённый фильтр сбрасывается
+        self.assertEqual(self.h.filter_query, '')
+        self.h.on_key(kittymock.KeyEvent('ESCAPE'))   # дно каскада: оверлей не закрывается
+        self.assertEqual(self.h.quits, [])
+
     # --- шум ---
 
     def test_toggle_noise(self):
