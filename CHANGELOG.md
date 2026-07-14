@@ -5,6 +5,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.17.0] — 2026-07-14
+
+### Added
+
+- **Update notification.** Once a day a kitten checks GitHub for a newer release
+  (in a background thread, cached in `~/.cache/familiar/update.json`) and shows a
+  one-time footer hint: `familiar X.Y.Z is out — brew upgrade familiar`.
+  `familiar status` now prints the installed version and the latest available one.
+  Set `FAMILIAR_UPDATE_CHECK=0` to opt out of both the check and the hint.
+  The version number now lives in the `VERSION` file at the repo root — the single
+  source for the CLI and the kittens.
+
 ## [0.16.0] — 2026-07-14
 
 ### Changed

@@ -40,6 +40,7 @@ from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.text import plural, short_path, truncate
+from modules.update import start_check, update_hint
 from modules.vcs.diff import DiffSource, group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.navdef import Target, resolve_definition, symbol_at, word_span
@@ -128,6 +129,8 @@ class ReviewHandler(DiffTreeView):
     def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
         self.load_source()
+        self.flash = update_hint() or ''
+        start_check()
         self.draw_screen()
 
     def finalize(self) -> None:

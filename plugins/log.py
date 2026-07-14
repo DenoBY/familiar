@@ -43,6 +43,7 @@ from modules.log.git import (
 from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay
 from modules.text import pad, plural, short_path, truncate, wrap_text
+from modules.update import start_check, update_hint
 from modules.vcs.git import git_root, last_error
 from modules.vcs.util import chord, compose, to_latin
 from modules.vcs.view import DiffTreeView
@@ -110,6 +111,8 @@ class CommitLogHandler(DiffTreeView):
     def initialize(self) -> None:
         self.cmd.set_cursor_visible(False)
         self.reload_commits()
+        self.flash = update_hint() or ''
+        start_check()
         self.draw_screen()
 
     def finalize(self) -> None:

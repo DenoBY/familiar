@@ -11,6 +11,9 @@ import unittest
 _TESTS = os.path.dirname(os.path.abspath(__file__))
 _BIN = os.path.join(os.path.dirname(_TESTS), "bin", "familiar")
 
+# Иначе `status` в тестах ходил бы в GitHub за последним релизом.
+os.environ["FAMILIAR_UPDATE_CHECK"] = "0"
+
 _spec = importlib.util.spec_from_loader(
     "familiar_cli", importlib.machinery.SourceFileLoader("familiar_cli", _BIN))
 familiar = importlib.util.module_from_spec(_spec)
@@ -27,7 +30,7 @@ def _run(argv):
 
 class VersionTests(unittest.TestCase):
     def test_cli_version_matches_formula_tag(self):
-        """Формулу при релизе бампят, а VERSION в CLI забывают —
+        """Формулу при релизе бампят, а файл VERSION забывают —
         тогда brew ставит одну версию, а `familiar --version` врёт
         про другую.
         """

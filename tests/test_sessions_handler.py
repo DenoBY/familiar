@@ -90,6 +90,15 @@ class SessionsHandlerTest(unittest.TestCase):
         self.assertIn('Enter — open', text)
         self.assertTrue(any('projA' in str(x) for x in self.h.out))
 
+    def test_flash_replaces_footer_once(self):
+        self.h.flash = 'familiar 9.9.9 is out — brew upgrade familiar'
+        self.h.draw_screen()
+        self.assertIn('brew upgrade familiar', draw_text(self.h))
+        self.h.out.clear()
+        self.h.draw_screen()   # flash разовый — следующий кадр без него
+        self.assertNotIn('brew upgrade familiar', draw_text(self.h))
+        self.assertIn('Enter — open', draw_text(self.h))
+
     # --- сессии ---
 
     def _open_A(self):

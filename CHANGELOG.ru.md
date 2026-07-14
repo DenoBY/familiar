@@ -5,6 +5,18 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [0.17.0] — 2026-07-14
+
+### Added
+
+- **Уведомление об обновлении.** Раз в сутки кит проверяет на GitHub выход новой
+  версии (фоновым потоком, кэш в `~/.cache/familiar/update.json`) и разово
+  показывает подсказку в футере: `familiar X.Y.Z is out — brew upgrade familiar`.
+  `familiar status` теперь печатает установленную версию и последнюю доступную.
+  `FAMILIAR_UPDATE_CHECK=0` выключает и проверку, и подсказку. Номер версии
+  теперь живёт в файле `VERSION` в корне репозитория — единый источник для CLI
+  и китов.
+
 ## [0.16.0] — 2026-07-14
 
 ### Changed

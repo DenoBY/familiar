@@ -1,8 +1,8 @@
 class Familiar < Formula
   desc "Keyboard-driven kitty overlays for a Claude Code workflow"
   homepage "https://github.com/DenoBY/familiar"
-  url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.16.0.tar.gz"
-  sha256 "61aaea99908948bdb856229b1bacfce87df30c8bfad3079467db9d9562165be5"
+  url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.17.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   head "https://github.com/DenoBY/familiar.git", branch: "master"
 
@@ -11,7 +11,7 @@ class Familiar < Formula
 
   def install
     # Раскладку репозитория сохраняем целиком в libexec.
-    libexec.install "bin", "plugins", "config"
+    libexec.install "bin", "plugins", "config", "VERSION"
     # Обёртка задаёт FAMILIAR_ROOT стабильным opt-путём: китены прописываются в
     # kitty.conf через …/opt/familiar/…, а не версионный Cellar, поэтому переживают
     # `brew upgrade`. Python зовём явно — шебанг скрипта не важен.

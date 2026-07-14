@@ -49,6 +49,7 @@ from modules.session.data import (
 )
 from modules.session.preview import Preview
 from modules.session.util import human_age, short_path, to_latin, truncate
+from modules.update import start_check, update_hint
 
 
 class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
@@ -69,6 +70,7 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         self.sel = 0
         self.offset = 0
         self.status = ''            # строка-подсказка/сообщение снизу
+        self.flash = ''             # разовое сообщение поверх футера (AtomicDraw)
         self.show_all = False       # False = только cli, True = включая sdk
         self.running = {}
         self.running_ids = set()
@@ -91,6 +93,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         if current:
             self.open_project(current)
 
+        self.flash = update_hint() or ''
+        start_check()
         self.draw_screen()
 
     def rebuild_projects(self) -> None:
@@ -177,6 +181,7 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
 
         if self.screen == 'preview':
             self._draw_preview(cols)
+            self.flash = ''
             return
 
         items = self.items()
@@ -216,7 +221,9 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
 
         # footer — без финального перевода строки, иначе экран
         # прокрутится вверх на одну строку и шапка уедет за верх окна.
-        self.print(styled(truncate(self._footer(), cols), fg='gray'), end='')
+        self.print(styled(truncate(self._footer(), cols),
+                          fg='green' if self.flash else 'gray'), end='')
+        self.flash = ''
 
     def _draw_preview(self, cols: int) -> None:
         p = self.preview
@@ -238,7 +245,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         if self.input_mode:
             self.print(styled(truncate(self._input_line(), cols), fg='cyan', bold=True))
 
-        self.print(styled(truncate(self._footer(), cols), fg='gray'), end='')
+        self.print(styled(truncate(self._footer(), cols),
+                          fg='green' if self.flash else 'gray'), end='')
 
     def _compose(self, left: str, right: str, cols: int, selected: bool) -> str:
         """При нехватке ширины усекается left, right остаётся целым."""
@@ -351,6 +359,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
             return ' Enter — save   Esc — cancel'
         if self.input_mode == 'worktree':
             return ' Enter — create worktree   Esc — cancel'
+        if self.flash:
+            return ' ' + self.flash
         if self.status:
             return ' ' + self.status
         if self.screen == 'projects':
