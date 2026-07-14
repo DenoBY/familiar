@@ -5,6 +5,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Smarter tab titles for the Claude Code workflow** (`look/tabs.conf`). Titles are
+  capped at 30 cells so several sessions fit the bar; a tab running Claude Code
+  (detected by the `✳ ` the CLI puts in the window title) shows `project❘topic`
+  instead of the raw title, while plain shell tabs are left as is. A red 🔔 marks a
+  background tab whose bell rang (Claude's terminal-bell notification), and a task
+  progress percent is shown when the program reports one (OSC 9;4).
+
 ## [0.14.0] — 2026-07-13
 
 ### Changed
