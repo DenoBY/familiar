@@ -5,6 +5,15 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.16.0] — 2026-07-14
+
+### Changed
+
+- **Tab bar simplified to `index: project❘topic`.** The 🔔 bell symbol and the
+  OSC 9;4 progress percent introduced in 0.15.0 are gone: the percent was never
+  rendered (kitty 0.47 treats that escape as a notification), and notifications
+  are better handled outside the terminal.
+
 ## [0.15.0] — 2026-07-14
 
 ### Changed
