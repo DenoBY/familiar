@@ -5,6 +5,28 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.20.0] — 2026-07-16
+
+### Added
+
+- review: **multi-select in the file tree.** `Shift+↑/↓` paints a range of
+  files from the cursor; `Shift+click` extends the selection up to the clicked
+  row (like GUI file lists — the file under the cursor stays selected);
+  `⌥+click` toggles a single file or a whole folder, and `Shift+click` on an
+  already-marked row unmarks it. A range marks exactly
+  what you see: an expanded folder contributes nothing (its files are their
+  own rows), a collapsed one contributes all its files and lights up itself.
+  Marked rows look like the
+  regular selection; plain navigation (arrows, click, Home/End, `g`/`G`) or
+  Esc drops the marks. `⌘c` copies all marked paths as `@path` mentions, one
+  per line — ready to paste into a Claude prompt.
+- terminal config: **Shift+click is passed through to the kittens.** kitty
+  handles `shift+left` itself even when a program grabs the mouse, so kittens
+  never saw it; `config/keys/mouse.conf` unmaps those grabbed-mode bindings.
+  Trade-off: inside mouse-grabbing programs (vim with mouse, htop) Shift+drag
+  no longer starts kitty's own text selection — the ungrabbed shell is
+  unaffected.
+
 ## [0.19.0] — 2026-07-15
 
 ### Added
