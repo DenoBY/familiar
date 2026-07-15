@@ -512,13 +512,20 @@ class SessionsHandlerTest(unittest.TestCase):
     def test_go_back_chain(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.go_back()
+        self.assertTrue(self.h.go_back())
         self.assertEqual(self.h.screen, 'sessions')
-        self.h.go_back()
+        self.assertTrue(self.h.go_back())
         self.assertEqual(self.h.screen, 'projects')
-        self.h.go_back()                        # дно каскада: Esc не закрывает оверлей
+        self.assertFalse(self.h.go_back())      # дно каскада: сам по себе не закрывает
         self.assertEqual(self.h.screen, 'projects')
         self.assertEqual(self.h.quits, [])
+
+    def test_escape_at_projects_asks_to_close(self):
+        self.h.on_key(KeyEvent('ESCAPE'))       # дно каскада: вопрос вместо выхода
+        self.assertTrue(self.h.confirm_active)
+        self.assertEqual(self.h.quits, [])
+        self.h.on_text('y')
+        self.assertEqual(self.h.quits, [0])
 
     def test_go_back_clears_filter_first(self):
         self.h.filter_query = 'projA'

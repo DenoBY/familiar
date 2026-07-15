@@ -5,6 +5,26 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Send review comments straight into Claude's prompt.** In `review`, `s`
+  collects all comments into markdown — like `w` — but instead of the
+  clipboard it closes the overlay and pastes the text right into the window
+  the overlay was opened over (where Claude is usually waiting). The paste is
+  bracketed, so a multi-line review lands as one block without being submitted
+  by the newlines. `w` (copy to clipboard) works as before.
+
+### Changed
+
+- **Esc at the top level now asks before closing.** In `log`, `review` and
+  `session`, Esc at the bottom of the cascade brings up a centered kitty-style
+  confirmation dialog with Yes/No buttons instead of silently doing nothing:
+  `y`/`Enter` closes the overlay, `n`/`Esc` keeps it open, ←/→/Tab switch the
+  buttons, and the buttons are clickable (pointer cursor on hover). `q` and
+  `⌃c` still quit immediately — `⌃c` works even while the dialog is open.
+
 ## [0.18.0] — 2026-07-14
 
 ### Changed

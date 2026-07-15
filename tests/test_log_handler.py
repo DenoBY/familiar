@@ -84,14 +84,24 @@ class LogHandlerTest(unittest.TestCase):
         self.h.rebuild_commits()
         self.assertEqual([c['subject'] for c in self.h.commits], ['add feature'])
 
-    def test_escape_clears_filter_and_never_quits(self):
+    def test_escape_clears_filter_then_asks_to_close(self):
         self.h.filter_query = 'feature'
         self.h.rebuild_commits()
         self.h._commits_key('ESCAPE')           # применённый фильтр сбрасывается
         self.assertEqual(self.h.filter_query, '')
         self.assertEqual(len(self.h.commits), 2)
-        self.h._commits_key('ESCAPE')           # дно каскада: оверлей не закрывается
+        self.h._commits_key('ESCAPE')           # дно каскада: вопрос вместо выхода
+        self.assertTrue(self.h.confirm_active)
         self.assertEqual(self.h.quits, [])
+
+    def test_quit_confirm_no_stays_yes_quits(self):
+        self.h._commits_key('ESCAPE')
+        self.h.on_text('n')
+        self.assertFalse(self.h.confirm_active)
+        self.assertEqual(self.h.quits, [])
+        self.h._commits_key('ESCAPE')
+        self.h.on_text('y')
+        self.assertEqual(self.h.quits, [0])
 
     def test_toggle_mode_reloads(self):
         self.h.toggle_mode()

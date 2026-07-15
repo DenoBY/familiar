@@ -32,6 +32,7 @@ if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.clipboard import osc52
+from modules.confirm import ConfirmQuit
 from modules.dragselect import DragSelect
 from modules.draw import AtomicDraw
 from modules.inputline import InputLine
@@ -52,11 +53,14 @@ from modules.session.util import human_age, short_path, to_latin, truncate
 from modules.update import start_check, update_hint
 
 
-class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
+class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCursor,
+                      Handler):
 
     # full (не buttons_and_drag): нужны события движения без нажатой
     # кнопки — иначе не поймать наведение для смены формы указателя.
     mouse_tracking = MouseTracking.full
+
+    QUIT_CONFIRM_MSG = 'Are you sure you want to close sessions?'
 
     def __init__(self, args: list[str], now: float) -> None:
         self.cli_args = args
@@ -176,6 +180,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
     # --- отрисовка ---
 
     def _draw_frame(self) -> None:
+        if self.draw_quit_confirm():
+            return
         self.cmd.clear_screen()
         cols = self.screen_size.cols
 
@@ -574,23 +580,25 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
             self.open_preview(item)
             self.draw_screen()
 
-    def go_back(self) -> None:
+    def go_back(self) -> bool:
+        """Шаг по каскаду назад; False — каскад уже на дне."""
         # активный фильтр Esc сбрасывает первым, не покидая экран
         if self.screen in ('projects', 'sessions') and self.filter_query:
             self.filter_query = ''
             self.sel = 0
             self.offset = 0
             self.draw_screen()
-            return
+            return True
         if self.screen == 'preview':
             self.screen = 'sessions'
             self.status = ''
             self.draw_screen()
-        elif self.screen == 'sessions':
+            return True
+        if self.screen == 'sessions':
             self.back_to_projects()
             self.draw_screen()
-        # projects — дно каскада: Esc не закрывает оверлей
-        # (выход — q/⌃c)
+            return True
+        return False   # projects — дно каскада
 
     # --- ввод ---
 
@@ -598,6 +606,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         # kitty шлёт и нажатие, и отпускание — реагируем только на
         # нажатие/повтор, иначе одно нажатие стрелки срабатывает дважды.
         if key_event.type == EventType.RELEASE:
+            return
+        if self.confirm_key(key_event):
             return
         if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
@@ -651,7 +661,11 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
             self.draw_screen()
         elif k == 'ENTER':
             self.activate()
-        elif k in ('ESCAPE', 'LEFT'):
+        elif k == 'ESCAPE':
+            if not self.go_back():
+                # дно каскада: вместо тихого выхода — подтверждение
+                self.start_quit_confirm()
+        elif k == 'LEFT':
             self.go_back()
         elif k == 'RIGHT':
             if self.screen == 'sessions':
@@ -681,6 +695,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         return False
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
+        if self.confirm_text(text):
+            return
         if self.input_text(text):
             return
 
@@ -755,6 +771,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         return row if 0 <= row < len(self.preview.lines) else None
 
     def _wanted_pointer(self, ev) -> 'str | None':
+        if self.confirm_active:
+            return self.confirm_pointer(ev)
         # только в просмотре сессии: рука — на сворачиваемой записи,
         # текст — на прочих строках (drag-select); в списках стрелка
         if self.screen != 'preview':
@@ -765,6 +783,8 @@ class SessionsHandler(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler)
         return 'pointer' if self.preview.lines[row].entry >= 0 else 'text'
 
     def on_mouse_event(self, ev) -> None:
+        if self.confirm_click(ev):
+            return
         self.update_pointer(ev)
         # колесо мыши: в предпросмотре — скролл текста, в списках —
         # движение по строкам

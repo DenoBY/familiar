@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 import kittymock  # noqa: F401
 import review as R
@@ -502,13 +503,16 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(names, ['big.txt'])
         self.assertEqual(self.h.n_files, 1)
 
-    def test_escape_clears_filter_and_never_quits(self):
+    def test_escape_clears_filter_then_asks_to_close(self):
         self.h.filter_query = 'big'
         self.h.rebuild_tree()
         self.h.on_key(kittymock.KeyEvent('ESCAPE'))   # применённый фильтр сбрасывается
         self.assertEqual(self.h.filter_query, '')
-        self.h.on_key(kittymock.KeyEvent('ESCAPE'))   # дно каскада: оверлей не закрывается
+        self.h.on_key(kittymock.KeyEvent('ESCAPE'))   # дно каскада: вопрос вместо выхода
+        self.assertTrue(self.h.confirm_active)
         self.assertEqual(self.h.quits, [])
+        self.h.on_text('y')
+        self.assertEqual(self.h.quits, [0])
 
     # --- шум ---
 
@@ -761,6 +765,33 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.set_focus('diff')
         self.h.diff_cur = self.h._first_commentable(0)
         self.h.start_comment()
+
+    def test_send_review_exits_with_comments_as_action(self):
+        self._start_comment()
+        self.h.input_buffer = 'нужен рефактор'
+        self.h.commit_input()
+        self.h.on_text('s')
+        self.assertEqual(self.h.quits, [0])
+        self.assertEqual(self.h.action['action'], 'send')
+        self.assertIn('нужен рефактор', self.h.action['text'])
+
+    def test_send_review_without_comments_stays_and_hints(self):
+        self.h.out = []
+        self.h.on_text('s')
+        self.assertEqual(self.h.quits, [])
+        self.assertIsNone(self.h.action)
+        self.assertIn('no comments', draw_text(self.h))
+
+    def test_handle_result_send_pastes_into_source_window(self):
+        pasted = []
+        w = SimpleNamespace(paste_text=pasted.append)
+        boss = SimpleNamespace(window_id_map={7: w})
+        R.handle_result([], {'action': 'send', 'text': '# Review comments'}, 7, boss)
+        self.assertEqual(pasted, ['# Review comments'])
+
+    def test_handle_result_send_ignores_closed_source_window(self):
+        boss = SimpleNamespace(window_id_map={})
+        R.handle_result([], {'action': 'send', 'text': 'x'}, 7, boss)
 
     def test_shift_enter_adds_newline_plain_enter_saves(self):
         self._start_comment()

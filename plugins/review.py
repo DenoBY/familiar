@@ -36,6 +36,7 @@ from kitty.key_encoding import EventType
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from modules.confirm import ConfirmQuit
 from modules.overlay import mark_overlay
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
@@ -57,9 +58,10 @@ UNVERSIONED = 'Unversioned Files'
 _ALT_MOD = 0b10
 
 
-class ReviewHandler(DiffTreeView):
+class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     multiline_modes: ClassVar[tuple[str, ...]] = ('comment',)
+    QUIT_CONFIRM_MSG = 'Are you sure you want to close review?'
 
     def __init__(self, args: list[str], cwd: str, root: 'str | None') -> None:
         super().__init__(root)
@@ -178,6 +180,8 @@ class ReviewHandler(DiffTreeView):
     # --- отрисовка ---
 
     def _draw_frame(self) -> None:
+        if self.draw_quit_confirm():
+            return
         if self._cand is not None:
             self._draw_picker()
             return
@@ -234,7 +238,8 @@ class ReviewHandler(DiffTreeView):
             base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
                     f'{stage}{revert} · e edit · r refresh · / search · f filter · {u} · q')
         if self.annots:
-            base += f'   ·   ✎ {len(self.annots)} ({{}} nav · w copy+clear · x clear)'
+            base += (f'   ·   ✎ {len(self.annots)}'
+                     ' ({} nav · w copy+clear · s send · x clear)')
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'
         if self.search_matches:
@@ -381,11 +386,11 @@ class ReviewHandler(DiffTreeView):
             self.annots.pop(key, None)   # пустой комментарий = удалить
         self.comment_target = None
 
-    def export_review(self) -> None:
+    def _review_markdown(self) -> 'str | None':
         if not self.annots:
             self.flash = 'no comments — Tab→diff, hover a line, c'
             self.draw_screen()
-            return
+            return None
         by_file = {}
         for (rel, line), v in self.annots.items():
             by_file.setdefault(rel, []).append((line, v))
@@ -397,7 +402,13 @@ class ReviewHandler(DiffTreeView):
                 out.append(f'- **L{line}** `{code}`' if code else f'- **L{line}**')
                 out += [f'  {ln}' if ln else '' for ln in v['text'].split('\n')]
             out.append('')
-        self._copy_clipboard('\n'.join(out))
+        return '\n'.join(out)
+
+    def export_review(self) -> None:
+        md = self._review_markdown()
+        if md is None:
+            return
+        self._copy_clipboard(md)
         n = len(self.annots)
         # выгруженное ревью живёт дальше в буфере обмена; держать
         # его ещё и на строках диффа незачем — маркеры ● только
@@ -405,6 +416,17 @@ class ReviewHandler(DiffTreeView):
         self.annots = {}
         self.flash = f'copied {plural(n, "comment")} to clipboard — cleared'
         self.draw_screen()
+
+    def send_review(self) -> None:
+        """Выйти и вставить комментарии в окно под оверлеем — обычно
+        там ждёт claude (вставку делает handle_result: Boss есть
+        только в процессе kitty).
+        """
+        md = self._review_markdown()
+        if md is None:
+            return
+        self.action = {'action': 'send', 'text': md}
+        self.quit_loop(0)
 
     def clear_annotations(self) -> None:
         if not self.annots:
@@ -652,6 +674,8 @@ class ReviewHandler(DiffTreeView):
     # --- ввод ---
 
     def _wanted_pointer(self, ev) -> 'str | None':
+        if self.confirm_active:
+            return self.confirm_pointer(ev)
         di = self._diff_row_at(ev)
         if di is not None:
             col = self._diff_col_at(ev)
@@ -665,6 +689,8 @@ class ReviewHandler(DiffTreeView):
         return super()._wanted_pointer(ev)
 
     def on_mouse_event(self, ev) -> None:
+        if self.confirm_click(ev):
+            return
         press = getattr(ev, 'type', None) == MouseEventType.PRESS
         left = bool(ev.buttons & MouseButton.LEFT)
         # пикер открыт — клик выбирает кандидата (строки списка с 2-й)
@@ -683,6 +709,8 @@ class ReviewHandler(DiffTreeView):
 
     def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:
+            return
+        if self.confirm_key(key_event):
             return
         if self._cand is not None:
             if key_event.key == 'ESCAPE':
@@ -721,10 +749,13 @@ class ReviewHandler(DiffTreeView):
             self.draw_screen()
         elif k == 'ENTER':
             self.start_comment()   # общий разбор оставил Enter на строке кода диффа
-        elif k == 'ESCAPE' and self.filter_query:
-            # дно каскада: Esc не закрывает оверлей (выход — q/⌃c)
-            self._input_cancelled('filter')
-            self.draw_screen()
+        elif k == 'ESCAPE':
+            if self.filter_query:
+                self._input_cancelled('filter')
+                self.draw_screen()
+            else:
+                # дно каскада: вместо тихого выхода — подтверждение
+                self.start_quit_confirm()
 
     def _ctrl_key(self, letter: str) -> bool:
         """Ctrl-хоткеи — общая точка для on_key и on_text: на кириллице
@@ -755,6 +786,8 @@ class ReviewHandler(DiffTreeView):
         return False
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
+        if self.confirm_text(text):
+            return
         if self.pending_revert:
             if to_latin(text[:1]) in ('y', 'Y'):
                 self.confirm_revert()
@@ -797,6 +830,9 @@ class ReviewHandler(DiffTreeView):
                 self._goto_from_selection()
             elif c in ('w', 'W'):
                 self.export_review()
+            elif c in ('s', 'S'):
+                self.send_review()
+                return
             elif c in ('x', 'X'):
                 self.clear_annotations()
             elif ch == '+':
@@ -830,13 +866,20 @@ def main(args: list[str]) -> 'dict | None':
 @result_handler()
 def handle_result(args: list[str], answer: 'dict | None',
                   target_window_id: int, boss) -> None:
-    if not answer or answer.get('action') != 'edit':
+    if not answer:
         return
-    project, path, line = answer['cwd'], answer['path'], answer['line']
-    cmd, gui = editor_command(project, path, line)
     w = boss.window_id_map.get(target_window_id)
     if w is None:
         return   # исходное окно уже закрыто — не запускать «куда попало»
+    if answer.get('action') == 'send':
+        # paste_text уважает bracketed paste: многострочный markdown
+        # ляжет в промпт claude одной вставкой, без отправки по \n
+        w.paste_text(answer['text'])
+        return
+    if answer.get('action') != 'edit':
+        return
+    project, path, line = answer['cwd'], answer['path'], answer['line']
+    cmd, gui = editor_command(project, path, line)
     kind = '--type=background' if gui else '--type=tab'
     boss.call_remote_control(w, ('launch', kind, '--cwd', project, *cmd))
 
