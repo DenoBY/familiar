@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import kittymock  # noqa: F401
 import review as R
-from kittymock import EventType, MouseEvent, draw_text, wire
+from kittymock import EventType, MouseButton, MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key, is_code_row
 
 
@@ -178,6 +178,133 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(len(inside), 1)
         self.h.tsel = self.h.rows.index(inside[0])
         self.assertEqual(self.h._selected_paths(), ['dir/fresh.txt'])
+
+    # --- метки / множественный выбор файлов ---
+
+    def _file_row(self, basename):
+        for i, r in enumerate(self.h.rows):
+            if r['type'] == 'file' and r['name'] == basename:
+                return i
+        self.fail(f'файл {basename} не найден в дереве')
+
+    def _mod_click(self, li, mods):
+        ev = MouseEvent(cell_x=1, cell_y=li - self.h.left_offset + 2,
+                        buttons=MouseButton.LEFT, mods=mods)
+        self.h.on_mouse_event(ev)
+
+    def _alt_click(self, li):
+        self._mod_click(li, mods=2)   # ⌥ = 2 в схеме kitty
+
+    def _shift_click(self, li):
+        self._mod_click(li, mods=1)   # ⇧ = 1 в схеме kitty
+
+    def _plain_click(self, li):
+        self.h.on_click(MouseEvent(cell_x=1, cell_y=li - self.h.left_offset + 2))
+
+    def test_alt_click_marks_files_and_copy_joins_paths(self):
+        self._alt_click(self._file_row('big.txt'))
+        self._alt_click(self._file_row('sub.txt'))
+        copied = []
+        self.h._copy_clipboard = copied.append
+        self.h.on_key(kittymock.KeyEvent('c', super=True))   # ⌘c
+        self.assertEqual(len(copied), 1)
+        self.assertEqual(set(copied[0].split('\n')), {'@big.txt', '@dir/sub.txt'})
+
+    def test_alt_click_toggles_the_same_file_off(self):
+        row = self._file_row('big.txt')
+        self._alt_click(row)
+        self.assertIn('big.txt', self.h.marked_paths)
+        self._alt_click(row)
+        self.assertEqual(self.h.marked_paths, set())
+
+    def test_shift_click_paints_range_and_keeps_first_file(self):
+        # курсор на big.txt, ⇧+клик по sub.txt — выделены оба
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('sub.txt'))
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
+
+    def test_second_shift_click_chains_the_range(self):
+        self.h.tsel = self._file_row('sub.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('big.txt'))
+        self._expand_unversioned()
+        self._shift_click(self._file_row('new.txt'))
+        self.assertEqual(self.h.marked_paths,
+                         {'dir/sub.txt', 'big.txt', 'new.txt'})
+
+    def test_alt_click_on_folder_marks_all_its_files(self):
+        di = next(i for i, r in enumerate(self.h.rows)
+                  if r['type'] == 'dir' and r['name'] == 'dir')
+        self._alt_click(di)
+        self.assertIn('dir/sub.txt', self.h.marked_paths)
+
+    def test_shift_down_paints_a_range_of_two_files(self):
+        self.h.tsel = self.h._first_file()
+        self.h.load_diff()
+        self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
+        self.assertEqual(len(self.h.marked_paths), 2)
+        self.assertIn(self.h.current_item()['rel'], self.h.marked_paths)
+
+    def test_shift_range_over_expanded_dir_adds_nothing_for_it(self):
+        # ⇧+↑ с файла на развёрнутую папку: её файлы своими строками
+        # ниже курсора — метки не должны убегать вперёд
+        self.h.tsel = self._file_row('sub.txt')
+        self.h.load_diff()
+        self.h.on_key(kittymock.KeyEvent('UP', shift=True))
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(self.h.rows[self.h.tsel]['type'], 'dir')
+
+    def test_shift_range_over_collapsed_group_marks_its_files(self):
+        # свёрнутая группа видна одной строкой — диапазон через неё
+        # забирает всё её содержимое
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
+        self.assertIn('new.txt', self.h.marked_paths)
+
+    def test_shift_click_on_marked_file_unmarks_it(self):
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('sub.txt'))   # помечены оба
+        self._shift_click(self._file_row('sub.txt'))
+        self.assertEqual(self.h.marked_paths, {'big.txt'})
+        # курсор остался на месте: переехав, он бы подсветил строку
+        # reverse'ом и снятие метки было бы неотличимо от no-op
+        self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
+
+    def test_unmark_from_afar_does_not_move_cursor(self):
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('sub.txt'))   # курсор на sub
+        self._shift_click(self._file_row('big.txt'))   # снять big издалека
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
+
+    def test_plain_click_clears_marks(self):
+        self._alt_click(self._file_row('big.txt'))
+        self.assertTrue(self.h.marked_paths)
+        self._plain_click(self._file_row('sub.txt'))   # без ⌥ — навигация
+        self.assertEqual(self.h.marked_paths, set())
+
+    def test_plain_arrow_navigation_clears_marks(self):
+        self._alt_click(self._file_row('big.txt'))
+        self.assertTrue(self.h.marked_paths)
+        self.h.on_key(kittymock.KeyEvent('DOWN'))   # без Shift — навигация
+        self.assertEqual(self.h.marked_paths, set())
+
+    def test_escape_clears_marks_before_offering_to_quit(self):
+        self._alt_click(self._file_row('big.txt'))
+        self.h.on_key(kittymock.KeyEvent('ESCAPE'))
+        self.assertEqual(self.h.marked_paths, set())
+
+    def test_copy_without_marks_falls_back_to_single_path(self):
+        self._select_file('big.txt')
+        copied = []
+        self.h._copy_clipboard = copied.append
+        self.h.on_key(kittymock.KeyEvent('c', super=True))
+        self.assertEqual(copied, ['@big.txt'])
 
     # --- откат изменений ---
 

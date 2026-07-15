@@ -56,6 +56,9 @@ UNVERSIONED = 'Unversioned Files'
 # (где alt=8): проверено эмпирически — ⌥+click даёт mods=2. ⌘/Super
 # мышью не приходит, поэтому go-to-definition — на ⌥+click.
 _ALT_MOD = 0b10
+# Shift+клик доходит до кита только с unmap в config/keys/mouse.conf:
+# без него kitty съедает его под своё выделение даже в grabbed-режиме
+_SHIFT_MOD = 0b1
 
 
 class ReviewHandler(ConfirmQuit, DiffTreeView):
@@ -235,8 +238,11 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
             revert = ' · - revert' if any(self._revert_targets()) else ''
-            base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
-                    f'{stage}{revert} · e edit · r refresh · / search · f filter · {u} · q')
+            n_marked = len(self._marked_rels())
+            copy = f'⌘c copy {n_marked}' if n_marked else '⌘c @path'
+            base = (f' [tree]  ↑↓ file · ⇧↑↓/⇧click mark · Enter fold · →/Tab diff'
+                    f' · {copy} · {modes}{stage}{revert} · e edit · r refresh'
+                    f' · / search · f filter · {u} · q')
         if self.annots:
             base += (f'   ·   ✎ {len(self.annots)}'
                      ' ({} nav · w copy+clear · s send · x clear)')
@@ -257,15 +263,20 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         xy = it['xy']
         return len(xy) > 1 and xy[1] != ' '
 
-    def _items_under_cursor(self, keep: Callable[[dict], bool]) -> list[dict]:
-        """Элементы под курсором дерева: у файла — он сам, у папки (и
-        у узла Unversioned Files) — все её файлы, прошедшие keep.
-        Скрытые фильтром и noise-каталоги не попадают: трогаем ровно
-        то, что видно.
+    def _items_under_cursor(self, keep: Callable[[dict], bool],
+                            li: 'int | None' = None) -> list[dict]:
+        """Элементы строки дерева (по умолчанию — под курсором): у
+        файла — он сам, у папки (и у узла Unversioned Files) — все её
+        файлы, прошедшие keep. Скрытые фильтром и noise-каталоги не
+        попадают: трогаем ровно то, что видно.
         """
-        if not self.rows or not (0 <= self.tsel < len(self.rows)):
+        if li is None:
+            li = self.tsel
+        if not self.rows or not (0 <= li < len(self.rows)):
             return []
-        row = self.rows[self.tsel]
+        return self._row_items(self.rows[li], keep)
+
+    def _row_items(self, row: dict, keep: Callable[[dict], bool]) -> list[dict]:
         if row['type'] == 'file':
             it = self.filtered[row['idx']]
             return [it] if keep(it) else []
@@ -276,6 +287,68 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     def _selected_paths(self) -> list[str]:
         return [it['path'] for it in self._items_under_cursor(self._stageable)]
+
+    # --- множественный выбор файлов (метки → ⌘c копирует все) ---
+
+    def _rels_at(self, li: int) -> list[str]:
+        return [it['rel'] for it in self._items_under_cursor(lambda it: True, li)]
+
+    def _rels_under_cursor(self) -> list[str]:
+        return self._rels_at(self.tsel)
+
+    def _range_rels(self, li: int) -> list[str]:
+        """Вклад строки дерева в диапазонное выделение: файл — он сам;
+        свёрнутая папка — все её файлы (видимы только этой строкой);
+        развёрнутая — ничего: её файлы идут своими строками, и метки
+        не должны убегать ниже курсора.
+        """
+        if not self.rows or not (0 <= li < len(self.rows)):
+            return []
+        row = self.rows[li]
+        if row['type'] == 'file':
+            return [self.filtered[row['idx']]['rel']]
+        return self._rels_at(li) if row.get('collapsed') else []
+
+    def _dir_marked(self, row: dict) -> bool:
+        """Свёрнутая папка подсвечивается, когда помечены все её
+        файлы: поддерево видно только этой строкой."""
+        if not row.get('collapsed'):
+            return False
+        rels = [it['rel'] for it in self._row_items(row, lambda it: True)]
+        return bool(rels) and all(r in self.marked_paths for r in rels)
+
+    def _toggle_mark_here(self) -> None:
+        """⌥+клик: пометить/снять файл под курсором, папку — все её
+        файлы разом."""
+        rels = self._rels_under_cursor()
+        if not rels:
+            self.flash = 'nothing to mark here'
+            return
+        if all(r in self.marked_paths for r in rels):
+            self.marked_paths.difference_update(rels)
+        else:
+            self.marked_paths.update(rels)
+        n = len(self.marked_paths)
+        self.flash = f'{plural(n, "file")} marked' if n else 'marks cleared'
+
+    def clear_marks(self) -> None:
+        self.marked_paths.clear()
+        self.flash = 'marks cleared'
+        self.draw_screen()
+
+    def mark_move(self, delta: int) -> None:
+        """Shift+↑/↓: красим диапазон — метим строки на обоих концах
+        шага, курсор двигаем как обычно (дифф грузим отложенно).
+        """
+        if not self.rows:
+            return
+        self.marked_paths.update(self._range_rels(self.tsel))
+        prev = self.tsel
+        self.set_tsel(self.tsel + delta)
+        if self.tsel != prev:
+            self._schedule_load_diff()
+        self.marked_paths.update(self._range_rels(self.tsel))
+        self.draw_screen()
 
     def stage_selected(self) -> None:
         if self._ro_block() or not self.root:
@@ -698,14 +771,55 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             if press and left:
                 self._pick(ev.cell_y - 2)
             return
-        # ⌥+ЛКМ по слову — go-to-definition; press глотаем, иначе
-        # базовый Handler синтезирует click и начнёт drag-select
-        if press and left and (getattr(ev, 'mods', 0) & _ALT_MOD):
-            ref = self._word_at(ev)
-            if ref:
-                self.goto_definition(*ref)
-            return
+        # ⇧/⌥+ЛКМ по дереву — метка файла; ⌥ в диффе — go-to-definition,
+        # ⇧ в диффе падает в базовый drag-select. press глотаем при
+        # обработке, иначе базовый Handler синтезирует click
+        mods = getattr(ev, 'mods', 0)
+        if press and left and (mods & (_SHIFT_MOD | _ALT_MOD)):
+            if self._mark_click(ev):
+                return
+            if mods & _ALT_MOD:
+                ref = self._word_at(ev)
+                if ref:
+                    self.goto_definition(*ref)
+                return
         super().on_mouse_event(ev)
+
+    def _mark_click(self, ev) -> bool:
+        """⇧/⌥+клик по строке дерева: ⇧ красит диапазон от курсора до
+        клика (как в GUI-списках — первый файл остаётся выделенным),
+        повторный ⇧+клик по помеченному снимает метку, ⌥ — точечно
+        файл/папку. В области диффа возвращает False."""
+        if getattr(ev, 'cell_x', 0) >= self.left_width():
+            return False
+        r = ev.cell_y - 2
+        if not (0 <= r < self.visible_rows()):
+            return False
+        li = self.left_offset + r
+        if li >= len(self.rows):
+            return False
+        self.focus = 'tree'
+        if getattr(ev, 'mods', 0) & _SHIFT_MOD:
+            rels = self._range_rels(li)
+            if rels and all(r in self.marked_paths for r in rels):
+                # повторный ⇧+клик по помеченному: снять метку. Курсор
+                # не двигаем — встав на строку, он бы сам подсветил её
+                # reverse'ом, и снятие выглядело бы как no-op
+                self.marked_paths.difference_update(rels)
+            else:
+                lo, hi = sorted((self.tsel, li))
+                for i in range(lo, hi + 1):
+                    self.marked_paths.update(self._range_rels(i))
+                if self.tsel != li:
+                    self.tsel = li
+                    self._schedule_load_diff()
+            n = len(self.marked_paths)
+            self.flash = f'{plural(n, "file")} marked' if n else 'marks cleared'
+        else:
+            self.tsel = li
+            self._toggle_mark_here()
+        self.draw_screen()
+        return True
 
     def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:
@@ -737,20 +851,28 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if chord(key_event, 'super', 'c'):
             self.smart_copy()
             return
+        if (getattr(key_event, 'shift', False) and self.focus == 'tree'
+                and k in ('UP', 'DOWN')):
+            self.mark_move(-1 if k == 'UP' else 1)
+            return
         if self.diff_common_key(k):
             return
         if k == 'HOME':
+            self.marked_paths.clear()
             self.set_tsel(0)
             self.load_diff()
             self.draw_screen()
         elif k == 'END':
+            self.marked_paths.clear()
             self.set_tsel(len(self.rows) - 1)
             self.load_diff()
             self.draw_screen()
         elif k == 'ENTER':
             self.start_comment()   # общий разбор оставил Enter на строке кода диффа
         elif k == 'ESCAPE':
-            if self.filter_query:
+            if self.marked_paths:
+                self.clear_marks()
+            elif self.filter_query:
                 self._input_cancelled('filter')
                 self.draw_screen()
             else:

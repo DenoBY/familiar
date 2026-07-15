@@ -63,6 +63,8 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         self.rows: list[dict] = []
         self.n_files = 0
         self.collapsed: set[str] = set()
+        # rel-пути помеченных файлов (множественный выбор в дереве)
+        self.marked_paths: set[str] = set()
         self.show_noise = False
         self.tsel = 0
         self.left_offset = 0
@@ -109,6 +111,9 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
 
     def _tree_visible(self, it: dict) -> bool:
         return True
+
+    def _dir_marked(self, row: dict) -> bool:
+        return False
 
     def _focus_landing(self, start: int) -> int:
         return self._first_landable(start)
@@ -179,6 +184,8 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
                          if (self.show_noise or not is_noise(it['rel']))
                          and self._tree_visible(it)]
         self.rows = build_tree(self.filtered, self.collapsed)
+        # метки исчезнувших файлов (застейджили/откатили) не копим
+        self.marked_paths &= {it['rel'] for it in self.items}
         # файлы, а не строки: свёрнутая папка не занижает счётчик
         self.n_files = len(self.filtered)
         self.tsel = min(self.tsel, max(0, len(self.rows) - 1))
@@ -239,6 +246,9 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
     def tree_move(self, delta: int) -> None:
         if not self.rows:
             return
+        # обычная навигация без Shift сбрасывает метки; диапазон
+        # копит только mark_move (идёт мимо tree_move, через set_tsel)
+        self.marked_paths.clear()
         prev = self.tsel
         self.set_tsel(self.tsel + delta)
         if self.tsel != prev:
@@ -277,7 +287,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
             chev = '▾' if not row['collapsed'] else '▸'
             n = row['count']
             count = plural(n, 'file') if row.get('group_root') else str(n)
-            if selected:
+            if selected or self._dir_marked(row):
                 return styled(pad(f'{indent}{chev} {row["name"]}  {count}', width),
                               reverse=True)
             segs = [(f'{indent}{chev} ', {'fg': 'gray'}),
@@ -297,7 +307,8 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         budget = width - len(prefix) - rlen - (1 if rlen else 0)
         name = truncate(row['name'], max(1, budget))
         gap = max(1 if rlen else 0, width - len(prefix) - len(name) - rlen)
-        if selected:
+        marked = self.filtered[row['idx']]['rel'] in self.marked_paths
+        if selected or marked:
             return styled(pad(prefix + name + ' ' * gap + stat_str, width), reverse=True)
         out = styled(prefix, fg=color, bold=True) + styled(name, fg=color) + ' ' * gap
         parts = []
@@ -468,6 +479,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         else:
             if not self.rows:
                 return
+            self.marked_paths.clear()   # прыжок g/G — тоже навигация без Shift
             self.set_tsel(len(self.rows) - 1 if to_end else 0)
             self.load_diff()
         self.draw_screen()
@@ -660,7 +672,18 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
             self.flash = f'copied {ref}'
         self.draw_screen()
 
+    def _marked_rels(self) -> list[str]:
+        """Помеченные файлы в порядке дерева; отфильтрованные скрытием
+        сюда не попадают — копируем ровно то, что видно."""
+        return [it['rel'] for it in self.filtered if it['rel'] in self.marked_paths]
+
     def copy_path(self) -> None:
+        marked = self._marked_rels()
+        if marked:
+            self._copy_clipboard('\n'.join(f'@{r}' for r in marked))
+            self.flash = f'copied {plural(len(marked), "path")}'
+            self.draw_screen()
+            return
         rel = self._current_rel()
         if rel is None:
             self.flash = 'select a file or dir'
@@ -1000,6 +1023,7 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
             # промах по соседней строке (и возврат в дерево из диффа)
             # не должен перестраивать дерево под курсором
             already_selected = self.focus == 'tree' and self.tsel == li
+            self.marked_paths.clear()   # клик — тоже навигация без Shift
             self.focus = 'tree'
             self.tsel = li
             if self.rows[li]['type'] == 'dir':

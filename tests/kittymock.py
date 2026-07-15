@@ -182,11 +182,12 @@ class KeyEvent:
 
 
 class MouseEvent:
-    def __init__(self, cell_x=0, cell_y=0, buttons=0, type=EventType.PRESS):
+    def __init__(self, cell_x=0, cell_y=0, buttons=0, type=EventType.PRESS, mods=0):
         self.cell_x = cell_x
         self.cell_y = cell_y
         self.buttons = buttons
         self.type = type
+        self.mods = mods
 
 
 def wire(handler, rows=40, cols=120):
