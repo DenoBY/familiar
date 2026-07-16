@@ -1,5 +1,12 @@
 # familiar
 
+[English](README.md) · [Русский](README.ru.md)
+
+[![release](https://img.shields.io/github/v/tag/DenoBY/familiar?label=release)](https://github.com/DenoBY/familiar/tags)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![kitty](https://img.shields.io/badge/kitty-%E2%89%A5%200.47-blue)
+![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+
 Claude Code writes the code in your terminal — familiar gives that terminal the
 missing IDE half. Three full-screen [kitty](https://sw.kovidgoyal.net/kitty/)
 overlays, one hotkey each: review everything the agent just changed in an
@@ -11,8 +18,6 @@ highlighting — nothing to install. macOS only.
 
 > A *familiar* is a helper spirit in a cat's shape — fitting for a set of kitty
 > kittens that tend your coding agents.
-
-[English](README.md) · [Русский](README.ru.md)
 
 Each kitten is a full-screen overlay opened by a hotkey:
 
