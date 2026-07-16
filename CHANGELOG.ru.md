@@ -5,6 +5,14 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Changed
+
+- CLI: `familiar status` пишет `latest: up to date` вместо повтора номера
+  версии в скобках; номер показывается только когда есть обновление
+  (`latest: X.Y.Z — brew upgrade familiar`).
+
 ## [0.21.0] — 2026-07-16
 
 ### Changed

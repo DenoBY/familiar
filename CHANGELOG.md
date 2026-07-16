@@ -5,6 +5,14 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- CLI: `familiar status` prints `latest: up to date` instead of repeating
+  the version number in brackets; the number appears only when an update
+  is available (`latest: X.Y.Z — brew upgrade familiar`).
+
 ## [0.21.0] — 2026-07-16
 
 ### Changed

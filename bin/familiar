@@ -440,8 +440,10 @@ def cmd_status(args: argparse.Namespace) -> None:
         latest = latest_release()
         cur, new = parse_version(VERSION), parse_version(latest or "")
         if cur and new:
-            hint = " — brew upgrade familiar" if new > cur else " (up to date)"
-            print(f"latest:     {latest}{hint}")
+            if new > cur:
+                print(f"latest:     {latest} — brew upgrade familiar")
+            else:
+                print("latest:     up to date")
 
     # realpath с обеих сторон: brew-обёртка задаёт opt-путь (симлинк
     # на Cellar), и запечённый opt-путь — та же установка, а не
