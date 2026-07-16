@@ -293,9 +293,6 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
     def _rels_at(self, li: int) -> list[str]:
         return [it['rel'] for it in self._items_under_cursor(lambda it: True, li)]
 
-    def _rels_under_cursor(self) -> list[str]:
-        return self._rels_at(self.tsel)
-
     def _range_rels(self, li: int) -> list[str]:
         """Вклад строки дерева в диапазонное выделение: файл — он сам;
         свёрнутая папка — все её файлы (видимы только этой строкой);
@@ -317,37 +314,60 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         rels = [it['rel'] for it in self._row_items(row, lambda it: True)]
         return bool(rels) and all(r in self.marked_paths for r in rels)
 
-    def _toggle_mark_here(self) -> None:
-        """⌥+клик: пометить/снять файл под курсором, папку — все её
-        файлы разом."""
-        rels = self._rels_under_cursor()
+    def _toggle_mark_at(self, li: int) -> None:
+        """⌥+клик: пометить/снять файл, папку — все её файлы разом.
+        Курсор, фокус и открытый дифф не трогаем — пометка не должна
+        сбивать текущий файл. Последнюю метку клик не снимает:
+        выделение не пустеет, снимает его навигация или Esc."""
+        rels = self._rels_at(li)
         if not rels:
             self.flash = 'nothing to mark here'
             return
+        if not self.marked_paths:
+            # вход в мультивыбор: активное одиночное выделение — тоже
+            # метка; ⌥+клик добавляет к нему, а не переносит выделение
+            self.marked_paths.update(self._range_rels(self.tsel))
         if all(r in self.marked_paths for r in rels):
+            if not self.marked_paths - set(rels):
+                self.flash = 'last mark kept'
+                return
             self.marked_paths.difference_update(rels)
         else:
             self.marked_paths.update(rels)
-        n = len(self.marked_paths)
-        self.flash = f'{plural(n, "file")} marked' if n else 'marks cleared'
+        self.flash = f'{plural(len(self.marked_paths), "file")} marked'
 
     def clear_marks(self) -> None:
-        self.marked_paths.clear()
+        self._drop_marks()
         self.flash = 'marks cleared'
         self.draw_screen()
 
-    def mark_move(self, delta: int) -> None:
-        """Shift+↑/↓: красим диапазон — метим строки на обоих концах
-        шага, курсор двигаем как обычно (дифф грузим отложенно).
-        """
-        if not self.rows:
-            return
-        self.marked_paths.update(self._range_rels(self.tsel))
-        prev = self.tsel
-        self.set_tsel(self.tsel + delta)
+    def _paint_range(self, li: int) -> None:
+        """Классика GUI-списков: ⇧ красит от якоря (фокус при входе в
+        мультивыбор) до цели; повторное ⇧ перекрашивает от того же
+        якоря, снимая ушедший из диапазона хвост."""
+        if self.mark_anchor is None:
+            self.mark_anchor = self.tsel
+        a, prev = self.mark_anchor, self.tsel
+        for i in range(min(a, prev), max(a, prev) + 1):
+            self.marked_paths.difference_update(self._range_rels(i))
+        self.set_tsel(li)
+        for i in range(min(a, self.tsel), max(a, self.tsel) + 1):
+            self.marked_paths.update(self._range_rels(i))
         if self.tsel != prev:
             self._schedule_load_diff()
-        self.marked_paths.update(self._range_rels(self.tsel))
+
+    def mark_move(self, delta: int) -> None:
+        """Shift+↑/↓: диапазон от якоря — шаг назад снимает строку.
+        Строки без вклада в диапазон (развёрнутые папки) пропускаем:
+        шаг на них был бы пустым — ни метки, ни подсветки."""
+        if not self.rows:
+            return
+        li = self.tsel + delta
+        while 0 <= li < len(self.rows) and not self._range_rels(li):
+            li += delta
+        if not 0 <= li < len(self.rows):
+            return
+        self._paint_range(li)
         self.draw_screen()
 
     def stage_selected(self) -> None:
@@ -786,10 +806,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         super().on_mouse_event(ev)
 
     def _mark_click(self, ev) -> bool:
-        """⇧/⌥+клик по строке дерева: ⇧ красит диапазон от курсора до
-        клика (как в GUI-списках — первый файл остаётся выделенным),
-        повторный ⇧+клик по помеченному снимает метку, ⌥ — точечно
-        файл/папку. В области диффа возвращает False."""
+        """⇧/⌥+клик по строке дерева: ⇧ красит диапазон от якоря до
+        клика (повторный ⇧ перекрашивает от того же якоря),
+        ⌥ — переключает метку файла/папки, не двигая курсор. В области
+        диффа возвращает False."""
         if getattr(ev, 'cell_x', 0) >= self.left_width():
             return False
         r = ev.cell_y - 2
@@ -798,26 +818,14 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         li = self.left_offset + r
         if li >= len(self.rows):
             return False
-        self.focus = 'tree'
         if getattr(ev, 'mods', 0) & _SHIFT_MOD:
-            rels = self._range_rels(li)
-            if rels and all(r in self.marked_paths for r in rels):
-                # повторный ⇧+клик по помеченному: снять метку. Курсор
-                # не двигаем — встав на строку, он бы сам подсветил её
-                # reverse'ом, и снятие выглядело бы как no-op
-                self.marked_paths.difference_update(rels)
-            else:
-                lo, hi = sorted((self.tsel, li))
-                for i in range(lo, hi + 1):
-                    self.marked_paths.update(self._range_rels(i))
-                if self.tsel != li:
-                    self.tsel = li
-                    self._schedule_load_diff()
+            self.focus = 'tree'
+            self._paint_range(li)
             n = len(self.marked_paths)
-            self.flash = f'{plural(n, "file")} marked' if n else 'marks cleared'
+            self.flash = (f'{plural(n, "file")} marked' if n
+                          else 'nothing to mark here')
         else:
-            self.tsel = li
-            self._toggle_mark_here()
+            self._toggle_mark_at(li)
         self.draw_screen()
         return True
 
@@ -858,12 +866,12 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if self.diff_common_key(k):
             return
         if k == 'HOME':
-            self.marked_paths.clear()
+            self._drop_marks()
             self.set_tsel(0)
             self.load_diff()
             self.draw_screen()
         elif k == 'END':
-            self.marked_paths.clear()
+            self._drop_marks()
             self.set_tsel(len(self.rows) - 1)
             self.load_diff()
             self.draw_screen()

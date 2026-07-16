@@ -5,6 +5,30 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.21.0] — 2026-07-16
+
+### Changed
+
+- review: `Shift+click` / `Shift+↑↓` in the file tree now work like classic
+  GUI lists — the range is painted from a fixed anchor (the focused file
+  where multi-select started), and re-extending back toward the anchor
+  unmarks the rows that left the range. `Shift+↑/↓` skips rows that add
+  nothing to the range (expanded folders) — no empty steps. Unmarking a
+  single file or folder is `⌥+click`.
+- review: while multi-select is active, the selection highlight belongs to
+  the marks only — the cursor row without a mark is drawn as a regular row,
+  so `⌥+click` visibly deselects the current file. The first `⌥+click` takes
+  the active file into the selection too (like `⌘+click` in GUI lists), so
+  you get two selected files, not a moved highlight. The tree selection never
+  goes empty: `⌥+click` on the last marked row keeps it marked (drop it with
+  plain navigation or Esc), and mark clicks never switch the viewed diff.
+
+### Fixed
+
+- review: `⌥+click` on a tree row no longer moves the cursor or steals focus
+  from the diff — it only toggles the mark, so the currently viewed file
+  stays selected.
+
 ## [0.20.0] — 2026-07-16
 
 ### Added

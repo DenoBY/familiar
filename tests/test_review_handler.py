@@ -202,7 +202,8 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.on_click(MouseEvent(cell_x=1, cell_y=li - self.h.left_offset + 2))
 
     def test_alt_click_marks_files_and_copy_joins_paths(self):
-        self._alt_click(self._file_row('big.txt'))
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
         self._alt_click(self._file_row('sub.txt'))
         copied = []
         self.h._copy_clipboard = copied.append
@@ -210,12 +211,48 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(len(copied), 1)
         self.assertEqual(set(copied[0].split('\n')), {'@big.txt', '@dir/sub.txt'})
 
-    def test_alt_click_toggles_the_same_file_off(self):
-        row = self._file_row('big.txt')
-        self._alt_click(row)
-        self.assertIn('big.txt', self.h.marked_paths)
-        self._alt_click(row)
-        self.assertEqual(self.h.marked_paths, set())
+    def test_alt_click_toggles_a_file_off_while_others_marked(self):
+        big, sub = self._file_row('big.txt'), self._file_row('sub.txt')
+        self.h.tsel = big
+        self.h.load_diff()
+        self._alt_click(sub)
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self._alt_click(big)
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+
+    def test_alt_click_adds_to_active_selection_without_moving_cursor(self):
+        # ⌥+клик по другому файлу даёт ДВА выделения: активный файл
+        # остаётся в выборке, курсор не двигается
+        big = self._file_row('big.txt')
+        self.h.tsel = big
+        self.h.load_diff()
+        sub = self._file_row('sub.txt')
+        self._alt_click(sub)
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(self.h.tsel, big)
+        self.assertTrue(self.h._row_highlight(big))
+        self.assertTrue(self.h._row_highlight(sub))
+
+    def test_alt_click_unhighlights_the_cursor_row(self):
+        big = self._file_row('big.txt')
+        self.h.tsel = big
+        self.h.load_diff()
+        self._alt_click(self._file_row('sub.txt'))
+        self._alt_click(big)   # снять активный файл из выборки
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertFalse(self.h._row_highlight(big))
+
+    def test_alt_click_on_last_mark_is_a_noop(self):
+        big = self._file_row('big.txt')
+        self.h.tsel = big
+        self.h.load_diff()
+        sub = self._file_row('sub.txt')
+        self._alt_click(sub)
+        self._alt_click(big)   # осталась одна метка — sub
+        self._alt_click(sub)   # последнюю метку клик не снимает
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(self.h.tsel, big)
+        self.assertTrue(self.h._row_highlight(sub))
 
     def test_shift_click_paints_range_and_keeps_first_file(self):
         # курсор на big.txt, ⇧+клик по sub.txt — выделены оба
@@ -240,6 +277,35 @@ class ReviewHandlerTest(unittest.TestCase):
         self._alt_click(di)
         self.assertIn('dir/sub.txt', self.h.marked_paths)
 
+    def test_shift_click_back_toward_anchor_drops_the_tail(self):
+        self._expand_unversioned()
+        self.h.tsel = self._file_row('sub.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('new.txt'))
+        self.assertEqual(self.h.marked_paths,
+                         {'dir/sub.txt', 'big.txt', 'new.txt'})
+        self._shift_click(self._file_row('big.txt'))   # ближе к якорю
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt', 'big.txt'})
+        self._shift_click(self._file_row('sub.txt'))   # в сам якорь
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+
+    def test_shift_click_below_after_ranging_up_drops_the_upper_range(self):
+        self._expand_unversioned()
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self._shift_click(self._file_row('sub.txt'))   # вверх от якоря
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self._shift_click(self._file_row('new.txt'))   # вниз через якорь
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'new.txt'})
+
+    def test_shift_up_after_shift_down_unmarks_the_left_row(self):
+        self.h.tsel = self._file_row('sub.txt')
+        self.h.load_diff()
+        self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt', 'big.txt'})
+        self.h.on_key(kittymock.KeyEvent('UP', shift=True))
+        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+
     def test_shift_down_paints_a_range_of_two_files(self):
         self.h.tsel = self.h._first_file()
         self.h.load_diff()
@@ -247,14 +313,30 @@ class ReviewHandlerTest(unittest.TestCase):
         self.assertEqual(len(self.h.marked_paths), 2)
         self.assertIn(self.h.current_item()['rel'], self.h.marked_paths)
 
-    def test_shift_range_over_expanded_dir_adds_nothing_for_it(self):
-        # ⇧+↑ с файла на развёрнутую папку: её файлы своими строками
-        # ниже курсора — метки не должны убегать вперёд
-        self.h.tsel = self._file_row('sub.txt')
+    def test_shift_up_skips_the_expanded_dir_and_stops_at_the_edge(self):
+        # выше sub только развёрнутая папка — шаг вверх упирается в
+        # край и ничего не красит, курсор на месте
+        sub = self._file_row('sub.txt')
+        self.h.tsel = sub
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('UP', shift=True))
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
-        self.assertEqual(self.h.rows[self.h.tsel]['type'], 'dir')
+        self.assertEqual(self.h.tsel, sub)
+        self.assertEqual(self.h.marked_paths, set())
+
+    def test_cursor_on_dir_row_is_highlighted_without_marks(self):
+        d = next(i for i, r in enumerate(self.h.rows)
+                 if r['type'] == 'dir' and r['name'] == 'dir')
+        self.h.tsel = d
+        self.assertTrue(self.h._row_highlight(d))
+
+    def test_shift_down_jumps_over_the_expanded_group_row(self):
+        # развёрнутая группа файлов не вносит — шаг через неё не пустой
+        self._expand_unversioned()
+        self.h.tsel = self._file_row('big.txt')
+        self.h.load_diff()
+        self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'new.txt'})
+        self.assertEqual(self.h.rows[self.h.tsel]['name'], 'new.txt')
 
     def test_shift_range_over_collapsed_group_marks_its_files(self):
         # свёрнутая группа видна одной строкой — диапазон через неё
@@ -264,21 +346,18 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
         self.assertIn('new.txt', self.h.marked_paths)
 
-    def test_shift_click_on_marked_file_unmarks_it(self):
+    def test_shift_click_on_marked_file_keeps_marks(self):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))   # помечены оба
-        self._shift_click(self._file_row('sub.txt'))
-        self.assertEqual(self.h.marked_paths, {'big.txt'})
-        # курсор остался на месте: переехав, он бы подсветил строку
-        # reverse'ом и снятие метки было бы неотличимо от no-op
-        self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
+        self._shift_click(self._file_row('sub.txt'))   # ⇧ не снимает
+        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
 
-    def test_unmark_from_afar_does_not_move_cursor(self):
+    def test_alt_click_unmarks_from_afar_without_moving_cursor(self):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))   # курсор на sub
-        self._shift_click(self._file_row('big.txt'))   # снять big издалека
+        self._alt_click(self._file_row('big.txt'))     # снять big издалека
         self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
         self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
 
