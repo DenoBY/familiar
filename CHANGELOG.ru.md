@@ -5,10 +5,14 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.22.0] — 2026-07-17
 
 ### Changed
 
+- review: файлы, застейдженные как новые и затем удалённые с диска
+  (git status `AD`), больше не показываются в дереве — относительно HEAD
+  это не изменение. Настоящие удаления отслеживаемых файлов видны как
+  прежде.
 - CLI: `familiar status` пишет `latest: up to date` вместо повтора номера
   версии в скобках; номер показывается только когда есть обновление
   (`latest: X.Y.Z — brew upgrade familiar`).

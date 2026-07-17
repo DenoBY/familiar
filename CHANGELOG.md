@@ -5,10 +5,13 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.22.0] — 2026-07-17
 
 ### Changed
 
+- review: files staged as new and then deleted from disk (git status `AD`)
+  no longer appear in the file tree — relative to HEAD they are not a
+  change. Real deletions of tracked files are still shown.
 - CLI: `familiar status` prints `latest: up to date` instead of repeating
   the version number in brackets; the number appears only when an update
   is available (`latest: X.Y.Z — brew upgrade familiar`).

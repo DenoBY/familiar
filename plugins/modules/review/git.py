@@ -42,6 +42,11 @@ def scan_changes(root: str) -> list[dict]:
         if 'R' in xy or 'C' in xy:
             i += 1
             orig = tokens[i] if i < len(tokens) else None
+        if xy == 'AD':
+            # застейджен как новый и затем удалён с диска:
+            # относительно HEAD изменений нет — не показываем
+            i += 1
+            continue
         items.append({'kind': classify_status(xy), 'path': path, 'orig': orig, 'xy': xy,
                       'untracked': '?' in xy})
         i += 1

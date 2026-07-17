@@ -131,6 +131,18 @@ class GitRepoTest(unittest.TestCase):
         finally:
             shutil.rmtree(bare, ignore_errors=True)
 
+    def test_staged_then_deleted_is_hidden(self):
+        # AD: новый файл застейджен и удалён с диска — относительно
+        # HEAD изменений нет, в дереве ему нечего делать
+        self.write('ghost.txt', 'g1\n')
+        self._git('add', 'ghost.txt')
+        os.remove(os.path.join(self.repo, 'ghost.txt'))
+        os.remove(os.path.join(self.repo, 'dir', 'b.txt'))
+        items = self.by_path(G.scan_changes(self.repo))
+        self.assertNotIn('ghost.txt', items)
+        # настоящее удаление отслеживаемого файла остаётся видно
+        self.assertEqual(items['dir/b.txt']['kind'], 'deleted')
+
     def test_untracked_noise_has_no_stat(self):
         self.write('venv/big.py', 'x\n' * 100)
         items = self.by_path(G.scan_changes(self.repo))
