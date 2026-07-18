@@ -5,6 +5,15 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [0.23.0] — 2026-07-18
+
+### Changed
+
+- киты: session/review/log теперь открываются во весь экран даже из
+  сплита — на время оверлея таб переключается в layout `stack`, а при
+  закрытии кита возвращается прежний layout. Если `stack` не входит в
+  `enabled_layouts`, киты, как раньше, открываются в размер сплита.
+
 ## [0.22.0] — 2026-07-17
 
 ### Changed

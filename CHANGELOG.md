@@ -5,6 +5,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.23.0] — 2026-07-18
+
+### Changed
+
+- kittens: session/review/log now open full screen even from a split —
+  the tab switches to the `stack` layout while the overlay is open and
+  returns to the previous layout when the kitten closes. If `stack` is
+  not in your `enabled_layouts`, kittens open at the split size as
+  before.
+
 ## [0.22.0] — 2026-07-17
 
 ### Changed

@@ -37,7 +37,7 @@ if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.confirm import ConfirmQuit
-from modules.overlay import mark_overlay
+from modules.overlay import mark_overlay, restore_layout
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.text import plural, short_path, truncate
@@ -983,19 +983,22 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self.diff_scroll(self.visible_rows() // 2)
 
 
-def main(args: list[str]) -> 'dict | None':
+def main(args: list[str]) -> dict:
     mark_overlay('review')
     cwd = os.getcwd()
     root = git_root(cwd)
     handler = ReviewHandler(args, cwd, root)
     loop = Loop()
     loop.loop(handler)
-    return handler.action
+    # Не None даже при выходе без действия: без результата kitty не
+    # вызывает handle_result — а layout вернуть надо всегда.
+    return handler.action or {'action': 'close'}
 
 
 @result_handler()
 def handle_result(args: list[str], answer: 'dict | None',
                   target_window_id: int, boss) -> None:
+    restore_layout(boss, target_window_id)
     if not answer:
         return
     w = boss.window_id_map.get(target_window_id)

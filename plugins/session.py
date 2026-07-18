@@ -37,7 +37,7 @@ from modules.dragselect import DragSelect
 from modules.draw import AtomicDraw
 from modules.inputline import InputLine
 from modules.keylayout import chord
-from modules.overlay import mark_overlay
+from modules.overlay import mark_overlay, restore_layout
 from modules.pointer import PointerCursor
 from modules.session.data import (
     STATUS_COLOR,
@@ -860,13 +860,15 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
         self.quit_loop(0)
 
 
-def main(args: list[str]) -> 'dict | None':
+def main(args: list[str]) -> dict:
     mark_overlay('session')
     now = time.time()
     loop = Loop()
     handler = SessionsHandler(args, now)
     loop.loop(handler)
-    return handler.result
+    # Не None даже при выходе без действия: без результата kitty не
+    # вызывает handle_result — а layout вернуть надо всегда.
+    return handler.result or {'action': 'close'}
 
 
 def _running_claude(window) -> bool:
@@ -894,6 +896,7 @@ def handle_result(args: list[str], result: 'dict | None',
     continue, new или worktree. Если в окне уже идёт сессия claude —
     открывает новую сплитом рядом, иначе оверлеем в том же окне.
     """
+    restore_layout(boss, target_window_id)
     if not result:
         return
     action = result.get('action')

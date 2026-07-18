@@ -196,9 +196,15 @@ def _has_terminal_include(generated: str) -> bool:
 def _kitten_maps(name: str, plugins: str) -> list[str]:
     k = KITTENS[name]
     entry = os.path.join(plugins, k["file"])
+    # goto_layout stack перед kitten: оверлей наследует размер окна,
+    # под которым открыт, — в stack активное окно занимает весь таб,
+    # и кит открывается во весь экран даже из сплита. Прежний layout
+    # возвращает handle_result кита (modules/overlay.py). Если stack
+    # не включён в enabled_layouts, kitty молча логирует ошибку и кит
+    # открывается по-старому, в размер сплита.
     combine = (
         "combine @ remote_control close-window --match var:cc_plugin "
-        "--ignore-no-match @ kitten " + entry
+        "--ignore-no-match @ goto_layout stack @ kitten " + entry
     )
     lines = [f"# {name} — {k['desc']}"]
     for key in (k["key"], k["ru"]):

@@ -990,7 +990,7 @@ class ReviewHandlerTest(unittest.TestCase):
 
     def test_handle_result_send_pastes_into_source_window(self):
         pasted = []
-        w = SimpleNamespace(paste_text=pasted.append)
+        w = SimpleNamespace(paste_text=pasted.append, tabref=lambda: None)
         boss = SimpleNamespace(window_id_map={7: w})
         R.handle_result([], {'action': 'send', 'text': '# Review comments'}, 7, boss)
         self.assertEqual(pasted, ['# Review comments'])

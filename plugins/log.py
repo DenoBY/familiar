@@ -19,7 +19,7 @@ modules.vcs.view.DiffTreeView; здесь только экран списка
 import os
 import sys
 
-from kittens.tui.handler import Handler
+from kittens.tui.handler import Handler, result_handler
 from kittens.tui.loop import Loop, MouseButton
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
@@ -42,7 +42,7 @@ from modules.log.git import (
     unpushed_shas,
 )
 from modules.log.graph import NODE, build_graph
-from modules.overlay import mark_overlay
+from modules.overlay import mark_overlay, restore_layout
 from modules.text import pad, plural, short_path, truncate, wrap_text
 from modules.update import start_check, update_hint
 from modules.vcs.git import git_root, last_error
@@ -690,11 +690,20 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         self.quit_loop(0)
 
 
-def main(args: list[str]) -> None:
+def main(args: list[str]) -> dict:
     mark_overlay('log')
     root = git_root(os.getcwd())
     handler = CommitLogHandler(args, root)
     Loop().loop(handler)
+    # Не None: без результата kitty не вызывает handle_result —
+    # а layout вернуть надо всегда.
+    return {'action': 'close'}
+
+
+@result_handler()
+def handle_result(args: list[str], answer: 'dict | None',
+                  target_window_id: int, boss) -> None:
+    restore_layout(boss, target_window_id)
 
 
 if __name__ == '__main__':

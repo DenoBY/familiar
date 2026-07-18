@@ -65,6 +65,10 @@ class RenderTests(unittest.TestCase):
         conf = familiar.render_generated_conf(["session"], False)
         self.assertIn("cmd+shift+ы", conf)
 
+    def test_kitten_opens_fullscreen_via_stack(self):
+        conf = familiar.render_generated_conf(["review"], False)
+        self.assertIn("@ goto_layout stack @ kitten ", conf)
+
 
 class ThemeTests(unittest.TestCase):
     def test_default_theme_writes_nothing(self):

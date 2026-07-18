@@ -3,18 +3,12 @@ import shutil
 import tempfile
 import unittest
 
+from test_overlay import FakeTab
+
 import kittymock  # noqa: F401
+import log as L
 import review as R
 import session as S
-
-
-class FakeBoss:
-    def __init__(self):
-        self.window_id_map = {7: object()}
-        self.calls = []
-
-    def call_remote_control(self, w, cmd):
-        self.calls.append((w, cmd))
 
 
 class FakeChild:
@@ -24,8 +18,21 @@ class FakeChild:
 
 
 class FakeWindow:
-    def __init__(self, child):
-        self.child = child
+    def __init__(self, child=None, tab=None):
+        self.child = child or FakeChild()
+        self._tab = tab
+
+    def tabref(self):
+        return self._tab
+
+
+class FakeBoss:
+    def __init__(self):
+        self.window_id_map = {7: FakeWindow()}
+        self.calls = []
+
+    def call_remote_control(self, w, cmd):
+        self.calls.append((w, cmd))
 
 
 def boss_with_window(window):
@@ -148,6 +155,33 @@ class SessionsResultTest(unittest.TestCase):
         boss = boss_with_window(win)
         S.handle_result([], {'action': 'new', 'cwd': '/c'}, 7, boss)
         self.assertEqual(boss.calls[0][1][1], '--location=vsplit')
+
+
+class RestoreLayoutOnCloseTest(unittest.TestCase):
+    """Каждый кит возвращает layout таба из stack при закрытии —
+    даже без действия (answer None / 'close').
+    """
+
+    def boss_in_stack(self):
+        tab = FakeTab()
+        return boss_with_window(FakeWindow(tab=tab)), tab
+
+    def test_review_restores_layout(self):
+        boss, tab = self.boss_in_stack()
+        R.handle_result([], {'action': 'close'}, 7, boss)
+        self.assertEqual(tab.gotos, ['splits:split_axis=horizontal'])
+
+    def test_log_restores_layout(self):
+        boss, tab = self.boss_in_stack()
+        L.handle_result([], {'action': 'close'}, 7, boss)
+        self.assertEqual(tab.gotos, ['splits:split_axis=horizontal'])
+
+    def test_session_restores_layout_before_launch(self):
+        boss, tab = self.boss_in_stack()
+        S.handle_result([], {'action': 'new', 'cwd': '/c'}, 7, boss)
+        self.assertEqual(tab.gotos, ['splits:split_axis=horizontal'])
+        # claude запускается уже после возврата layout
+        self.assertEqual(len(boss.calls), 1)
 
 
 if __name__ == '__main__':
