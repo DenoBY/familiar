@@ -215,23 +215,41 @@ def _token_style(token) -> 'tuple[int | None, bool]':
     return style
 
 
-def _pygments_lexer(ext: str):
+def _pygments_lexer(ext: str, startinline: bool = True):
     if not _PYGMENTS or not ext:
         return None
-    if ext in _PYG_CACHE:
-        return _PYG_CACHE[ext]
+    key = (ext, startinline)
+    if key in _PYG_CACHE:
+        return _PYG_CACHE[key]
     by_filename, class_not_found = _PYGMENTS
+    opts = dict(stripnl=False, stripall=False, ensurenl=False)
+    # stripnl/stripall выключены: номера строк должны совпадать с
+    # файлом, лишний перенос сдвинул бы всю раскраску. startinline —
+    # чтобы php-код без открывающего <?php (fenced-блок) всё-таки
+    # подсвечивался; для html+php он, наоборот, загоняет весь текст в
+    # inline-php и ломает html/blade вокруг вставок — там он выключен.
+    if startinline:
+        opts['startinline'] = True
     try:
-        # stripnl/stripall выключены: номера строк должны совпадать
-        # с файлом, лишний перенос сдвинул бы всю раскраску.
-        # startinline — чтобы php-код без открывающего <?php (фрагмент
-        # в диффе или fenced-блок) всё-таки подсвечивался
-        lexer = by_filename('x' + ext, stripnl=False, stripall=False, ensurenl=False,
-                            startinline=True)
+        lexer = by_filename('x' + ext, **opts)
     except (class_not_found, ImportError):
         lexer = None      # урезанный вендоринг: модуля лексера может не быть
-    _PYG_CACHE[ext] = lexer
+    _PYG_CACHE[key] = lexer
     return lexer
+
+
+_PHP_EXTS = {'.php', '.phtml', '.blade.php'}
+# Blade/HTML-шаблон против голого php-фрагмента: тег <?php, html-тег
+# или blade-вставка ({{ }}, @foreach) значит, что вне php идёт обычный
+# текст — лексим как html+php, иначе '#' стало бы php-комментарием, а
+# <td> — операторами. Голый фрагмент (```php без <?php) — inline-php.
+_PHP_TEMPLATE_HINT = re.compile(r'<\?php|<[A-Za-z/!]|\{\{|@[A-Za-z]')
+
+
+def _php_lexer(text: str):
+    if _PHP_TEMPLATE_HINT.search(text):
+        return _pygments_lexer('.phtml', startinline=False)   # html снаружи, php внутри
+    return _pygments_lexer('.php')                             # голый фрагмент — inline-php
 
 
 def _is_call(tokens: list, idx: int) -> bool:
@@ -268,7 +286,7 @@ def text_colors(text: str, ext: str) -> 'list[list[int | None]] | None':
     Лексим текст целиком, а не построчно: только так видны докстринги,
     многострочные строки и f-string-интерполяция.
     """
-    lexer = _pygments_lexer(ext)
+    lexer = _php_lexer(text) if ext in _PHP_EXTS else _pygments_lexer(ext)
     if lexer is None or len(text) > MAX_HIGHLIGHT_BYTES:
         return None
     tokens = list(lexer.get_tokens(text))

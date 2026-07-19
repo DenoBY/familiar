@@ -196,11 +196,15 @@ class TestFinalRows(unittest.TestCase):
         self.assertEqual(mk[0], None)
         self.assertEqual(hunks, [1, 3, 4])
 
-    def test_delete_at_end_marks_last_line(self):
+    def test_delete_at_end_marks_last_line_below(self):
+        # удалено за последней строкой — метка у низа последней
+        # ('del_end', ▁), а не у верха ('del', ▔): кода «после» уже нет
         src = D.DiffSource('a\nb\ngone\n', 'a\nb\n')
         mk, hunks = D.line_marks(src)
-        self.assertEqual(mk, [None, 'del'])
+        self.assertEqual(mk, [None, 'del_end'])
         self.assertEqual(hunks, [1])
+        rows, plains, *_ = final('a\nb\ngone\n', 'a\nb\n', '.py', 40)
+        self.assertEqual(marks(plains), [' ', D._MARK_DELETE_END])
 
     def test_delete_of_whole_file_has_no_rows(self):
         rows, *_ = final('a\nb\n', '', '.py', 40)

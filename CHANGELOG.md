@@ -5,6 +5,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.23.1] — 2026-07-19
+
+### Fixed
+
+- review: code cut at the very end of a file now shows its marker as a
+  bar under the last line (`▁`), not above it (`▔`) — the earlier marker
+  read as if the deletion sat before that line instead of after it.
+- review: `.blade.php` and other PHP templates are highlighted as
+  HTML+PHP, so `#` in text (e.g. `#{{ $id }}`) and HTML tags are no
+  longer mistaken for a PHP comment that greyed out the rest of the line.
+  Bare ```` ```php ```` fragments without `<?php` still highlight as PHP.
+
 ## [0.23.0] — 2026-07-18
 
 ### Changed

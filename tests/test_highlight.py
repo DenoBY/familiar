@@ -83,6 +83,18 @@ class TestTextColors(unittest.TestCase):
     def test_php_without_open_tag_still_highlighted(self):
         self.assertEqual(dict(roles('$x = 1;', '.php'))['$x'], H.C_SELF)
 
+    def test_blade_hash_is_text_not_php_comment(self):
+        # #{{ }} в blade — обычный текст; inline-php лексер съел бы '#'
+        # как комментарий до конца строки и покрасил серым всё правее
+        code = "<td>#{{ $r['id'] }}</td>"
+        cols = H.text_colors(code, '.php')
+        tail = cols[0][code.index('#'):]
+        self.assertFalse(all(c == H.C_COMMENT for c in tail))
+
+    def test_php_file_with_open_tag_highlights_as_php(self):
+        code = "<?php\nclass Foo {}"
+        self.assertEqual(dict(roles(code, '.php', line=1))['class'], H.C_KEYWORD)
+
     def test_exotic_line_separators_do_not_shift_colors(self):
         # цвета обязаны ложиться на те же строки, что режет splitlines
         # у DiffSource, иначе ниже такого символа подсветка съезжает

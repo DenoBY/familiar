@@ -307,13 +307,15 @@ def _scopes(src: DiffSource, linenos: 'list[int]') -> 'list[str]':
 
 # ─────────── final-вид (финальный файл, как в IDE) ───────────
 
-_MARK_CHANGE = '▎'   # добавлена/изменена: полоса вдоль строки
-_MARK_DELETE = '▔'   # перед этой строкой вырезан код
-MARK_FG = {'add': 'green', 'mod': 'blue', 'del': 'red'}
+_MARK_CHANGE = '▎'       # добавлена/изменена: полоса вдоль строки
+_MARK_DELETE = '▔'       # перед этой строкой вырезан код (черта у верха)
+_MARK_DELETE_END = '▁'   # после этой (последней) строки вырезан код (у низа)
+MARK_FG = {'add': 'green', 'mod': 'blue', 'del': 'red', 'del_end': 'red'}
 # Что важнее показать, когда в одну ячейку карты изменений попали
 # разные правки: удаление заметить труднее всего (своей строки у него
 # нет), добавление — легче всего.
-_MARK_PRIORITY = {'del': 3, 'mod': 2, 'add': 1}
+_MARK_PRIORITY = {'del': 3, 'del_end': 3, 'mod': 2, 'add': 1}
+_MARK_CHAR = {'del': _MARK_DELETE, 'del_end': _MARK_DELETE_END}
 
 
 def line_marks(src: DiffSource) -> 'tuple[list[str | None], list[int]]':
@@ -333,11 +335,11 @@ def line_marks(src: DiffSource) -> 'tuple[list[str | None], list[int]]':
             if not b:
                 continue
             # индекс строки b == индекс её ряда, поэтому «удалено перед
-            # b[j1]» ложится прямо в j1; удаление в конце файла метит
-            # последнюю строку
-            row = min(j1, len(b) - 1)
+            # b[j1]» ложится прямо в j1; удаление в конце файла своей
+            # строки-«после» не имеет — метим низ последней строки
+            row, mark = _del_row(j1, len(b))
             if marks[row] is None:   # add/mod важнее: своя строка изменилась
-                marks[row] = 'del'
+                marks[row] = mark
             hunks.add(row)
             continue
         hunks.add(j1)
@@ -352,11 +354,19 @@ def line_marks(src: DiffSource) -> 'tuple[list[str | None], list[int]]':
         if i2 - i1 > j2 - j1 and b:
             # строк стало меньше: вырезанному хвосту достаётся строка за
             # блоком — своей у него, как и у обычного delete, нет
-            row = min(j2, len(b) - 1)
+            row, mark = _del_row(j2, len(b))
             if marks[row] is None:
-                marks[row] = 'del'
+                marks[row] = mark
             hunks.add(row)
     return marks, sorted(hunks)
+
+
+def _del_row(pos: int, n: int) -> 'tuple[int, str]':
+    """Строка нового файла для метки удаления и её вид: обычно «перед
+    b[pos]» (черта у верха), но удаление за последней строкой метит её
+    низ — кода «после» в файле уже нет.
+    """
+    return (pos, 'del') if pos < n else (n - 1, 'del_end')
 
 
 def kinds_to_marks(kinds: 'list[int | None]') -> 'list[str | None]':
@@ -405,7 +415,7 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
     for j, raw in enumerate(src.b):
         full = raw.replace('\t', '    ')
         mark = marks[j]
-        char = ' ' if mark is None else (_MARK_DELETE if mark == 'del' else _MARK_CHANGE)
+        char = _MARK_CHAR.get(mark, _MARK_CHANGE) if mark is not None else ' '
         sign = char + ' '
         gut = f'{j + 1:>{_NUMW}} '
         cf = truncate(full[hscroll:] if hscroll else full, codew)
