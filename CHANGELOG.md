@@ -5,6 +5,33 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.24.0] — 2026-07-20
+
+### Added
+
+- review: Find in Files mode on `Cmd+Shift+F` — IDE-style search across
+  the whole project, available only inside the review overlay (outside
+  it the hotkey does nothing). Live `git grep` as
+  you type (smart-case, `x` toggles regex, sees untracked files,
+  respects `.gitignore`, skips binaries), file tree with match counts,
+  syntax-highlighted preview with `n`/`N` and `[`/`]` match navigation,
+  `e` opens the editor at the match, `⌘c` / `⌘⇧c` copy the code or a
+  `@path#L42` reference for Claude Code. `Enter` on a match opens the
+  file through review's own navigation — a changed file lands in its
+  diff with the full review toolset (comments, staging), any other in
+  the same read-only view as go-to-definition, `⌃o` goes back. `Esc`
+  returns to the review exactly where you left it.
+
+- input line in every kitten (search, filter, comment, rename, …): the
+  caret can now be moved — `←`/`→`, `Home`/`End`, with insertion,
+  `Backspace` and forward `Delete` at the caret position.
+
+### Changed
+
+- review/log: in-file search moved from `/` to `⌘f` (like in an IDE);
+  in the log commit list `⌘f` opens the filter. Inside the overlays the
+  global `⌘f` (scrollback search) is passed through to the kitten.
+
 ## [0.23.1] — 2026-07-19
 
 ### Fixed

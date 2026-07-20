@@ -18,9 +18,11 @@ def short_path(path: str) -> str:
     return path
 
 
-def plural(n: int, noun: str) -> str:
-    """«1 line» / «2 lines» — счётчик с англ. множественным числом."""
-    return f'{n} {noun}' if n == 1 else f'{n} {noun}s'
+def plural(n: int, noun: str, many: 'str | None' = None) -> str:
+    """«1 line» / «2 lines» — счётчик с англ. множественным числом;
+    неправильную форму (match → matches) задаёт many.
+    """
+    return f'{n} {noun}' if n == 1 else f'{n} {many or noun + "s"}'
 
 
 def truncate(s: str, width: int) -> str:

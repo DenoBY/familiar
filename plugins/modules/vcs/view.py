@@ -818,8 +818,6 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         c = to_latin(ch)
         if ch == '\t':
             self.toggle_focus()
-        elif c == '/':
-            self.start_search()
         elif c == 'n':
             self.search_next(1)
         elif c == 'N':
@@ -929,8 +927,14 @@ class DiffTreeView(AtomicDraw, InputLine, DragSelect, PointerCursor, Handler):
         if not self.input_mode:
             return
         cols = self.screen_size.cols
-        for line in self.input_lines(cols)[-self.input_rows():]:
+        lines, row, col = self.input_layout(cols)
+        shown = lines[-self.input_rows():]
+        for line in shown:
             self.print(styled(truncate(line, cols), fg='cyan', bold=True))
+        # каретка — в экранных координатах области ввода (длинный
+        # комментарий обрезан сверху, строки каретки это касается тоже)
+        r = min(max(row - (len(lines) - len(shown)), 0), len(shown) - 1)
+        self.set_caret(2 + self.visible_rows() + r, min(col, cols - 1))
 
     # --- мышь ---
 

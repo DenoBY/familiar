@@ -20,12 +20,25 @@ class AtomicDraw:
     FLASH_TTL = 2.5   # сек: успеть прочитать сообщение, но не мозолить глаза
 
     _flash_timer = None
+    # (строка, колонка) каретки строки ввода, 0-based; выставляет
+    # отрисовщик строки ввода через set_caret на каждом кадре
+    _caret: 'tuple[int, int] | None' = None
+
+    def set_caret(self, row: int, col: int) -> None:
+        self._caret = (row, col)
 
     def draw_screen(self) -> None:
         shown = bool(getattr(self, 'flash', ''))
+        self._caret = None
         self.cmd.set_mode(Mode.PENDING_UPDATE)
         try:
             self._draw_frame()
+            # каретку рисует курсор терминала: глиф в тексте сдвигал
+            # бы хвост строки на ячейку при каждом движении
+            if self._caret is not None:
+                row, col = self._caret
+                self.print(f'\x1b[{row + 1};{col + 1}H', end='')
+            self.cmd.set_cursor_visible(self._caret is not None)
         finally:
             self.cmd.reset_mode(Mode.PENDING_UPDATE)
         self._arm_flash_timer(shown)

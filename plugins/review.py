@@ -6,15 +6,18 @@ review — kitten для kitty.
 слева дерево изменённых файлов (в стиле IDE, со сворачиванием
 папок), справа — unified diff выделенного файла с подсветкой
 синтаксиса, word-diff, поиском и прыжками по изменениям,
-вживую.
+вживую. Cmd+Shift+F переключает в режим Find in Files — живой
+поиск по всему проекту через git grep (modules.review.grep):
+слева файлы с совпадениями, справа файл целиком.
 
 Двухпанельная diff-механика — общий базовый класс
 modules.vcs.view.DiffTreeView; здесь только review-специфика:
 незакоммиченные правки (modules.review.git), аннотации к
-строкам, живой refresh и открытие файла в редакторе.
+строкам, живой refresh, поиск по проекту и открытие файла
+в редакторе.
 
 Подключение в ~/.config/kitty/kitty.conf:
-    map cmd+shift+r kitten /Users/deno/Projects/kitty/plugins/review.py
+    map cmd+shift+r kitten /path/to/familiar/plugins/review.py
 """
 
 import os
@@ -40,6 +43,7 @@ from modules.confirm import ConfirmQuit
 from modules.overlay import mark_overlay, restore_layout
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
+from modules.review.grep import MAX_MATCHES, search_files
 from modules.text import plural, short_path, truncate
 from modules.update import start_check, update_hint
 from modules.vcs.diff import DiffSource, group_key
@@ -50,6 +54,13 @@ from modules.vcs.view import DiffTreeView
 
 
 UNVERSIONED = 'Unversioned Files'
+
+# Find in Files: короче — не ищем (живой запрос из одной буквы в
+# большом репозитории совпадает почти с каждой строкой); пауза после
+# последнего символа — тот же порядок, что у отложенной загрузки
+# диффа при прокрутке дерева.
+FIND_MIN = 2
+FIND_DELAY = 0.2
 
 # бит Alt/Option в mouse-событии. kitty кодирует модификаторы мыши
 # СВОЕЙ схемой (shift=1, alt=2, ctrl=4, super=8), а не xterm-SGR
@@ -86,6 +97,16 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self._navstack: list[dict] = []
         self._cand: 'list[Target] | None' = None
         self._cand_sym = ''
+        # режим Find in Files (Cmd+Shift+F) и его состояние
+        self.find_mode = False
+        self.find_query = ''
+        self.find_regex = False
+        self.find_truncated = False
+        self._find_later = None
+        # (query, regex) последнего выполненного поиска
+        self._find_done: 'tuple[str, bool] | None' = None
+        # состояние обычного ревью на время поиска
+        self._before_find: 'dict | None' = None
 
     # --- хуки DiffTreeView ---
 
@@ -93,6 +114,8 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         path = it['path']
         absp = os.path.join(self.root, path)
         after = read_text(absp) if os.path.exists(absp) else ''
+        if self.find_mode:
+            return after, after   # результат поиска — файл как есть, без диффа
         if it['untracked'] or not has_head(self.root):
             return '', after
         return git_blob(self.root, 'HEAD', it.get('orig') or path), after
@@ -102,12 +125,21 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         return not q or q in os.path.basename(it['rel']).lower()
 
     def _empty_pane_msg(self) -> str:
+        if self.find_mode:
+            if len(self.find_query) < FIND_MIN:
+                return f'type to search ({FIND_MIN}+ characters)'
+            return 'no matches'
         return 'no matches' if self.filter_query else 'no changes'
 
     def _focus_landing(self, start: int) -> int:
+        if self.find_mode:
+            nxt = next((m for m in self.search_matches if m >= start), None)
+            return nxt if nxt is not None else self._first_landable(start)
         return self._first_commentable(start)   # курсор встаёт на строку кода (для аннотаций)
 
     def _diff_annotated(self, di: int, cur_rel: 'str | None') -> bool:
+        if self.find_mode:
+            return False
         line = self.diff_lineno[di] if di < len(self.diff_lineno) else 0
         return (cur_rel is not None and (cur_rel, line) in self.annots
                 and self._commentable(di))
@@ -191,13 +223,26 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self.cmd.clear_screen()
         cols = self.screen_size.cols
         base = short_path(self.root or self.cwd)
-        header = f' {base} ({self.n_files}'
-        header += f'/{len(self.items)})' if self.filter_query else ')'
         cur = self.current_item()
-        if self._external:
-            header += f'   ▸ {self._external} (read-only)'
-        elif cur:
-            header += f'   ▸ {cur["rel"]}'
+        if self.find_mode:
+            header = f' {base} — find'
+            if self.find_query:
+                header += f' ‘{self.find_query}’'
+            if self.n_files:
+                total = sum(len(it.get('lines', ())) for it in self.filtered)
+                header += (f' — {plural(total, "match", "matches")}'
+                           f' in {plural(self.n_files, "file")}')
+                if self.find_truncated:
+                    header += f' (first {MAX_MATCHES})'
+            if cur:
+                header += f'   ▸ {cur["rel"]}'
+        else:
+            header = f' {base} ({self.n_files}'
+            header += f'/{len(self.items)})' if self.filter_query else ')'
+            if self._external:
+                header += f'   ▸ {self._external} (read-only)'
+            elif cur:
+                header += f'   ▸ {cur["rel"]}'
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
         self._draw_pane_body()
@@ -216,10 +261,14 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if self.input_mode == 'comment':
             return (' Enter — save   Shift+Enter — new line   ⌃w erase word'
                     '   ⌃u erase all   Esc — cancel   (empty = delete)')
+        if self.input_mode == 'find':
+            return ' Enter — search   ⌃w erase word   ⌃u erase all   Esc — cancel'
         if self.input_mode:
             return ' Enter — keep   ⌃w erase word   ⌃u erase all   Esc — clear'
         if self.flash:
             return ' ' + self.flash
+        if self.find_mode:
+            return self._find_footer()
         modes = self._mode_hints()
         back = ' · ⌃o back' if self._navstack else ''
         if self._external:
@@ -242,12 +291,26 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             copy = f'⌘c copy {n_marked}' if n_marked else '⌘c @path'
             base = (f' [tree]  ↑↓ file · ⇧↑↓/⇧click mark · Enter fold · →/Tab diff'
                     f' · {copy} · {modes}{stage}{revert} · e edit · r refresh'
-                    f' · / search · f filter · {u} · q')
+                    f' · ⌘f search · ⌘⇧f find · f filter · {u} · q')
         if self.annots:
             base += (f'   ·   ✎ {len(self.annots)}'
                      ' ({} nav · w copy+clear · s send · x clear)')
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'
+        if self.search_matches:
+            base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
+        return base
+
+    def _find_footer(self) -> str:
+        if self.focus == 'diff':
+            base = (' [file]  ↑↓ line · n/N match · Enter open in review'
+                    ' · ⌘c copy · ⌘⇧c @path#L · e edit · ⌘f query'
+                    ' · ←/Tab files · Esc back')
+        else:
+            rx = 'on' if self.find_regex else 'off'
+            base = (f' [files]  ↑↓ file · Enter/→ open · ⌘f query · n/N match'
+                    f' · x regex:{rx} · ⌘c @path · e edit · r rescan'
+                    ' · u ignored · Esc back · q')
         if self.search_matches:
             base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
         return base
@@ -542,8 +605,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             return
         path = os.path.join(self.root, it['path'])
         line = 1
-        if 0 <= self.diff_offset < len(self.diff_lineno):
-            line = max(1, self.diff_lineno[self.diff_offset])
+        # в поиске — текущее совпадение, в ревью — видимая сверху
+        di = self.diff_cur if self.find_mode else self.diff_offset
+        if 0 <= di < len(self.diff_lineno):
+            line = max(1, self.diff_lineno[di])
         project = self.root or os.path.dirname(path)
         cmd, gui = editor_command(project, path, line)
         if gui:
@@ -566,9 +631,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     def _ro_block(self) -> bool:
         # правки (комментарий/stage/revert/export) в read-only внешнем
-        # файле бессмысленны: tree-item под ним чужой
-        if self._external:
-            self.flash = 'read-only (external file)'
+        # файле и в результатах поиска бессмысленны: tree-item чужой
+        if self._external or self.find_mode:
+            self.flash = ('read-only (find in files)' if self.find_mode
+                          else 'read-only (external file)')
             self.draw_screen()
             return True
         return False
@@ -700,6 +766,229 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self.flash = 'back'
         self.draw_screen()
 
+    # --- Find in Files (Cmd+Shift+F) ---
+
+    def toggle_find(self) -> None:
+        if self.find_mode:
+            self._exit_find()
+        else:
+            self._enter_find()
+
+    def _enter_find(self) -> None:
+        if not self.root:
+            self.flash = 'not a git repository'
+            self.draw_screen()
+            return
+        self._before_find = {
+            'filter': self.filter_query, 'collapsed': set(self.collapsed),
+            'tsel': self.tsel, 'left_offset': self.left_offset,
+            'focus': self.focus, 'view_mode': self.view_mode,
+            'diff_offset': self.diff_offset, 'diff_cur': self.diff_cur,
+            'hscroll': self.hscroll, 'search_query': self.search_query,
+            'show_noise': self.show_noise, 'external': self._external,
+        }
+        self.find_mode = True
+        self.filter_query = ''
+        self.search_query = ''
+        self.search_matches = []
+        self._external = None
+        self._drop_marks()
+        self.pending_revert = None
+        self.view_mode = 'final'
+        self.items = []
+        self.find_truncated = False
+        self._find_done = None
+        self.status = ''
+        self.rebuild_tree()
+        self.load_diff()
+        if self.find_query:
+            self._run_find()   # повторный вход — прежний запрос ещё актуален
+        self.start_input('find', self.find_query)
+
+    def _exit_find(self) -> None:
+        s = self._before_find or {}
+        self.find_mode = False
+        self._before_find = None
+        self.input_mode = None
+        self.input_buffer = ''
+        if self._find_later is not None:
+            self._find_later.cancel()
+            self._find_later = None
+        # обратно к живому ревью: правки могли появиться, пока искали
+        self._reload_items()
+        self.filter_query = s.get('filter', '')
+        self.collapsed = s.get('collapsed', self.collapsed)
+        self.show_noise = s.get('show_noise', False)
+        self.search_query = s.get('search_query', '')
+        self.view_mode = s.get('view_mode', 'diff')
+        self.rebuild_tree()
+        self.set_tsel(s.get('tsel', 0))
+        self.left_offset = s.get('left_offset', 0)
+        if s.get('external'):
+            self._show_file(s['external'], 0)
+        else:
+            self.load_diff()
+        rows = max(0, len(self.diff_rows) - 1)
+        self.diff_cur = min(s.get('diff_cur', 0), rows)
+        self.diff_offset = min(s.get('diff_offset', 0),
+                               max(0, len(self.diff_rows) - self.visible_rows()))
+        if s.get('hscroll') and self.hscroll != s['hscroll']:
+            self.hscroll = min(s['hscroll'], self.hscroll_max)
+            self.build_diff_rows()
+        self.focus = s.get('focus', 'tree')
+        self.draw_screen()
+
+    def _schedule_find(self) -> None:
+        """Живой запрос запускаем отложенно: git grep на каждый символ
+        копил бы очередь событий, и ввод отставал бы от рук.
+        """
+        if self._find_later is not None:
+            self._find_later.cancel()
+        self._find_later = self.asyncio_loop.call_later(FIND_DELAY, self._find_now)
+
+    def _find_now(self) -> None:
+        self._find_later = None
+        self._run_find()
+        self.draw_screen()
+
+    def _run_find(self) -> None:
+        if self._find_later is not None:   # прямой запуск отменяет отложенный
+            self._find_later.cancel()
+            self._find_later = None
+        if len(self.find_query) < FIND_MIN:
+            self.items, self.find_truncated = [], False
+            self.status = ''
+        else:
+            self.items, self.find_truncated = search_files(
+                self.root, self.find_query, self.find_regex)
+            # пусто из-за ошибки git (кривой regex, index.lock) —
+            # показать её, а не «no matches»
+            self.status = '' if self.items else last_error()
+        self._find_done = (self.find_query, self.find_regex)
+        self.rebuild_tree()
+        self.tsel = self._first_file()
+        self.left_offset = 0
+        self.load_diff()
+
+    def toggle_find_regex(self) -> None:
+        self.find_regex = not self.find_regex
+        self.flash = f'regex {"on" if self.find_regex else "off"}'
+        self._run_find()
+        self.draw_screen()
+
+    def load_diff(self) -> None:
+        if self.find_mode:
+            self.search_query = (self.find_query
+                                 if len(self.find_query) >= FIND_MIN else '')
+        super().load_diff()
+        if self.find_mode:
+            self.search_idx = 0
+            if self.search_matches:
+                self.diff_cur = self.search_matches[0]
+                self._scroll_to_match()
+
+    def build_diff_rows(self) -> None:
+        """В поиске прыжки [ ] ведут по совпадениям — «ханков» у файла
+        нет. Подмена именно здесь: resize и h/l перестраивают модель и
+        вернули бы ханки изменений.
+        """
+        super().build_diff_rows()
+        if self.find_mode and self.search_matches:
+            self.diff_hunks = list(self.search_matches)
+
+    def _recompute_matches(self) -> None:
+        """В поиске совпадения — по номерам строк из git grep, а не по
+        подстроке: только так regex и smart-case на экране сходятся
+        с результатом.
+        """
+        if not self.find_mode:
+            super()._recompute_matches()
+            return
+        it = self.current_item()
+        linenos = {ln for ln, _ in it.get('lines', ())} if it else set()
+        self.search_matches = [i for i, ln in enumerate(self.diff_lineno)
+                               if ln > 0 and ln in linenos]
+        if self.search_idx >= len(self.search_matches):
+            self.search_idx = 0
+
+    def search_next(self, direction: int) -> None:
+        """В поиске n/N ведёт и курсор: в regex-режиме вхождение внутри
+        строки не подсвечивается (render_match ищет подстроку), строку
+        показывает курсор.
+        """
+        if not self.find_mode:
+            super().search_next(direction)
+            return
+        if not self.search_matches:
+            return
+        self.search_idx = (self.search_idx + direction) % len(self.search_matches)
+        self.diff_cur = self.search_matches[self.search_idx]
+        self._scroll_to_match()
+        self.draw_screen()
+
+    def toggle_view_mode(self) -> None:
+        if self.find_mode:
+            self.flash = 'find shows the file as is'
+            self.draw_screen()
+            return
+        super().toggle_view_mode()
+
+    def _find_open_in_review(self) -> None:
+        """Enter на совпадении: выйти из поиска и открыть файл штатной
+        навигацией ревью — изменённый попадёт в свой дифф (комментарии,
+        stage), прочие — в тот же read-only вид, что go-to-definition;
+        ⌃o возвращает.
+        """
+        it = self.current_item()
+        if not it:
+            return
+        line = 0
+        if 0 <= self.diff_cur < len(self.diff_lineno):
+            line = self.diff_lineno[self.diff_cur]
+        rel = it['rel']
+        self._exit_find()
+        self._navigate(Target(rel, max(1, line), 'def', ''))
+
+    def _find_key(self, k: str) -> None:
+        if k == 'ENTER' and self.current_item():
+            if self.focus == 'tree':
+                self.set_focus('diff')
+            else:
+                self._find_open_in_review()
+            return
+        if k == 'ESCAPE':
+            # свой каскад: базовый шаг «очистить search_query» здесь не
+            # годится — подсветка запроса и есть результат поиска
+            if self.diff_sel is not None or self.diff_char_sel is not None:
+                self.diff_sel = self.diff_char_sel = None
+                self.draw_screen()
+            elif self.focus == 'diff':
+                self.set_focus('tree')
+            else:
+                self._exit_find()
+            return
+        self.diff_common_key(k)
+
+    def _find_text(self, text: str) -> None:
+        for ch in text:
+            c = to_latin(ch)
+            if c in ('q', 'Q'):
+                self.quit_loop(0)
+                return
+            if self.diff_common_text(ch):
+                continue
+            if c in ('e', 'E'):
+                self.open_editor()
+                return
+            if c in ('r', 'R'):
+                self._run_find()
+                self.flash = 'rescanned'
+                self.draw_screen()
+            elif c in ('f', 'F'):
+                self.start_search()
+            elif c in ('x', 'X'):
+                self.toggle_find_regex()
+
     # --- пикер кандидатов (несколько определений) ---
 
     def _draw_picker(self) -> None:
@@ -732,11 +1021,21 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
     def start_filter(self) -> None:
         self.start_input('filter', self.filter_query)
 
+    def start_search(self) -> None:
+        if self.find_mode:
+            self.start_input('find', self.find_query)
+        else:
+            super().start_search()
+
     def _input_live(self) -> None:
         if self.input_mode == 'filter':
             self._apply_filter()
         elif self.input_mode == 'search':
             self.apply_search_input()
+        elif self.input_mode == 'find':
+            self.find_query = self.input_buffer
+            self._schedule_find()
+            self.draw_screen()
         else:
             self.draw_screen()
 
@@ -750,6 +1049,9 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
     def commit_input(self) -> None:
         if self.input_mode == 'comment' and self.comment_target:
             self._save_comment()
+        elif (self.input_mode == 'find'
+                and self._find_done != (self.find_query, self.find_regex)):
+            self._run_find()
         super().commit_input()
 
     def _input_cancelled(self, mode: str) -> None:
@@ -761,6 +1063,13 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         elif mode == 'search':
             self.search_query = ''
             self.search_matches = []
+        elif mode == 'find':
+            # Esc отменяет правку запроса: на экране остаётся
+            # выполненный поиск, недопечатанный хвост не доискивается
+            if self._find_later is not None:
+                self._find_later.cancel()
+                self._find_later = None
+            self.find_query = self._find_done[0] if self._find_done else ''
         elif mode == 'comment':
             self.comment_target = None
 
@@ -770,7 +1079,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if self.confirm_active:
             return self.confirm_pointer(ev)
         di = self._diff_row_at(ev)
-        if di is not None:
+        if di is not None and not self.find_mode:
             col = self._diff_col_at(ev)
             # ⌥ над идентификатором → go-to-definition (кликабельно)
             if (getattr(ev, 'mods', 0) & _ALT_MOD) and col >= self._gutter_cols():
@@ -793,9 +1102,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             return
         # ⇧/⌥+ЛКМ по дереву — метка файла; ⌥ в диффе — go-to-definition,
         # ⇧ в диффе падает в базовый drag-select. press глотаем при
-        # обработке, иначе базовый Handler синтезирует click
+        # обработке, иначе базовый Handler синтезирует click. В поиске
+        # ни меток, ни goto-definition нет
         mods = getattr(ev, 'mods', 0)
-        if press and left and (mods & (_SHIFT_MOD | _ALT_MOD)):
+        if press and left and (mods & (_SHIFT_MOD | _ALT_MOD)) and not self.find_mode:
             if self._mark_click(ev):
                 return
             if mods & _ALT_MOD:
@@ -850,14 +1160,25 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
                 if self._ctrl_key(letter):
                     return
                 break
+        # ⌘⇧f и до строки ввода: выйти из поиска можно прямо из
+        # правки запроса; комментарий терять нельзя
+        if chord(key_event, 'super+shift', 'f') and self.input_mode != 'comment':
+            self.toggle_find()
+            return
         k = key_event.key
         if self.input_key(k, shift=bool(getattr(key_event, 'shift', False))):
+            return
+        if chord(key_event, 'super', 'f'):
+            self.start_search()
             return
         if chord(key_event, 'super+shift', 'c'):
             self.smart_copy_location()
             return
         if chord(key_event, 'super', 'c'):
             self.smart_copy()
+            return
+        if self.find_mode:
+            self._find_key(k)
             return
         if (getattr(key_event, 'shift', False) and self.focus == 'tree'
                 and k in ('UP', 'DOWN')):
@@ -905,7 +1226,8 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
                 return True
             return False
         if letter == 'o':
-            self.nav_back()
+            if not self.find_mode:   # стек «назад» принадлежит ревью
+                self.nav_back()
             return True
         if letter == 'd':
             self.diff_scroll(self.visible_rows() // 2)
@@ -933,6 +1255,9 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if ctrl is not None and self._ctrl_key(ctrl):
             return
         if self.input_text(text):
+            return
+        if self.find_mode:
+            self._find_text(text)
             return
         for ch in text:
             if ch in ('{', 'Х'):    # прыжок к пред. аннотации (Shift+[ ; на ru — Shift+х)

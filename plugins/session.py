@@ -223,7 +223,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
                 self.print()
 
         if self.input_mode:
-            self.print(styled(truncate(self._input_line(), cols), fg='cyan', bold=True))
+            self._draw_input_line(0 if self.screen == 'projects' else 2)
 
         # footer — без финального перевода строки, иначе экран
         # прокрутится вверх на одну строку и шапка уедет за верх окна.
@@ -249,7 +249,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             self.print()
 
         if self.input_mode:
-            self.print(styled(truncate(self._input_line(), cols), fg='cyan', bold=True))
+            self._draw_input_line(2)
 
         self.print(styled(truncate(self._footer(), cols),
                           fg='green' if self.flash else 'gray'), end='')
@@ -344,17 +344,21 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
         items = self.items()
         return items[self.sel] if 0 <= self.sel < len(items) else None
 
-    def _input_line(self) -> str:
-        """Отдельная строка поля ввода (над футером) в режиме ввода."""
-        if self.input_mode == 'filter':
-            return f' search: {self.input_buffer}▏'
-        if self.input_mode == 'search':
-            return f' search: {self.input_buffer}▏'
-        if self.input_mode == 'rename':
-            return f' rename: {self.input_buffer}▏'
+    def input_prefix(self) -> str:
+        if self.input_mode in ('filter', 'search'):
+            return ' search: '
         if self.input_mode == 'worktree':
-            return f' worktree name (empty = auto): {self.input_buffer}▏'
-        return ''
+            return ' worktree name (empty = auto): '
+        return f' {self.input_mode}: '
+
+    def _draw_input_line(self, header_rows: int) -> None:
+        """Отдельная строка поля ввода (над футером) в режиме ввода."""
+        cols = self.screen_size.cols
+        prefix = self.input_prefix()
+        self.print(styled(truncate(prefix + self.input_buffer, cols),
+                          fg='cyan', bold=True))
+        self.set_caret(header_rows + self.visible_rows(),
+                       min(len(prefix) + self.input_pos, cols - 1))
 
     def _footer(self) -> str:
         if self.input_mode == 'filter':

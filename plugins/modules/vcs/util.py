@@ -12,13 +12,15 @@ from ..text import pad, short_path, truncate  # noqa: F401
 
 
 # Статус изменения → цвет имени в дереве файлов, в стиле IDE
-# (букву статуса не печатаем — её несёт цвет).
+# (букву статуса не печатаем — её несёт цвет). None — цвет
+# терминала по умолчанию: результат поиска — обычный файл.
 STATUS_STYLE = {
     'modified':  'blue',
     'added':     'green',
     'deleted':   'gray',
     'renamed':   'cyan',
     'untracked': 'red',
+    'match':     None,
 }
 
 # Папки/файлы, скрытые по умолчанию (как «ignored» в IDE).

@@ -69,6 +69,22 @@ class RenderTests(unittest.TestCase):
         conf = familiar.render_generated_conf(["review"], False)
         self.assertIn("@ goto_layout stack @ kitten ", conf)
 
+    def test_review_gets_find_in_files_maps(self):
+        conf = familiar.render_generated_conf(["review"], False)
+        # ⌘⇧f работает только в фокусе review (проброс клавиши киту);
+        # глобального маппинга нет — снаружи оверлея поиск не открыть
+        self.assertIn("map --when-focus-on var:cc_plugin=review cmd+shift+f\n", conf)
+        self.assertIn("map --when-focus-on var:cc_plugin=review cmd+shift+а\n", conf)
+        self.assertNotIn("--search", conf)
+        self.assertNotIn("map cmd+shift+f", conf)
+        self.assertNotIn("map cmd+shift+а", conf)
+
+    def test_clipboard_kittens_pass_cmd_f_through(self):
+        conf = familiar.render_generated_conf(["log"], False)
+        self.assertIn("map --when-focus-on var:cc_plugin=log cmd+f\n", conf)
+        self.assertIn("map --when-focus-on var:cc_plugin=log cmd+а\n", conf)
+        self.assertNotIn("cmd+f", familiar.render_generated_conf(["session"], False))
+
 
 class ThemeTests(unittest.TestCase):
     def test_default_theme_writes_nothing(self):

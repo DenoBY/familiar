@@ -1048,6 +1048,7 @@ class ReviewHandlerTest(unittest.TestCase):
     def test_kill_word_stops_at_newline(self):
         self._start_comment()
         self.h.input_buffer = 'первая\nвторая строка'
+        self.h.input_pos = len(self.h.input_buffer)
         self.h.input_kill_word()
         self.assertEqual(self.h.input_buffer, 'первая\nвторая ')
         self.h.input_kill_word()

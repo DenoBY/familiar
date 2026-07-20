@@ -36,13 +36,17 @@ BACKUP_SUFFIX = ".familiar.bak"
 # Порядок ключей канонический (session, review, log) —
 # render_generated_conf выводит киты именно в нём, независимо от
 # порядка аргументов. clipboard=True — внутри review/log копирование
-# по cmd+c/cmd+shift+c должно доходить до kitten, поэтому глобальный
-# маппинг снимаем, пока оверлей в фокусе.
+# (cmd+c/cmd+shift+c) и поиск по файлу (cmd+f) должны доходить до
+# kitten, поэтому глобальные маппинги снимаем, пока оверлей в фокусе.
+# find — клавиши режима Find in Files: работают ТОЛЬКО в фокусе кита
+# (снимаем возможный глобальный маппинг, глобального своего не ставим —
+# снаружи оверлея поиск не открывается).
 KITTENS = {
     "session": {"key": "s", "ru": "ы", "file": "session.py",
                 "clipboard": False, "desc": "Claude Code sessions"},
     "review": {"key": "r", "ru": "к", "file": "review.py",
-               "clipboard": True, "desc": "uncommitted git changes"},
+               "clipboard": True, "desc": "uncommitted git changes",
+               "find": ("f", "а")},
     "log": {"key": "l", "ru": "д", "file": "log.py",
             "clipboard": True, "desc": "git history browser"},
 }
@@ -210,6 +214,12 @@ def _kitten_maps(name: str, plugins: str) -> list[str]:
     for key in (k["key"], k["ru"]):
         lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+shift+{key} discard_event")
         lines.append(f"map cmd+shift+{key} {combine}")
+    find = k.get("find")
+    if find:
+        lines.append(f"# Find in Files — only inside the {name} overlay: pass the key"
+                     " through to the kitten (it toggles the mode); no global mapping")
+        for key in find:
+            lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+shift+{key}")
     return lines
 
 
@@ -217,11 +227,17 @@ def _clipboard_unmaps(names: list[str]) -> list[str]:
     active = [n for n in names if KITTENS[n]["clipboard"]]
     if not active:
         return []
-    lines = ["# Inside review/log, copy (cmd+c / cmd+shift+c) goes to the kitten:"
-             " drop the global mapping while the overlay is focused."]
+    lines = ["# Inside review/log, copy (cmd+c / cmd+shift+c) and in-file search"
+             " (cmd+f) go to the kitten: drop the global mappings while the"
+             " overlay is focused."]
     for name in active:
         lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+c")
         lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+shift+c")
+        # cmd+а — та же физическая клавиша f на ЙЦУКЕН: глобальный
+        # cmd+f (search_scrollback) объявлен с ascii-fallback и без
+        # снятия перехватил бы её
+        lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+f")
+        lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+а")
     return lines
 
 

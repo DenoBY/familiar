@@ -502,7 +502,7 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
-                    f' · / search · {u} · Esc back')
+                    f' · ⌘f search · {u} · Esc back')
         if self.hscroll:
             base += f'   ·   ↔ {self.hscroll}'
         if self.search_matches:
@@ -551,6 +551,14 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
             return
         k = key_event.key
         if self.input_key(k):
+            return
+        if chord(key_event, 'super', 'f'):
+            # ⌘f — «поиск на этом экране»: в диффе по файлу,
+            # в списке коммитов — фильтр
+            if self.screen == 'diff':
+                self.start_search()
+            else:
+                self.start_filter()
             return
         if self.screen == 'diff':
             if chord(key_event, 'super', 'c'):

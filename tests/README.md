@@ -41,7 +41,9 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_transcript.py` | `modules.session.transcript`: tool labels, `⎿` output, edit diffs, plans, folding, widths |
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |
-| `test_result_handlers.py` | `handle_result` of both kittens — building the remote-control command (the kitty-process side) |
+| `test_review_grep.py` | the Find in Files `git grep` layer against a **real temporary repository**: smart-case, regex mode and its errors, untracked/ignored/binary files, the match cap |
+| `test_review_find.py` | review's Find in Files mode: enter/exit with state restore, live query with debounce, tree with match counts, match navigation, regex toggle, read-only guards, open in editor |
+| `test_result_handlers.py` | `handle_result` of the kittens — building the remote-control command (the kitty-process side) |
 | `test_overlay.py` | `modules.overlay.mark_overlay`: the OSC 1337 `SetUserVar` escape with the base64-encoded plugin name |
 | `test_pointer.py` | `modules.pointer`: the OSC 22 escapes that push a mouse pointer shape onto the stack and pop it back |
 | `test_theme.py` | color themes: the `palette/*.conf` format and role inheritance, Darcula's truecolor values against the JetBrains scheme, `FAMILIAR_THEME` parsing and the fallback to default |

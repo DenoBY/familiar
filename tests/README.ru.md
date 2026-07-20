@@ -41,7 +41,9 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_transcript.py` | `modules.session.transcript`: метки инструментов, вывод `⎿`, diff правок, планы, сворачивание, ширина |
 | `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |
-| `test_result_handlers.py` | `handle_result` обоих китов — построение команды remote-control (сторона процесса kitty) |
+| `test_review_grep.py` | `git grep`-слой Find in Files на **настоящем временном репозитории**: smart-case, regex-режим и его ошибки, untracked/ignored/бинарные файлы, потолок совпадений |
+| `test_review_find.py` | режим Find in Files в review: вход/выход с восстановлением состояния, живой запрос с дебаунсом, дерево со счётчиками совпадений, навигация по совпадениям, переключение regex, read-only-ограждения, открытие в редакторе |
+| `test_result_handlers.py` | `handle_result` китов — построение команды remote-control (сторона процесса kitty) |
 | `test_overlay.py` | `modules.overlay.mark_overlay`: escape-последовательность OSC 1337 `SetUserVar` с именем плагина в base64 |
 | `test_pointer.py` | `modules.pointer`: escape-последовательности OSC 22 — push формы указателя мыши на стек и pop обратно |
 | `test_theme.py` | цветовые темы: формат `palette/*.conf` и наследование ролей, truecolor-значения Darcula против схемы JetBrains, разбор `FAMILIAR_THEME` и откат к дефолту |
