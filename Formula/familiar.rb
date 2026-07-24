@@ -2,7 +2,7 @@ class Familiar < Formula
   desc "Keyboard-driven kitty overlays for a Claude Code workflow"
   homepage "https://github.com/DenoBY/familiar"
   url "https://github.com/DenoBY/familiar/archive/refs/tags/v0.25.0.tar.gz"
-  sha256 "9cc13d369e2cfa634f82ad1bf9199f362d9715803d532f92ba482bb7f70d28ed"
+  sha256 "84a2f6c836a359a77c7307814d6d23bfa81e512df583eee7e8e4ed3df51f2cf9"
   license "MIT"
   head "https://github.com/DenoBY/familiar.git", branch: "master"
 
