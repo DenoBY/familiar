@@ -5,6 +5,34 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.25.0] — 2026-07-24
+
+### Changed
+
+- terminal: `Cmd+Enter` (kitty's default new window) is unbound —
+  splits live on `Cmd+D` / `Cmd+Shift+D`.
+
+### Fixed
+
+- terminal: splits (`Cmd+D`, `Cmd+Shift+D`) reliably open in the
+  working directory of the active window. They relied on
+  `--cwd=current`, which reads the cwd of the newest process in the
+  window — a lottery next to Claude Code, which constantly spawns
+  short-lived processes. They now use `--cwd=last_reported`, which
+  prefers the directory the window itself reports and falls back to
+  those same processes. Tabs (`Cmd+T`) are unchanged.
+
+- session: splits opened from a claude session (`Cmd+D`,
+  `Cmd+Shift+D`) land in the project directory. The
+  kitten used to open claude as a plain overlay, and for overlays
+  kitty resolves the working directory from the window *underneath* —
+  the original shell, usually sitting in the home directory. The
+  session now opens as `overlay-main`, which kitty treats as the real
+  window for cwd purposes; the exit-back-to-shell behaviour is
+  unchanged. The window also reports its directory to kitty on
+  startup, since its shell `exec`s straight into claude and no prompt
+  ever gets to report it.
+
 ## [0.24.0] — 2026-07-20
 
 ### Added

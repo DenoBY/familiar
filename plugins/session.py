@@ -875,6 +875,15 @@ def main(args: list[str]) -> dict:
     return handler.result or {'action': 'close'}
 
 
+# Шелл окна сессии сразу exec'ается в claude — промпта не бывает, и
+# shell integration ни разу не сообщает kitty рабочую папку. Тогда
+# --cwd=last_reported у сплитов (splits.conf) падает на эвристику
+# «cwd самого нового процесса окна», а Claude Code постоянно плодит
+# короткоживущие процессы — папка выходит лотереей. Отчёт при старте
+# делает её детерминированной.
+_REPORT_CWD = r'printf "\033]7;file://%s\a" "$PWD"; '
+
+
 def _running_claude(window) -> bool:
     """True, если в окне уже идёт сессия claude — накрывать её
     оверлеем нельзя.
@@ -933,16 +942,19 @@ def handle_result(args: list[str], result: 'dict | None',
     # соседней сессии, а не весь таб). Иначе оверлей лёг бы поверх
     # текущей сессии (наложение). Свободное окно — оверлеем в том же
     # окне: по выходу из claude вернётся исходный шелл.
+    # Именно overlay-main: для простого overlay kitty резолвит cwd из
+    # окна ПОД ним (active_window_for_cwd), и сплиты из сессии
+    # открывались бы в папке исходного шелла, а не проекта.
     # Запуск через login+interactive шелл, а не `claude` напрямую:
     # PATH и переменные (~/.local/bin, где лежит claude) задаются в
     # .zshrc/.zprofile — при прямом запуске они не подхватываются,
     # claude не находит креды в Keychain и требует /login.
     shell = os.environ.get('SHELL') or '/bin/zsh'
-    placement = '--location=vsplit' if _running_claude(w) else '--type=overlay'
+    placement = '--location=vsplit' if _running_claude(w) else '--type=overlay-main'
     cmd = ['launch', placement]
     if cwd:
         cmd += ['--cwd', cwd]
-    cmd += [shell, '-l', '-i', '-c', 'exec ' + claude_args]
+    cmd += [shell, '-l', '-i', '-c', _REPORT_CWD + 'exec ' + claude_args]
     boss.call_remote_control(w, tuple(cmd))
 
 
