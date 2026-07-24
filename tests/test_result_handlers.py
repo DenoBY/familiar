@@ -89,7 +89,8 @@ class SessionsResultTest(unittest.TestCase):
         _, cmd = boss.calls[0]
         shell = os.environ.get('SHELL') or '/bin/zsh'
         run = S._REPORT_CWD + 'exec claude --resume SID'
-        self.assertEqual(cmd, ('launch', '--type=overlay-main', '--cwd', '/c',
+        self.assertEqual(cmd, ('launch', '--type=overlay-main', '--window-title', 'claude · c',
+                               '--cwd', '/c',
                                shell, '-l', '-i', '-c', run))
 
     def test_resume_without_cwd(self):
@@ -98,7 +99,7 @@ class SessionsResultTest(unittest.TestCase):
         _, cmd = boss.calls[0]
         shell = os.environ.get('SHELL') or '/bin/zsh'
         run = S._REPORT_CWD + 'exec claude --resume SID'
-        self.assertEqual(cmd, ('launch', '--type=overlay-main',
+        self.assertEqual(cmd, ('launch', '--type=overlay-main', '--window-title', 'claude',
                                shell, '-l', '-i', '-c', run))
 
     def test_resume_fork_appends_flag(self):
@@ -113,7 +114,8 @@ class SessionsResultTest(unittest.TestCase):
         S.handle_result([], {'action': 'continue', 'cwd': '/c'}, 7, boss)
         _, cmd = boss.calls[0]
         shell = os.environ.get('SHELL') or '/bin/zsh'
-        self.assertEqual(cmd, ('launch', '--type=overlay-main', '--cwd', '/c',
+        self.assertEqual(cmd, ('launch', '--type=overlay-main', '--window-title', 'claude · c',
+                               '--cwd', '/c',
                                shell, '-l', '-i', '-c', S._REPORT_CWD + 'exec claude --continue'))
 
     def test_new_session_command(self):

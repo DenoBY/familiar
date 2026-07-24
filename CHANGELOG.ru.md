@@ -5,6 +5,14 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [0.26.0] — 2026-07-24
+
+### Added
+
+- окна-оверлеи получили осмысленные заголовки вместо дефолтного
+  «kitty»: киты показывают своё имя (Session / Review / Log), сессия
+  claude — `claude · <проект>`.
+
 ## [0.25.0] — 2026-07-24
 
 ### Changed

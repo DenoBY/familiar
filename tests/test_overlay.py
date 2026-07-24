@@ -12,16 +12,18 @@ class MarkOverlayTest(unittest.TestCase):
         with redirect_stdout(buf):
             mark_overlay('session')
         # c2Vzc2lvbg== = base64('session'); OSC 1337 SetUserVar,
-        # терминатор BEL
+        # затем OSC 2 — заголовок окна; терминатор BEL
         self.assertEqual(buf.getvalue(),
-                         '\033]1337;SetUserVar=cc_plugin=c2Vzc2lvbg==\007')
+                         '\033]1337;SetUserVar=cc_plugin=c2Vzc2lvbg==\007'
+                         '\033]2;Session\007')
 
     def test_value_differs_per_plugin(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
             mark_overlay('review')
         self.assertEqual(buf.getvalue(),
-                         '\033]1337;SetUserVar=cc_plugin=cmV2aWV3\007')
+                         '\033]1337;SetUserVar=cc_plugin=cmV2aWV3\007'
+                         '\033]2;Review\007')
 
 
 class FakeLayout:

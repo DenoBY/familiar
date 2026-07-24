@@ -951,7 +951,9 @@ def handle_result(args: list[str], result: 'dict | None',
     # claude не находит креды в Keychain и требует /login.
     shell = os.environ.get('SHELL') or '/bin/zsh'
     placement = '--location=vsplit' if _running_claude(w) else '--type=overlay-main'
-    cmd = ['launch', placement]
+    # Свой заголовок: иначе таб показывает бессмысленное «kitty».
+    title = 'claude · ' + os.path.basename(cwd.rstrip('/')) if cwd else 'claude'
+    cmd = ['launch', placement, '--window-title', title]
     if cwd:
         cmd += ['--cwd', cwd]
     cmd += [shell, '-l', '-i', '-c', _REPORT_CWD + 'exec ' + claude_args]

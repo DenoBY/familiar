@@ -13,14 +13,16 @@ STACK = 'stack'
 
 def mark_overlay(name: str) -> None:
     """Пометить своё окно kitty user-var'ом cc_plugin=<name>
-    (OSC 1337 SetUserVar).
+    (OSC 1337 SetUserVar) и дать окну заголовок по имени кита.
 
     Значение кодируется base64 (требование протокола). Вызывать
-    в начале main() до старта TUI-Loop. Метка исчезает вместе с
-    окном kitten — чистить не нужно.
+    в начале main() до старта TUI-Loop. Метка и заголовок исчезают
+    вместе с окном kitten — чистить не нужно.
     """
     val = base64.b64encode(name.encode()).decode('ascii')
     sys.stdout.write(f'\033]1337;SetUserVar={OVERLAY_VAR}={val}\007')
+    # Без своего заголовка окно kitten показывается в табе как «kitty».
+    sys.stdout.write(f'\033]2;{name.title()}\007')
     sys.stdout.flush()
 
 

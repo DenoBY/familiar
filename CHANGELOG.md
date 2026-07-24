@@ -5,6 +5,14 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.26.0] — 2026-07-24
+
+### Added
+
+- overlay windows get descriptive titles instead of the default
+  «kitty»: kitten UIs show their name (Session / Review / Log), a
+  claude session shows `claude · <project>`.
+
 ## [0.25.0] — 2026-07-24
 
 ### Changed
