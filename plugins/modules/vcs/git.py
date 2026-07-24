@@ -7,8 +7,16 @@ blob'ов и парсеры `git diff --name-status`/`--numstat`,
 (рабочее дерево), и log (коммиты).
 """
 
+import os
 import subprocess
+from typing import Iterator
 
+
+# Кит рисует в тот же tty, что унаследует git: интерактивный запрос
+# (пароль к remote, конфликт) перехватил бы ввод TUI и подвесил кадр.
+# GIT_OPTIONAL_LOCKS=0 — чтобы читающие команды (status, diff) не
+# создавали index.lock и не дрались за него с IDE в том же репозитории.
+GIT_ENV = {**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
 
 _last_error = ''
 
@@ -34,8 +42,8 @@ def run_git(root: str, *args: str, binary: bool = False,
             timeout: int = 8) -> 'str | bytes | None':
     global _last_error
     try:
-        out = subprocess.run(['git', '-C', root, *args],
-                             capture_output=True, timeout=timeout)
+        out = subprocess.run(['git', '-C', root, *args], capture_output=True,
+                             timeout=timeout, stdin=subprocess.DEVNULL, env=GIT_ENV)
     except (OSError, subprocess.SubprocessError) as e:
         _last_error = str(e)
         return None
@@ -59,14 +67,52 @@ def run_git_err(root: str, *args: str, timeout: int = 8) -> 'str | None':
     главного потока, пока фоновая команда работает.
     """
     try:
-        out = subprocess.run(['git', '-C', root, *args],
-                             capture_output=True, timeout=timeout)
+        out = subprocess.run(['git', '-C', root, *args], capture_output=True,
+                             timeout=timeout, stdin=subprocess.DEVNULL, env=GIT_ENV)
     except (OSError, subprocess.SubprocessError) as e:
         return str(e)
     if out.returncode == 0:
         return None
     err = out.stderr.decode('utf-8', 'replace').strip()
     return err.splitlines()[0] if err else f'git {args[0]} failed'
+
+
+def git_lines(root: str, *args: str) -> 'Iterator[str]':
+    """Вывод git построчно, ленивым генератором.
+
+    Третий способ запуска рядом с run_git/run_git_err — для команд,
+    у которых потребитель обрывается на первых N строках, а полный
+    вывод меряется мегабайтами (git grep по короткому запросу).
+    Ограничение здесь не по времени, а по числу строк: сколько их
+    прочитать, решает потребитель, и на обрыве git убивается.
+    Ошибку кладёт в last_error(), как run_git.
+    """
+    global _last_error
+    try:
+        proc = subprocess.Popen(['git', '-C', root, *args], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                env=GIT_ENV)
+    except OSError as e:
+        _last_error = str(e)
+        return
+    done = False
+    try:
+        for raw in proc.stdout:
+            yield raw.decode('utf-8', 'replace').rstrip('\n')
+        done = True
+    finally:
+        proc.stdout.close()
+        if not done:
+            proc.kill()   # потребителю хватило — дочитывать незачем
+        err = proc.stderr.read().decode('utf-8', 'replace').strip()
+        proc.stderr.close()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        # убитый нами git не ошибка: ненулевой код у него от SIGKILL
+        if done and err and proc.returncode != 0:
+            _last_error = err.splitlines()[0]
 
 
 def git_root(cwd: str) -> 'str | None':

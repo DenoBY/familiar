@@ -28,7 +28,7 @@ from kitty.key_encoding import EventType
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from modules.confirm import ConfirmQuit
+from modules.keylayout import chord, to_latin
 from modules.log.git import (
     commit_contents,
     commit_detail,
@@ -44,9 +44,8 @@ from modules.log.git import (
 from modules.log.graph import NODE, build_graph
 from modules.overlay import mark_overlay, restore_layout
 from modules.text import pad, plural, short_path, truncate, wrap_text
-from modules.update import start_check, update_hint
 from modules.vcs.git import git_root, last_error
-from modules.vcs.util import chord, compose, to_latin
+from modules.vcs.util import compose
 from modules.vcs.view import DiffTreeView
 
 
@@ -73,7 +72,7 @@ _AUTHOR_W = 12   # фикс-колонка автора (справа) — чт�
 _DATE_W = 15     # фикс-колонка даты (справа)
 
 
-class CommitLogHandler(ConfirmQuit, DiffTreeView):
+class CommitLogHandler(DiffTreeView):
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close log?'
 
@@ -111,16 +110,8 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
 
     # --- жизненный цикл ---
 
-    def initialize(self) -> None:
-        self.cmd.set_cursor_visible(False)
+    def load_state(self) -> None:
         self.reload_commits()
-        self.flash = update_hint() or ''
-        start_check()
-        self.draw_screen()
-
-    def finalize(self) -> None:
-        self.cmd.set_cursor_visible(True)
-        self.reset_pointer()
 
     # --- список коммитов ---
 
@@ -192,24 +183,22 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         """Подтянуть изменения с удалёнок и перечитать список.
 
         git fetch — сеть до минуты; в колбэке ждать нельзя (UI и
-        Ctrl+C замёрзнут), поэтому работа уходит в executor, а
+        Ctrl+C замёрзнут), поэтому работа уходит в фоновый поток, а
         результат возвращается в event loop.
         """
         if not self.root or self._fetching:
             return
         self._fetching = True
         self.draw_screen()
-        fut = self.asyncio_loop.run_in_executor(None, fetch, self.root)
-        fut.add_done_callback(self._fetch_done)
+        self.run_background(lambda: fetch(self.root), self._fetch_done)
 
-    def _fetch_done(self, fut) -> None:
+    def _fetch_done(self, err: 'str | None') -> None:
         self._fetching = False
-        ok = not fut.cancelled() and fut.exception() is None and fut.result() is None
         self._detail_cache = {}          # ветки/содержимое могли измениться
         self.sel = 0
         self.offset = 0
         self.reload_commits()
-        self.flash = 'fetched' if ok else 'fetch failed'
+        self.flash = 'fetched' if err is None else 'fetch failed'
         self.draw_screen()
 
     def start_push(self) -> None:
@@ -236,18 +225,11 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         self.pending_push = None
         self._pushing = True
         self.draw_screen()
-        # сеть — как и fetch, уводим в executor, иначе UI замёрзнет
-        fut = self.asyncio_loop.run_in_executor(None, push, self.root, branch, up is not None)
-        fut.add_done_callback(self._push_done)
+        # сеть — как и fetch, уводим в фоновый поток, иначе UI замёрзнет
+        self.run_background(lambda: push(self.root, branch, up is not None), self._push_done)
 
-    def _push_done(self, fut) -> None:
+    def _push_done(self, err: 'str | None') -> None:
         self._pushing = False
-        if fut.cancelled():
-            err = 'cancelled'
-        elif fut.exception() is not None:
-            err = str(fut.exception())
-        else:
-            err = fut.result()
         self.flash = 'pushed' if err is None else f'push failed: {err}'
         if err is None:
             self.reload_commits()   # ref-метки уехали, узлы графа больше не «свои»
@@ -265,7 +247,7 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         if self.sel >= len(self.commits) - 1:
             self.load_more()
         self._schedule_detail()
-        self.draw_screen()
+        self.schedule_draw()
 
     def ensure_commit_visible(self) -> None:
         vis = self.visible_rows()
@@ -467,7 +449,7 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
         header = f' {badge}{c["short"]} · {refs}{truncate(c["subject"], 60)}'
         cur = self.current_item()
         if cur:
-            header += f'   ▸ {cur["rel"]}'
+            header += f'   ▸ {cur["path"]}'
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
 
@@ -503,11 +485,7 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             base = (f' [tree]  ↑↓ file · Enter fold · →/Tab diff · ⌘c @path · {modes}'
                     f' · ⌘f search · {u} · Esc back')
-        if self.hscroll:
-            base += f'   ·   ↔ {self.hscroll}'
-        if self.search_matches:
-            base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
-        return base
+        return base + self._footer_tail()
 
     # --- ввод (фильтр коммитов / поиск по диффу) ---
 
@@ -520,17 +498,16 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
             self.sel = 0
             self.rebuild_commits()
             self.draw_screen()
-        else:
-            self.apply_search_input()
+            return
+        super()._input_live()
 
     def _input_cancelled(self, mode: str) -> None:
         if mode == 'filter':
             self.filter_query = ''
             self.sel = 0
             self.rebuild_commits()
-        elif mode == 'search':
-            self.search_query = ''
-            self.search_matches = []
+            return
+        super()._input_cancelled(mode)
 
     # --- клавиатура ---
 
@@ -651,21 +628,22 @@ class CommitLogHandler(ConfirmQuit, DiffTreeView):
 
     # --- мышь: список коммитов сам, дифф — базовый класс ---
 
-    def _wanted_pointer(self, ev) -> 'str | None':
-        if self.confirm_active:
-            return self.confirm_pointer(ev)
-        return super()._wanted_pointer(ev)
-
-    def on_mouse_event(self, ev) -> None:
-        if self.confirm_click(ev):
-            return
+    def _pointer_for(self, ev) -> 'str | None':
+        # На списке коммитов зон диффа нет — база искала бы их по
+        # координатам дерева и врала бы формой курсора.
         if self.screen == 'commits':
+            return None
+        return super()._pointer_for(ev)
+
+    def _on_mouse(self, ev) -> None:
+        if self.screen == 'commits':
+            self.update_pointer(ev)
             if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
                 self.move(-1 if ev.buttons == MouseButton.WHEEL_UP else 1)
                 return
             Handler.on_mouse_event(self, ev)   # обычный клик → on_click
             return
-        super().on_mouse_event(ev)
+        super()._on_mouse(ev)
 
     def on_click(self, ev) -> None:
         if self.input_mode:

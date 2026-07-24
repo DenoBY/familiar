@@ -9,9 +9,9 @@ Handler: геометрию (ширину экрана и высоту види�
 from kittens.tui.operations import styled
 
 from ..highlight import SEL_RANGE_BG
-from .data import Entry, load_conversation
+from ..text import pad, truncate
+from .conversation import Entry, load_conversation
 from .transcript import Line, transcript_lines
-from .util import pad, truncate
 
 
 class Preview:

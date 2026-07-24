@@ -5,6 +5,83 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.27.0] — 2026-07-25
+
+### Changed
+
+- review, log: opening a collapsed block in a diff (`Enter`, or a
+  click on the separator) now reveals 50 lines at a time instead of
+  the whole block at once — a gap can hide hundreds of lines. The
+  lines continue the code above the separator, so reading order is
+  preserved; the separator moves down by exactly that much and the
+  cursor and viewport follow it, so the next press lands in the same
+  place on screen. The separator shows how many lines are still hidden
+  and how many the next press opens. To see the whole file there are
+  still the `a` (full-file) and `v` (final-view) modes.
+
+- review: go-to-definition (⌥+click, `d`) no longer freezes the UI.
+  The repo-wide `git grep` behind it ran inside the event-loop
+  callback, so on a monorepo the whole overlay stopped redrawing —
+  and Ctrl+C stopped being read — for as long as the search took. It
+  now runs in the background and the footer shows `searching for
+  '<symbol>'…` while it does.
+
+### Fixed
+
+- all kittens: fast mouse-wheel scrolling (or a held arrow key) no
+  longer freezes the kitten. Every wheel tick redrew the whole
+  screen, so a burst of events pushed hundreds of kilobytes of
+  escape sequences into the same terminal; once the stdout buffer
+  filled, the write blocked and the kitten stopped reading input.
+  A burst now collapses into a single frame — measured on a 60-tick
+  burst: 60 frames and 325 KB before, 1 frame and 3 KB after, with
+  no scrolling lost.
+
+- all kittens: a typo in a palette file no longer kills the kitten.
+  A role missing from the *default* palette raised `KeyError` on
+  import, so a single removed line in `config/palette/ghostty.conf`
+  took down review, log and sessions alike. Missing roles now fall
+  back to a readable color, as the docs always claimed.
+
+- all kittens: git no longer inherits the kitten's terminal. A
+  command that asked for a password (a remote over HTTPS) grabbed the
+  TUI's input and hung the frame; read-only commands also raced the
+  IDE for `index.lock`. git is now run with a closed stdin,
+  `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0`.
+
+- review: go-to-definition reported a git failure or timeout as a
+  confident "no definition for '<symbol>'". The real error is shown
+  instead, and repo-wide searches get the same longer timeout as Find
+  in Files.
+
+- review, log: the search (`⌘f`) no longer shows stale matches after
+  the diff is rebuilt — on resize, horizontal scroll or a view-mode
+  switch.
+
+- review: Find in Files no longer pulls the whole `git grep` output
+  into memory before capping it. On a short query in a big repository
+  that meant decoding tens of megabytes only to throw away everything
+  past the match limit; the output is now read incrementally and the
+  search stops at the cap.
+
+- review: a huge untracked file no longer gets counted line by line on
+  every rescan, and a binary file is no longer read before it is
+  recognized as binary.
+
+- log: closing the kitten during `fetch`/`push` no longer waits for
+  the network. The overlay sat black for up to 60/120 s because the
+  background work ran on non-daemon threads that Python joins at exit.
+
+- log: the mouse pointer no longer keeps the shape it had in the diff
+  after returning to the commit list.
+
+- sessions: pasting text that contains control bytes no longer
+  triggers ctrl-shortcuts in the session preview.
+
+- all kittens: the update-check cache is written atomically and no
+  longer loses the "already notified today" flag set by another
+  kitten, which could show the `brew upgrade` hint twice in a day.
+
 ## [0.26.0] — 2026-07-24
 
 ### Added

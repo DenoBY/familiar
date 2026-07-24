@@ -72,14 +72,6 @@ def word_span(plain: str, col: int) -> 'tuple[int, int] | None':
     return None
 
 
-def extract_symbol(plain: str, col: int) -> 'str | None':
-    """Идентификатор под колонкой `col`. Клик по границе (col == конец)
-    относим к слову слева — удобнее попадать по концу имени.
-    """
-    m = _match_at(plain, col)
-    return m.group() if m else None
-
-
 def _accessor_len(plain: str, s: int) -> int:
     """Длина аксессора (`?->`, `->`, `::`, `.`) перед позицией `s`;
     0 — аксессора нет.
@@ -252,7 +244,7 @@ def run_git_grep(root: str, patterns: list[str],
     if pathspec:
         specs = [pathspec] if isinstance(pathspec, str) else pathspec
         args += ['--', *specs]
-    out = run_git(root, *args)
+    out = run_git(root, *args, timeout=15)
     return _parse_grep(out) if out else []
 
 
@@ -270,7 +262,8 @@ def _search_repo(root: str, ext: str, name: str) -> 'list[tuple[str, int, str]]'
 
 
 def _list_files(root: str) -> list[str]:
-    out = run_git(root, 'ls-files', '--cached', '--others', '--exclude-standard')
+    out = run_git(root, 'ls-files', '--cached', '--others', '--exclude-standard',
+                  timeout=15)
     return out.splitlines() if out else []
 
 

@@ -17,6 +17,7 @@ styled() выводит как truecolor. Точные оттенки IDE ина
 
 import os
 import re
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
 
 
 DEFAULT = 'ghostty'
+
+# Цвет для роли, которой нет даже в DEFAULT: 7 — белый из базовых
+# шестнадцати, читаемый на любом фоне.
+FALLBACK = 7
 
 # От __file__, а не от FAMILIAR_ROOT: у модулей пакета __file__ есть
 # в обоих процессах kitty (в отличие от входных файлов китов), а
@@ -91,11 +96,19 @@ def palette(name: 'str | None' = None) -> 'dict[str, int | Color]':
     """Роль токена → цвет для styled().
 
     Набор ролей задаёт палитра DEFAULT; лишние роли в файле темы
-    игнорируются.
+    игнорируются. Роль, отсутствующая и в DEFAULT (опечатка в
+    палитре, обрезанный файл), отдаёт FALLBACK: потребители читают
+    роли на импорте, и KeyError уронил бы кит целиком.
     """
     base = _raw(DEFAULT)
     raw = dict(base)
     chosen = name or theme_name()
     if chosen != DEFAULT:
         raw.update((role, v) for role, v in _raw(chosen).items() if role in base)
-    return {role: _rgb(v) if isinstance(v, str) else v for role, v in raw.items()}
+    return defaultdict(
+        _fallback,
+        ((role, _rgb(v) if isinstance(v, str) else v) for role, v in raw.items()))
+
+
+def _fallback() -> int:
+    return FALLBACK

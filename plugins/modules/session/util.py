@@ -1,18 +1,9 @@
-"""Утилиты session-кита: возраст сессии; обрезка и перенос
-строк — из modules.text.
+"""Утилиты session-кита: возраст сессии и имена особых вызовов.
 
-Без состояния и без обращения к диску. Раскладка клавиш —
-общая, из modules.keylayout.
+Без состояния и без обращения к диску. Текстовые примитивы и
+раскладку потребители берут напрямую из modules.text /
+modules.keylayout.
 """
-
-from ..keylayout import to_latin  # noqa: F401  (ре-экспорт для session)
-from ..text import (  # noqa: F401  (ре-экспорт для session)
-    pad,
-    plural,
-    short_path,
-    truncate,
-    wrap_text,
-)
 
 
 # Вопрос пользователю: у отклонённого (Esc) вызова своё имя — общий

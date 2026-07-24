@@ -23,7 +23,7 @@ modules.vcs.view.DiffTreeView; здесь только review-специфика
 import os
 import subprocess
 import sys
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from kittens.tui.handler import result_handler
 from kittens.tui.loop import EventType as MouseEventType
@@ -39,18 +39,16 @@ from kitty.key_encoding import EventType
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from modules.confirm import ConfirmQuit
+from modules.keylayout import chord, ctrl_letter, to_latin
 from modules.overlay import mark_overlay, restore_layout
 from modules.review.editor import editor_command
 from modules.review.git import revert_paths, scan_changes, stage_paths
 from modules.review.grep import MAX_MATCHES, search_files
 from modules.text import plural, short_path, truncate
-from modules.update import start_check, update_hint
 from modules.vcs.diff import DiffSource, group_key
 from modules.vcs.git import git_blob, git_root, has_head, last_error, read_text
 from modules.vcs.navdef import Target, resolve_definition, symbol_at, word_span
-from modules.vcs.util import chord, ctrl_letter, to_latin
-from modules.vcs.view import DiffTreeView
+from modules.vcs.view import SHIFT_MOD, DiffTreeView
 
 
 UNVERSIONED = 'Unversioned Files'
@@ -67,12 +65,9 @@ FIND_DELAY = 0.2
 # (где alt=8): проверено эмпирически — ⌥+click даёт mods=2. ⌘/Super
 # мышью не приходит, поэтому go-to-definition — на ⌥+click.
 _ALT_MOD = 0b10
-# Shift+клик доходит до кита только с unmap в config/keys/mouse.conf:
-# без него kitty съедает его под своё выделение даже в grabbed-режиме
-_SHIFT_MOD = 0b1
 
 
-class ReviewHandler(ConfirmQuit, DiffTreeView):
+class ReviewHandler(DiffTreeView):
 
     multiline_modes: ClassVar[tuple[str, ...]] = ('comment',)
     QUIT_CONFIRM_MSG = 'Are you sure you want to close review?'
@@ -97,6 +92,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self._navstack: list[dict] = []
         self._cand: 'list[Target] | None' = None
         self._cand_sym = ''
+        self._goto_busy = False
         # режим Find in Files (Cmd+Shift+F) и его состояние
         self.find_mode = False
         self.find_query = ''
@@ -107,6 +103,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self._find_done: 'tuple[str, bool] | None' = None
         # состояние обычного ревью на время поиска
         self._before_find: 'dict | None' = None
+        # есть ли HEAD: обновляется при пересканировании, а не на
+        # каждую загрузку диффа — иначе шаг курсора по дереву стоил
+        # бы вдвое больше git-процессов
+        self._has_head = False
 
     # --- хуки DiffTreeView ---
 
@@ -116,13 +116,13 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         after = read_text(absp) if os.path.exists(absp) else ''
         if self.find_mode:
             return after, after   # результат поиска — файл как есть, без диффа
-        if it['untracked'] or not has_head(self.root):
+        if it['untracked'] or not self._has_head:
             return '', after
         return git_blob(self.root, 'HEAD', it.get('orig') or path), after
 
     def _tree_visible(self, it: dict) -> bool:
         q = self.filter_query.lower()
-        return not q or q in os.path.basename(it['rel']).lower()
+        return not q or q in os.path.basename(it['path']).lower()
 
     def _empty_pane_msg(self) -> str:
         if self.find_mode:
@@ -163,25 +163,17 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     # --- жизненный цикл ---
 
-    def initialize(self) -> None:
-        self.cmd.set_cursor_visible(False)
+    def load_state(self) -> None:
         self.load_source()
-        self.flash = update_hint() or ''
-        start_check()
-        self.draw_screen()
-
-    def finalize(self) -> None:
-        self.cmd.set_cursor_visible(True)
-        self.reset_pointer()
 
     def _reload_items(self) -> None:
         if not self.root:
             self.items = []
             self.status = 'not a git repository'
             return
+        self._has_head = has_head(self.root)
         self.items = scan_changes(self.root)
         for it in self.items:
-            it['rel'] = it['path']
             if it.get('untracked'):
                 it['group'] = UNVERSIONED
         # пустой список из-за ошибки git — показать её,
@@ -235,14 +227,14 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
                 if self.find_truncated:
                     header += f' (first {MAX_MATCHES})'
             if cur:
-                header += f'   ▸ {cur["rel"]}'
+                header += f'   ▸ {cur["path"]}'
         else:
             header = f' {base} ({self.n_files}'
             header += f'/{len(self.items)})' if self.filter_query else ')'
             if self._external:
                 header += f'   ▸ {self._external} (read-only)'
             elif cur:
-                header += f'   ▸ {cur["rel"]}'
+                header += f'   ▸ {cur["path"]}'
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
         self._draw_pane_body()
@@ -287,7 +279,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
             stage = ' · + stage' if self._selected_paths() else ''
             revert = ' · - revert' if any(self._revert_targets()) else ''
-            n_marked = len(self._marked_rels())
+            n_marked = len(self._marked_paths())
             copy = f'⌘c copy {n_marked}' if n_marked else '⌘c @path'
             base = (f' [tree]  ↑↓ file · ⇧↑↓/⇧click mark · Enter fold · →/Tab diff'
                     f' · {copy} · {modes}{stage}{revert} · e edit · r refresh'
@@ -295,11 +287,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         if self.annots:
             base += (f'   ·   ✎ {len(self.annots)}'
                      ' ({} nav · w copy+clear · s send · x clear)')
-        if self.hscroll:
-            base += f'   ·   ↔ {self.hscroll}'
-        if self.search_matches:
-            base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
-        return base
+        return base + self._footer_tail()
 
     def _find_footer(self) -> str:
         if self.focus == 'diff':
@@ -311,9 +299,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             base = (f' [files]  ↑↓ file · Enter/→ open · ⌘f query · n/N match'
                     f' · x regex:{rx} · ⌘c @path · e edit · r rescan'
                     ' · u ignored · Esc back · q')
-        if self.search_matches:
-            base += f'   ·   n/N {self.search_idx + 1}/{len(self.search_matches)}'
-        return base
+        return base + self._footer_tail()
 
     # --- git add ---
 
@@ -326,112 +312,8 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         xy = it['xy']
         return len(xy) > 1 and xy[1] != ' '
 
-    def _items_under_cursor(self, keep: Callable[[dict], bool],
-                            li: 'int | None' = None) -> list[dict]:
-        """Элементы строки дерева (по умолчанию — под курсором): у
-        файла — он сам, у папки (и у узла Unversioned Files) — все её
-        файлы, прошедшие keep. Скрытые фильтром и noise-каталоги не
-        попадают: трогаем ровно то, что видно.
-        """
-        if li is None:
-            li = self.tsel
-        if not self.rows or not (0 <= li < len(self.rows)):
-            return []
-        return self._row_items(self.rows[li], keep)
-
-    def _row_items(self, row: dict, keep: Callable[[dict], bool]) -> list[dict]:
-        if row['type'] == 'file':
-            it = self.filtered[row['idx']]
-            return [it] if keep(it) else []
-        prefix = row['path'] + '/' if row.get('path') else ''
-        return [it for it in self.filtered
-                if it.get('group') == row.get('group') and it['rel'].startswith(prefix)
-                and keep(it)]
-
     def _selected_paths(self) -> list[str]:
         return [it['path'] for it in self._items_under_cursor(self._stageable)]
-
-    # --- множественный выбор файлов (метки → ⌘c копирует все) ---
-
-    def _rels_at(self, li: int) -> list[str]:
-        return [it['rel'] for it in self._items_under_cursor(lambda it: True, li)]
-
-    def _range_rels(self, li: int) -> list[str]:
-        """Вклад строки дерева в диапазонное выделение: файл — он сам;
-        свёрнутая папка — все её файлы (видимы только этой строкой);
-        развёрнутая — ничего: её файлы идут своими строками, и метки
-        не должны убегать ниже курсора.
-        """
-        if not self.rows or not (0 <= li < len(self.rows)):
-            return []
-        row = self.rows[li]
-        if row['type'] == 'file':
-            return [self.filtered[row['idx']]['rel']]
-        return self._rels_at(li) if row.get('collapsed') else []
-
-    def _dir_marked(self, row: dict) -> bool:
-        """Свёрнутая папка подсвечивается, когда помечены все её
-        файлы: поддерево видно только этой строкой."""
-        if not row.get('collapsed'):
-            return False
-        rels = [it['rel'] for it in self._row_items(row, lambda it: True)]
-        return bool(rels) and all(r in self.marked_paths for r in rels)
-
-    def _toggle_mark_at(self, li: int) -> None:
-        """⌥+клик: пометить/снять файл, папку — все её файлы разом.
-        Курсор, фокус и открытый дифф не трогаем — пометка не должна
-        сбивать текущий файл. Последнюю метку клик не снимает:
-        выделение не пустеет, снимает его навигация или Esc."""
-        rels = self._rels_at(li)
-        if not rels:
-            self.flash = 'nothing to mark here'
-            return
-        if not self.marked_paths:
-            # вход в мультивыбор: активное одиночное выделение — тоже
-            # метка; ⌥+клик добавляет к нему, а не переносит выделение
-            self.marked_paths.update(self._range_rels(self.tsel))
-        if all(r in self.marked_paths for r in rels):
-            if not self.marked_paths - set(rels):
-                self.flash = 'last mark kept'
-                return
-            self.marked_paths.difference_update(rels)
-        else:
-            self.marked_paths.update(rels)
-        self.flash = f'{plural(len(self.marked_paths), "file")} marked'
-
-    def clear_marks(self) -> None:
-        self._drop_marks()
-        self.flash = 'marks cleared'
-        self.draw_screen()
-
-    def _paint_range(self, li: int) -> None:
-        """Классика GUI-списков: ⇧ красит от якоря (фокус при входе в
-        мультивыбор) до цели; повторное ⇧ перекрашивает от того же
-        якоря, снимая ушедший из диапазона хвост."""
-        if self.mark_anchor is None:
-            self.mark_anchor = self.tsel
-        a, prev = self.mark_anchor, self.tsel
-        for i in range(min(a, prev), max(a, prev) + 1):
-            self.marked_paths.difference_update(self._range_rels(i))
-        self.set_tsel(li)
-        for i in range(min(a, self.tsel), max(a, self.tsel) + 1):
-            self.marked_paths.update(self._range_rels(i))
-        if self.tsel != prev:
-            self._schedule_load_diff()
-
-    def mark_move(self, delta: int) -> None:
-        """Shift+↑/↓: диапазон от якоря — шаг назад снимает строку.
-        Строки без вклада в диапазон (развёрнутые папки) пропускаем:
-        шаг на них был бы пустым — ни метки, ни подсветки."""
-        if not self.rows:
-            return
-        li = self.tsel + delta
-        while 0 <= li < len(self.rows) and not self._range_rels(li):
-            li += delta
-        if not 0 <= li < len(self.rows):
-            return
-        self._paint_range(li)
-        self.draw_screen()
 
     def stage_selected(self) -> None:
         if self._ro_block() or not self.root:
@@ -501,7 +383,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         cur = self.current_item()
         if not cur or not self.annots:
             return
-        rel = cur['rel']
+        rel = cur['path']
         marked = [di for di in range(len(self.diff_lineno))
                   if self._commentable(di) and (rel, self.diff_lineno[di]) in self.annots]
         if not marked:
@@ -528,8 +410,8 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         line = self.diff_lineno[self.diff_cur]
         after_lines = self.diff_after.splitlines()
         code = after_lines[line - 1] if 0 < line <= len(after_lines) else ''
-        self.comment_target = (cur['rel'], line, code)
-        existing = self.annots.get((cur['rel'], line))
+        self.comment_target = (cur['path'], line, code)
+        existing = self.annots.get((cur['path'], line))
         self.start_input('comment', existing['text'] if existing else '')
 
     def _save_comment(self) -> None:
@@ -647,14 +529,36 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     def goto_definition(self, symbol: 'str | None', is_attr: bool = False,
                         is_call: bool = False, qualifier: 'str | None' = None) -> None:
+        """Найти определение символа и перейти к нему.
+
+        Поиск — repo-wide git grep, на монорепозитории это секунды:
+        в колбэке ждать нельзя (замёрзли бы кадр и ⌃c), поэтому
+        работа уходит в фоновый поток.
+        """
         if not symbol or not self.root:
             return
-        cur_rel = self._external or (self.current_item() or {}).get('rel')
-        targets = resolve_definition(
-            self.root, cur_rel, self.diff_ext, symbol, is_attr=is_attr,
-            is_call=is_call, qualifier=qualifier, cur_source=self.diff_after)
+        if self._goto_busy:
+            return                       # предыдущий поиск ещё идёт
+        cur_rel = self._external or (self.current_item() or {}).get('path')
+        ext, source = self.diff_ext, self.diff_after
+        self._goto_busy = True
+        self.flash = f"searching for '{symbol}'…"
+        self.draw_screen()
+
+        def work():
+            targets = resolve_definition(
+                self.root, cur_rel, ext, symbol, is_attr=is_attr,
+                is_call=is_call, qualifier=qualifier, cur_source=source)
+            return targets, last_error()
+
+        self.run_background(work, lambda res: self._goto_done(symbol, *res))
+
+    def _goto_done(self, symbol: str, targets: list, err: str) -> None:
+        self._goto_busy = False
         if not targets:
-            self.flash = f"no definition for '{symbol}'"
+            # таймаут/сбой git иначе выглядел бы уверенным «нет
+            # определения» — молча неверный ответ
+            self.flash = err or f"no definition for '{symbol}'"
             self.draw_screen()
             return
         if len(targets) == 1:
@@ -675,16 +579,45 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             if ref:
                 self.goto_definition(*ref)
 
-    def _snapshot(self) -> dict:
+    def _capture_view(self) -> dict:
+        """Снимок позиции во вьюере — куда вернуться после прыжка к
+        определению (⌃o) или выхода из поиска по проекту.
+        """
         return {'external': self._external, 'tsel': self.tsel,
                 'diff_offset': self.diff_offset, 'diff_cur': self.diff_cur,
                 'view_mode': self.view_mode, 'hscroll': self.hscroll,
                 'left_offset': self.left_offset, 'focus': self.focus,
                 'collapsed': set(self.collapsed)}
 
+    def _restore_view(self, s: dict) -> None:
+        """Обратная к _capture_view; дерево перестраивает сама.
+
+        Порядок обязателен: view_mode — до load_diff (тот строит строки
+        через build_diff_rows, который его читает), hscroll — после неё
+        (раньше не известен hscroll_max), left_offset — последним:
+        set_tsel по пути правит его под курсор.
+        """
+        self.collapsed = s.get('collapsed', self.collapsed)
+        self.view_mode = s.get('view_mode', 'diff')
+        self.rebuild_tree()
+        if s.get('external'):
+            self._show_file(s['external'], 0)
+        else:
+            self._external = None
+            self.set_tsel(s.get('tsel', 0))
+            self.load_diff()
+        if s.get('hscroll') and self.hscroll != s['hscroll']:
+            self.hscroll = min(s['hscroll'], self.hscroll_max)
+            self.build_diff_rows()
+        self.diff_cur = min(s.get('diff_cur', 0), max(0, len(self.diff_rows) - 1))
+        self.diff_offset = min(s.get('diff_offset', 0),
+                               max(0, len(self.diff_rows) - self.visible_rows()))
+        self.left_offset = s.get('left_offset', 0)
+        self.focus = s.get('focus', 'tree')
+
     def _reveal_file(self, rel: str) -> None:
         # раскрыть свёрнутых предков, чтобы файл появился строкой дерева
-        it = next((x for x in self.filtered if x['rel'] == rel), None)
+        it = next((x for x in self.filtered if x['path'] == rel), None)
         if it is None:
             return
         prefix = group_key(it['group']) if it.get('group') else ''
@@ -698,13 +631,13 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     def _tree_row_for(self, rel: str) -> 'int | None':
         for i, r in enumerate(self.rows):
-            if r['type'] == 'file' and self.filtered[r['idx']]['rel'] == rel:
+            if r['type'] == 'file' and self.filtered[r['idx']]['path'] == rel:
                 return i
         return None
 
     def _navigate(self, target: Target) -> None:
-        self._navstack.append(self._snapshot())
-        in_review = any(x['rel'] == target.path for x in self.filtered)
+        self._navstack.append(self._capture_view())
+        in_review = any(x['path'] == target.path for x in self.filtered)
         row = None
         if in_review:
             self._reveal_file(target.path)
@@ -735,7 +668,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         self.view_mode = 'final'
         self.hscroll = 0
         self.diff_sel = self.diff_char_sel = None
-        self.expanded = set()
+        self.expanded = {}
         self.build_diff_rows()
         self.focus = 'diff'
         self._center_on_line(line)
@@ -745,24 +678,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             self.flash = 'nothing to go back to'
             self.draw_screen()
             return
-        s = self._navstack.pop()
-        self.collapsed = s['collapsed']
-        self.rebuild_tree()
-        self.view_mode = s['view_mode']
-        if s['external']:
-            self._show_file(s['external'], 0)
-        else:
-            self._external = None
-            self.set_tsel(s['tsel'])
-            self.load_diff()
-        if s['hscroll'] and self.hscroll != s['hscroll']:
-            self.hscroll = min(s['hscroll'], self.hscroll_max)
-            self.build_diff_rows()
-        rows = max(0, len(self.diff_rows) - 1)
-        self.diff_cur = min(s['diff_cur'], rows)
-        self.diff_offset = min(s['diff_offset'], max(0, len(self.diff_rows) - self.visible_rows()))
-        self.left_offset = s['left_offset']
-        self.focus = s['focus']
+        self._restore_view(self._navstack.pop())
         self.flash = 'back'
         self.draw_screen()
 
@@ -779,14 +695,10 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             self.flash = 'not a git repository'
             self.draw_screen()
             return
-        self._before_find = {
-            'filter': self.filter_query, 'collapsed': set(self.collapsed),
-            'tsel': self.tsel, 'left_offset': self.left_offset,
-            'focus': self.focus, 'view_mode': self.view_mode,
-            'diff_offset': self.diff_offset, 'diff_cur': self.diff_cur,
-            'hscroll': self.hscroll, 'search_query': self.search_query,
-            'show_noise': self.show_noise, 'external': self._external,
-        }
+        self._before_find = {**self._capture_view(),
+                             'filter': self.filter_query,
+                             'search_query': self.search_query,
+                             'show_noise': self.show_noise}
         self.find_mode = True
         self.filter_query = ''
         self.search_query = ''
@@ -817,25 +729,9 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         # обратно к живому ревью: правки могли появиться, пока искали
         self._reload_items()
         self.filter_query = s.get('filter', '')
-        self.collapsed = s.get('collapsed', self.collapsed)
         self.show_noise = s.get('show_noise', False)
         self.search_query = s.get('search_query', '')
-        self.view_mode = s.get('view_mode', 'diff')
-        self.rebuild_tree()
-        self.set_tsel(s.get('tsel', 0))
-        self.left_offset = s.get('left_offset', 0)
-        if s.get('external'):
-            self._show_file(s['external'], 0)
-        else:
-            self.load_diff()
-        rows = max(0, len(self.diff_rows) - 1)
-        self.diff_cur = min(s.get('diff_cur', 0), rows)
-        self.diff_offset = min(s.get('diff_offset', 0),
-                               max(0, len(self.diff_rows) - self.visible_rows()))
-        if s.get('hscroll') and self.hscroll != s['hscroll']:
-            self.hscroll = min(s['hscroll'], self.hscroll_max)
-            self.build_diff_rows()
-        self.focus = s.get('focus', 'tree')
+        self._restore_view(s)
         self.draw_screen()
 
     def _schedule_find(self) -> None:
@@ -945,7 +841,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         line = 0
         if 0 <= self.diff_cur < len(self.diff_lineno):
             line = self.diff_lineno[self.diff_cur]
-        rel = it['rel']
+        rel = it['path']
         self._exit_find()
         self._navigate(Target(rel, max(1, line), 'def', ''))
 
@@ -1075,9 +971,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
 
     # --- ввод ---
 
-    def _wanted_pointer(self, ev) -> 'str | None':
-        if self.confirm_active:
-            return self.confirm_pointer(ev)
+    def _pointer_for(self, ev) -> 'str | None':
         di = self._diff_row_at(ev)
         if di is not None and not self.find_mode:
             col = self._diff_col_at(ev)
@@ -1088,11 +982,9 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
             # над номером строки, где можно оставить комментарий
             if col < self._gutter_cols() and self._commentable(di):
                 return 'pointer'
-        return super()._wanted_pointer(ev)
+        return super()._pointer_for(ev)
 
-    def on_mouse_event(self, ev) -> None:
-        if self.confirm_click(ev):
-            return
+    def _on_mouse(self, ev) -> None:
         press = getattr(ev, 'type', None) == MouseEventType.PRESS
         left = bool(ev.buttons & MouseButton.LEFT)
         # пикер открыт — клик выбирает кандидата (строки списка с 2-й)
@@ -1105,7 +997,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
         # обработке, иначе базовый Handler синтезирует click. В поиске
         # ни меток, ни goto-definition нет
         mods = getattr(ev, 'mods', 0)
-        if press and left and (mods & (_SHIFT_MOD | _ALT_MOD)) and not self.find_mode:
+        if press and left and (mods & (SHIFT_MOD | _ALT_MOD)) and not self.find_mode:
             if self._mark_click(ev):
                 return
             if mods & _ALT_MOD:
@@ -1113,31 +1005,7 @@ class ReviewHandler(ConfirmQuit, DiffTreeView):
                 if ref:
                     self.goto_definition(*ref)
                 return
-        super().on_mouse_event(ev)
-
-    def _mark_click(self, ev) -> bool:
-        """⇧/⌥+клик по строке дерева: ⇧ красит диапазон от якоря до
-        клика (повторный ⇧ перекрашивает от того же якоря),
-        ⌥ — переключает метку файла/папки, не двигая курсор. В области
-        диффа возвращает False."""
-        if getattr(ev, 'cell_x', 0) >= self.left_width():
-            return False
-        r = ev.cell_y - 2
-        if not (0 <= r < self.visible_rows()):
-            return False
-        li = self.left_offset + r
-        if li >= len(self.rows):
-            return False
-        if getattr(ev, 'mods', 0) & _SHIFT_MOD:
-            self.focus = 'tree'
-            self._paint_range(li)
-            n = len(self.marked_paths)
-            self.flash = (f'{plural(n, "file")} marked' if n
-                          else 'nothing to mark here')
-        else:
-            self._toggle_mark_at(li)
-        self.draw_screen()
-        return True
+        super()._on_mouse(ev)
 
     def on_key(self, key_event) -> None:
         if key_event.type == EventType.RELEASE:

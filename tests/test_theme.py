@@ -73,6 +73,11 @@ class PaletteFileTests(unittest.TestCase):
         self._write('mine', '# шапка\n\ncomment 7  # серый\n  # отступ\n')
         self.assertEqual(T.palette('mine')['comment'], 7)
 
+    def test_role_missing_even_from_default_falls_back(self):
+        # highlight.py читает роли на импорте: KeyError уронил бы все
+        # киты из-за одной опечатки в палитре
+        self.assertEqual(T.palette(T.DEFAULT)['no_such_role'], T.FALLBACK)
+
 
 class CliAgreementTests(unittest.TestCase):
     """Список тем оба выводят из файлов config/palette/, но двумя

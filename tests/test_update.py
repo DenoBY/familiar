@@ -124,5 +124,48 @@ class StartCheckTests(UpdateTestCase):
         self.assertGreater(data['checked'], 0)
 
 
+class ConcurrentWriteTests(UpdateTestCase):
+    def test_refresh_keeps_notified_written_while_it_waited(self):
+        # пока поток висел в сети, соседний кит показал подсказку и
+        # записал notified; снимок, снятый до запроса, затёр бы её
+        self.write_cache(checked=0)
+        stamp = time.time()
+
+        def fetch_and_meanwhile_notify():
+            data = U._load()
+            data['notified'] = stamp
+            U._save(data)
+            return '0.17.0'
+
+        with mock.patch.object(U, '_fetch_latest', fetch_and_meanwhile_notify):
+            U._refresh()
+        self.assertEqual(U._load()['notified'], stamp)
+
+
+class CliAgreementTests(unittest.TestCase):
+    """Проверку версии CLI дублирует сознательно (он не импортирует
+    пакет китов) — значит расхождение ловим тестом, как и по темам.
+    """
+
+    def setUp(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'bin', 'familiar')
+        spec = importlib.util.spec_from_loader(
+            'familiar_cli_update',
+            importlib.machinery.SourceFileLoader('familiar_cli_update', path))
+        self.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cli)
+
+    def test_same_tags_url_and_env_switch(self):
+        self.assertEqual(self.cli.TAGS_URL, U.TAGS_URL)
+        self.assertEqual(self.cli.UPDATE_ENV, U.UPDATE_ENV)
+
+    def test_same_version_parsing(self):
+        for raw in ('v1.2.3', '0.26.0', 'not-a-version', '1.2.3.4'):
+            self.assertEqual(self.cli.parse_version(raw), U.parse_version(raw), raw)
+
+
 if __name__ == '__main__':
     unittest.main()

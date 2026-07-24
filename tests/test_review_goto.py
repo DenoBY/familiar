@@ -6,7 +6,14 @@ import unittest
 
 import kittymock  # noqa: F401
 import review as R
-from kittymock import KeyEvent, MouseButton, MouseEvent, draw_text, wire
+from kittymock import (
+    KeyEvent,
+    MouseButton,
+    MouseEvent,
+    draw_text,
+    run_threads_inline,
+    wire,
+)
 from modules.vcs.diff import gutter_width
 
 
@@ -21,6 +28,7 @@ class GotoDefinitionTest(unittest.TestCase):
     def setUp(self):
         self._backup = {k: os.environ.get(k) for k in _ENV}
         os.environ.update(_ENV)
+        run_threads_inline(self)
         self.repo = tempfile.mkdtemp(prefix='ccrev_goto_')
         self._git('init', '-b', 'main')
         self.write('changed.py', 'x = 1\ndef unique_def():\n    return 1\n')
@@ -77,7 +85,7 @@ class GotoDefinitionTest(unittest.TestCase):
         self._select('dupa.py')
         self.h.goto_definition('unique_def')
         self.assertIsNone(self.h._external)
-        self.assertEqual(self.h.current_item()['rel'], 'changed.py')
+        self.assertEqual(self.h.current_item()['path'], 'changed.py')
         # курсор встал на строку объявления (line 2 нового файла)
         self.assertEqual(self.h.diff_lineno[self.h.diff_cur], 2)
         self.assertEqual(len(self.h._navstack), 1)
@@ -88,7 +96,7 @@ class GotoDefinitionTest(unittest.TestCase):
         self._select('changed.py')
         self.h.goto_definition('far_target')
         self.assertIsNone(self.h._external)
-        self.assertEqual(self.h.current_item()['rel'], 'far.py')
+        self.assertEqual(self.h.current_item()['path'], 'far.py')
         self.assertEqual(self.h.view_mode, 'final')
         self.assertEqual(self.h.diff_lineno[self.h.diff_cur], 19)
 
@@ -97,6 +105,23 @@ class GotoDefinitionTest(unittest.TestCase):
         self.h.goto_definition('nonexistent_zzz')
         self.assertIn('no definition', draw_text(self.h))
         self.assertEqual(self.h._navstack, [])
+
+    def test_git_failure_is_not_reported_as_no_definition(self):
+        # таймаут/сбой git иначе выглядел бы уверенным «определения
+        # нет» — молча неверный ответ вместо «поиск не удался»
+        self._select('changed.py')
+        self.h.root = os.path.join(self.repo, 'no-such-dir')
+        self.h.goto_definition('unique_def')
+        text = draw_text(self.h)
+        self.assertNotIn('no definition', text)
+        self.assertIn('searching', text)   # первый кадр — индикатор поиска
+
+    def test_search_is_not_restarted_while_one_is_running(self):
+        self._select('changed.py')
+        self.h._goto_busy = True
+        self.h.flash = ''
+        self.h.goto_definition('unique_def')
+        self.assertEqual(self.h.flash, '')
 
     # --- внешний (неизменённый) файл: in-viewer read-only ---
 
@@ -109,12 +134,12 @@ class GotoDefinitionTest(unittest.TestCase):
 
     def test_nav_back_restores(self):
         self._select('changed.py')
-        before = self.h.current_item()['rel']
+        before = self.h.current_item()['path']
         self.h.goto_definition('only_here')
         self.assertEqual(self.h._external, 'ext.py')
         self.h.nav_back()
         self.assertIsNone(self.h._external)
-        self.assertEqual(self.h.current_item()['rel'], before)
+        self.assertEqual(self.h.current_item()['path'], before)
         self.assertEqual(self.h._navstack, [])
 
     def test_nav_back_empty_flashes(self):
@@ -142,7 +167,7 @@ class GotoDefinitionTest(unittest.TestCase):
         first = self.h._cand[0]
         self.h._pick(0)
         self.assertIsNone(self.h._cand)
-        shown = self.h._external or self.h.current_item()['rel']
+        shown = self.h._external or self.h.current_item()['path']
         self.assertEqual(shown, first.path)
 
     # --- мышь ---

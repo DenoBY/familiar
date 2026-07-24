@@ -106,14 +106,14 @@ class ReviewFindModeTest(unittest.TestCase):
         self.h.input_key('ENTER')
         self.h.toggle_find()
         self.assertEqual(self.h.filter_query, 'read')
-        rels = {it['rel'] for it in self.h.items}
+        rels = {it['path'] for it in self.h.items}
         self.assertIn('docs/readme.md', rels)   # снова правки ревью
 
     # --- живой поиск и дерево ---
 
     def test_live_search_builds_tree(self):
         self.enter_find('needle')
-        rels = sorted(it['rel'] for it in self.h.items)
+        rels = sorted(it['path'] for it in self.h.items)
         self.assertEqual(rels, ['app.py', 'docs/readme.md', 'notes.txt',
                                 'vendor/x.py'])
         names = [r['name'] for r in self.h.rows]
@@ -121,7 +121,7 @@ class ReviewFindModeTest(unittest.TestCase):
         # noise-каталоги скрыты из дерева, но не из items
         self.assertNotIn('vendor', names)
         self.assertEqual(self.h.n_files, 3)
-        by_rel = {it['rel']: it for it in self.h.items}
+        by_rel = {it['path']: it for it in self.h.items}
         self.assertEqual(by_rel['app.py']['stat'], (2, None))
 
     def test_short_query_does_not_search(self):
@@ -196,7 +196,7 @@ class ReviewFindModeTest(unittest.TestCase):
         self.h.input_key('ESCAPE')
         self.assertEqual(self.h.find_query, 'needle')
         self.assertTrue(self.h.asyncio_loop.timer.cancelled)
-        self.assertEqual(sorted(it['rel'] for it in self.h.items),
+        self.assertEqual(sorted(it['path'] for it in self.h.items),
                          ['app.py', 'docs/readme.md', 'notes.txt', 'vendor/x.py'])
 
     def test_cmd_f_in_review_mode_starts_file_search(self):
@@ -245,7 +245,7 @@ class ReviewFindModeTest(unittest.TestCase):
         self.h.on_key(KeyEvent(key='ENTER'))
         self.assertFalse(self.h.find_mode)
         self.assertIsNone(self.h._external)
-        self.assertEqual(self.h.current_item()['rel'], 'docs/readme.md')
+        self.assertEqual(self.h.current_item()['path'], 'docs/readme.md')
         # полный функционал ревью: строка комментируема
         self.assertTrue(self.h._commentable(self.h.diff_cur))
 

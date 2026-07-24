@@ -34,11 +34,15 @@ from ..highlight import (
     text_colors,
     word_ranges,
 )
-from ..text import plural
-from .util import truncate
+from ..text import plural, truncate
 
 
 # ──────────────────── unified дифф (одна колонка) ────────────────────
+
+# Сколько строк открывает одно нажатие на разделителе. Гэп в сотни
+# строк раскрывать целиком незачем — весь файл показывает отдельный
+# режим (a / v), а здесь нужен контекст вокруг изменения.
+GAP_STEP = 50
 
 _HUNK_RE = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 _NUMW = 4
@@ -177,16 +181,17 @@ class DiffSource:
 
 
 def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
-                 hscroll: int = 0, expanded: 'set | None' = None,
+                 hscroll: int = 0, expanded: 'dict | None' = None,
                  expand_all: bool = False) -> DiffModel:
     """Модель диффа для готового DiffSource.
 
-    context — строк контекста вокруг изменений. expanded — множество id
-    раскрытых гэпов. expand_all — показать весь файл без сворачивания.
-    hscroll — горизонтальный сдвиг. Соседние удалённая/добавленная
-    строки спариваются — word-diff подсвечивает изменившиеся слова.
+    context — строк контекста вокруг изменений. expanded — id гэпа →
+    сколько его строк уже раскрыто. expand_all — показать весь файл
+    без сворачивания. hscroll — горизонтальный сдвиг. Соседние
+    удалённая/добавленная строки спариваются — word-diff подсвечивает
+    изменившиеся слова.
     """
-    expanded = expanded or set()
+    expanded = expanded or {}
     a, b = src.a, src.b
     one_col = src.one_col
     _, codew = _geometry(one_col, width)
@@ -258,7 +263,9 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
                  gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf, fg=fg)
 
     def emit_gap(hidden, lineno, gid):
-        inner = f' {plural(hidden, "line")} hidden — Enter to expand '  # линии вплотную к тексту
+        step = min(GAP_STEP, hidden)
+        act = 'Enter to expand' if step == hidden else f'Enter for {step} more'
+        inner = f' {plural(hidden, "line")} hidden — {act} '   # линии вплотную к тексту
         dots = max(0, width - len(inner))
         left = dots // 2
         sep = '┈' * left + inner + '┈' * (dots - left)                  # метка по центру
@@ -275,15 +282,20 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
             length = i2 - i1
             lead = 0 if oi == 0 else context
             trail = 0 if oi == n_ops - 1 else context
-            if expand_all or gid in expanded or length <= lead + trail:
+            hidden = length - lead - trail - expanded.get(gid, 0)
+            if expand_all or hidden <= 0:
                 for off in range(length):
                     emit_ctx(i1 + off, j1 + off)
                 if not (expand_all or length <= lead + trail):
                     gid += 1   # гэп раскрыт, но id занят (стабильность между перерисовками)
             else:
-                for off in range(lead):
+                # раскрытое приращивается СВЕРХУ разделителя: код
+                # читается сверху вниз, и после верхнего куска должно
+                # идти его продолжение, а не вырезка из середины
+                shown = lead + expanded.get(gid, 0)
+                for off in range(shown):
                     emit_ctx(i1 + off, j1 + off)
-                emit_gap(length - lead - trail, j1 + lead + 1, gid)
+                emit_gap(hidden, j1 + shown + 1, gid)
                 for off in range(length - trail, length):
                     emit_ctx(i1 + off, j1 + off)
                 gid += 1
@@ -556,21 +568,22 @@ def _new_node() -> dict:
 
 
 def build_tree(items: list[dict], collapsed: set) -> list[dict]:
-    """items (с полем 'rel') → плоский список строк дерева
+    """items (с полем 'path') → плоский список строк дерева
     (dir/file) со сворачиванием; элементы с полем 'group' — под
     одноимённый узел в конце дерева.
 
-    У строки-папки 'key' (ключ сворачивания) и 'path' (путь на
+    У строки-папки 'key' (ключ сворачивания) и 'dir' (путь на
     диске) расходятся: у узла группы пути нет, а ключи её подпапок
     неймспейснуты именем группы — иначе свёрнутая папка внутри
-    группы схлопнула бы одноимённую снаружи.
+    группы схлопнула бы одноимённую снаружи. Имя 'dir', а не 'path':
+    'path' у строки дерева значило бы не то же, что у записи файла.
     """
     plain = _new_node()
     groups: dict[str, dict] = {}
     for idx, it in enumerate(items):
         group = it.get('group')
         node = plain if group is None else groups.setdefault(group, _new_node())
-        parts = it['rel'].split('/')
+        parts = it['path'].split('/')
         node['count'] += 1
         for p in parts[:-1]:
             node = node['dirs'].setdefault(p, _new_node())
@@ -585,7 +598,7 @@ def build_tree(items: list[dict], collapsed: set) -> list[dict]:
             child = node['dirs'][name]
             is_collapsed = key in collapsed
             rows.append({'type': 'dir', 'depth': depth, 'name': name,
-                         'key': key, 'path': path, 'count': child['count'],
+                         'key': key, 'dir': path, 'count': child['count'],
                          'collapsed': is_collapsed, 'group': group})
             if not is_collapsed:
                 walk(child, depth + 1, key, path, group)
@@ -599,7 +612,7 @@ def build_tree(items: list[dict], collapsed: set) -> list[dict]:
         key = group_key(name)
         is_collapsed = key in collapsed
         rows.append({'type': 'dir', 'depth': 0, 'name': name, 'key': key,
-                     'path': None, 'count': groups[name]['count'],
+                     'dir': None, 'count': groups[name]['count'],
                      'collapsed': is_collapsed, 'group': name, 'group_root': True})
         if not is_collapsed:
             walk(groups[name], 1, key, '', name)

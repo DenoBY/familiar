@@ -22,8 +22,23 @@ def styled(text, **kwargs):
 
 
 class Handler:
+
+    _press_cell = None
+
     def on_mouse_event(self, ev):
-        pass
+        """Синтез клика из PRESS+RELEASE в одной ячейке, как в kitty.
+
+        Без этого мок обрывал бы путь мыши на середине, и тесты могли
+        бы проверять только прямой вызов on_click — то есть не тот
+        путь, которым клик приходит в ките.
+        """
+        cell = (getattr(ev, 'cell_x', 0), getattr(ev, 'cell_y', 0))
+        if getattr(ev, 'type', None) == EventType.PRESS:
+            self._press_cell = cell
+        elif getattr(ev, 'type', None) == EventType.RELEASE:
+            if self._press_cell == cell and hasattr(self, 'on_click'):
+                self.on_click(ev)
+            self._press_cell = None
 
     def write(self, *a, **k):
         pass
@@ -152,18 +167,50 @@ class NoopCmd:
 
 
 class ImmediateLoop:
-    """asyncio_loop для тестов: call_later выполняет колбэк сразу —
-    отложенная загрузка диффа (debounce прокрутки) в тестах остаётся
-    синхронной.
+    """asyncio_loop для тестов.
+
+    Короткие call_later выполняются сразу — отложенная загрузка диффа
+    (debounce прокрутки) в тестах остаётся синхронной. Длинные (снятие
+    flash, FLASH_TTL=2.5) копятся в pending и ждут run_pending(): в
+    kitty они срабатывают через секунды, а синхронный вызов дорисовывал
+    бы второй кадр в тот же буфер и уводил ранний return в рекурсию.
     """
 
+    SYNC_MAX = 1.0
+
+    def __init__(self):
+        self.pending = []
+
     class _Timer:
+        def __init__(self, loop=None, entry=None):
+            self._loop = loop
+            self._entry = entry
+
         def cancel(self):
-            pass
+            if self._loop is not None and self._entry in self._loop.pending:
+                self._loop.pending.remove(self._entry)
 
     def call_later(self, delay, callback, *args):
+        if delay <= self.SYNC_MAX:
+            callback(*args)
+            return self._Timer()
+        entry = (callback, args)
+        self.pending.append(entry)
+        return self._Timer(self, entry)
+
+    def call_soon(self, callback, *args):
         callback(*args)
-        return self._Timer()
+
+    def call_soon_threadsafe(self, callback, *args):
+        callback(*args)
+
+    def run_pending(self):
+        """Выполнить отложенные таймеры — как если бы вышло их
+        время.
+        """
+        pending, self.pending = self.pending, []
+        for callback, args in pending:
+            callback(*args)
 
 
 class KeyEvent:
@@ -202,6 +249,30 @@ def wire(handler, rows=40, cols=120):
     handler.quit_loop = lambda code=0: handler.quits.append(code)
     handler.asyncio_loop = ImmediateLoop()
     return handler
+
+
+class _SyncThread:
+    """threading.Thread, исполняющий target на месте."""
+
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+def run_threads_inline(test):
+    """Фоновую работу кита (OverlayHandler.run_background) — синхронно.
+
+    Иначе тест ловил бы результат гонкой. Подменяется только ссылка
+    на threading внутри modules.handler, глобальный модуль цел.
+    """
+    import types
+
+    import modules.handler as H
+    real = H.threading
+    test.addCleanup(setattr, H, 'threading', real)
+    H.threading = types.SimpleNamespace(Thread=_SyncThread)
 
 
 def draw_text(handler):

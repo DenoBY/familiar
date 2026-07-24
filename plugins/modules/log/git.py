@@ -216,7 +216,7 @@ def first_parent(root: str, sha: str) -> str:
 
 def commit_files(root: str, sha: str, parent: 'str | None' = None) -> list[dict]:
     """Изменённые файлы коммита (vs первый родитель) со
-    статистикой +/− и полем 'rel'.
+    статистикой +/−.
 
     parent — заранее вычисленный первый родитель (иначе
     считается сам): позволяет не дёргать rev-parse
@@ -228,7 +228,6 @@ def commit_files(root: str, sha: str, parent: 'str | None' = None) -> list[dict]
     stats = git_numstat(root, parent, sha)
     for it in items:
         it['stat'] = stats.get(it['path'])
-        it['rel'] = it['path']
         it['untracked'] = False
     items.sort(key=lambda it: it['path'])
     return items

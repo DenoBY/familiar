@@ -48,34 +48,6 @@ class GitRepoTest(unittest.TestCase):
     def by_path(items):
         return {it['path']: it for it in items}
 
-    # --- примитивы ---
-
-    def test_git_root(self):
-        self.assertEqual(G.git_root(self.repo), os.path.realpath(self.repo))
-
-    def test_git_root_outside_repo_is_none(self):
-        d = tempfile.mkdtemp(prefix='notrepo_')
-        try:
-            self.assertIsNone(G.git_root(d))
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_run_git_failure_returns_none(self):
-        self.assertIsNone(G.run_git('/no/such/repo', 'status'))
-
-    def test_last_error_captured_and_cleared(self):
-        self.assertIsNone(G.run_git(self.repo, 'rev-parse', 'no-such-ref'))
-        self.assertTrue(G.last_error())
-        self.assertIsNotNone(G.run_git(self.repo, 'status'))
-        self.assertEqual(G.last_error(), '')
-
-    def test_has_head(self):
-        self.assertTrue(G.has_head(self.repo))
-
-    def test_read_text(self):
-        self.assertEqual(G.read_text(os.path.join(self.repo, 'a.txt')), 'a1\na2\na3\n')
-        self.assertEqual(G.read_text(os.path.join(self.repo, 'missing')), '')
-
     # --- изменения рабочего дерева ---
 
     def test_working_modified_untracked_deleted(self):

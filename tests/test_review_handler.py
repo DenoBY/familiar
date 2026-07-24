@@ -311,7 +311,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
         self.assertEqual(len(self.h.marked_paths), 2)
-        self.assertIn(self.h.current_item()['rel'], self.h.marked_paths)
+        self.assertIn(self.h.current_item()['path'], self.h.marked_paths)
 
     def test_shift_up_skips_the_expanded_dir_and_stops_at_the_edge(self):
         # выше sub только развёрнутая папка — шаг вверх упирается в
@@ -555,6 +555,88 @@ class ReviewHandlerTest(unittest.TestCase):
         Ev.cell_x = self.h.left_width() + 5
         self.h.on_mouse_event(Ev())
         self.assertEqual(calls, [('tree', 3), ('diff', 3)])
+
+    def _big_gap(self):
+        """Файл с изменениями по краям — между ними большой гэп."""
+        body = ''.join(f'code {i}\n' for i in range(240))
+        self.write('gap.py', body)
+        self._git('add', 'gap.py')
+        self._git('commit', '-m', 'gap')
+        self.write('gap.py', body.replace('code 0\n', 'X\n').replace('code 239\n', 'Y\n'))
+        self.h.refresh()
+        self._select_file('gap.py')
+        self.h.focus = 'diff'
+        return next(i for i, p in enumerate(self.h.diff_plain) if 'hidden' in p)
+
+    def test_gap_expands_downwards_and_carries_the_cursor(self):
+        """Раскрытое встаёт над разделителем, курсор едет за ним.
+
+        Иначе следующее нажатие пришлось бы ловить, доскроллив до
+        уехавшего вниз разделителя.
+        """
+        gap = self._big_gap()
+        self.h.diff_cur = gap
+        self.h.expand_gap(gap)
+
+        moved = next(i for i, p in enumerate(self.h.diff_plain) if 'hidden' in p)
+        self.assertEqual(moved, gap + 50)          # разделитель уехал на шаг вниз
+        self.assertEqual(self.h.diff_cur, moved)   # курсор — вместе с ним
+        # и на нём по-прежнему гэп: повторное Enter сработает на месте
+        self.assertIsNotNone(self.h._gap_at(self.h.diff_cur))
+
+    def test_repeated_expand_keeps_working_at_the_cursor(self):
+        gap = self._big_gap()
+        self.h.diff_cur = gap
+        for _ in range(3):
+            self.h.expand_gap(self.h.diff_cur)
+        sep = next(p for p in self.h.diff_plain if 'hidden' in p)
+        self.assertIn('82 lines hidden', sep)      # 232 скрытых − 3×50
+
+    def test_burst_of_wheel_events_draws_one_frame(self):
+        """Пачка событий колеса даёт один кадр, а не кадр на щелчок.
+
+        Кадр — это весь экран; на быстрой прокрутке кадр-на-щелчок
+        выливал сотни килобайт в терминал, запись в stdout вставала
+        на заполненном буфере, и кит переставал читать ввод.
+        """
+        self._select_file('big.txt')
+        self.h.focus = 'diff'
+        wire(self.h, rows=8, cols=120)   # экран ниже диффа — есть куда крутить
+        self.h.load_diff()
+
+        soon = []
+
+        class BatchLoop(kittymock.ImmediateLoop):
+            def call_soon(self, cb, *args):
+                soon.append((cb, args))
+
+        self.h.asyncio_loop = BatchLoop()
+        ev = MouseEvent(cell_x=self.h.left_width() + 5, cell_y=5,
+                        buttons=MouseButton.WHEEL_DOWN)
+        self.h.on_mouse_event(ev)   # форма указателя выставляется один раз
+        for cb, args in soon:       # и первый кадр гасим, чтобы считать с нуля
+            cb(*args)
+        soon.clear()
+        before = self.h.diff_offset
+        self.h.out = []
+        for _ in range(20):
+            self.h.on_mouse_event(ev)
+
+        self.assertEqual(self.h.out, [])        # пока пачка идёт — ни одного кадра
+        self.assertEqual(len(soon), 1)          # и запрошен ровно один
+        for cb, args in soon:
+            cb(*args)
+        self.assertGreater(self.h.diff_offset, before)   # прокрутка не потеряна
+        self.assertTrue(self.h.out)
+
+    def test_scroll_still_draws_without_an_event_loop(self):
+        # handle_result-путь и голые юнит-тесты живут без loop —
+        # там кадр должен рисоваться сразу
+        self._select_file('big.txt')
+        self.h.asyncio_loop = None
+        self.h.out = []
+        self.h.diff_scroll(3)
+        self.assertTrue(self.h.out)
 
     def test_pointer_shape_follows_hover_zone(self):
         self._select_file('big.txt')
@@ -956,7 +1038,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self._start_comment()
         self.h.input_buffer = 'первый'
         self.h.commit_input()
-        rel = self.h.current_item()['rel']
+        rel = self.h.current_item()['path']
         di = self.h._first_commentable(0)
         self.assertTrue(self.h._diff_annotated(di, rel))
         copied = []
@@ -1166,7 +1248,7 @@ class YankTest(unittest.TestCase):
         self.h = R.ReviewHandler([], '/repo', '/repo')
         wire(self.h, rows=40, cols=120)
         # минимально имитируем выбранный файл a/b.py и загруженный дифф
-        self.h.filtered = [{'path': 'a/b.py', 'rel': 'a/b.py', 'kind': 'modified',
+        self.h.filtered = [{'path': 'a/b.py', 'kind': 'modified',
                             'xy': ' M', 'untracked': False}]
         self.h.rows = [{'type': 'file', 'idx': 0, 'depth': 0,
                         'name': 'b.py', 'kind': 'modified', 'stat': None}]

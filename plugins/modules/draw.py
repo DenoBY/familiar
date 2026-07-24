@@ -20,6 +20,7 @@ class AtomicDraw:
     FLASH_TTL = 2.5   # сек: успеть прочитать сообщение, но не мозолить глаза
 
     _flash_timer = None
+    _draw_pending = False
     # (строка, колонка) каретки строки ввода, 0-based; выставляет
     # отрисовщик строки ввода через set_caret на каждом кадре
     _caret: 'tuple[int, int] | None' = None
@@ -27,8 +28,33 @@ class AtomicDraw:
     def set_caret(self, row: int, col: int) -> None:
         self._caret = (row, col)
 
+    def schedule_draw(self) -> None:
+        """Слить подряд идущие перерисовки в один кадр.
+
+        Колесо мыши и автоповтор клавиши приходят пачкой: kitty
+        разбирает весь прочитанный буфер и зовёт колбэк на каждое
+        событие. Кадр — это весь экран (у diff-панели ~5 КБ), и
+        рисовать его на каждый щелчок значит слать сотни килобайт в
+        тот же терминал; на заполненном буфере stdout запись
+        блокируется, кит перестаёт читать ввод — со стороны это
+        выглядит как зависание. Обработку событий не откладывает:
+        кадр рисуется, как только разобрана очередь готовых.
+        """
+        if self._draw_pending:
+            return
+        loop = getattr(self, 'asyncio_loop', None)
+        if loop is None:
+            self.draw_screen()
+            return
+        self._draw_pending = True
+        loop.call_soon(self._draw_coalesced)
+
+    def _draw_coalesced(self) -> None:
+        self._draw_pending = False
+        self.draw_screen()
+
     def draw_screen(self) -> None:
-        shown = bool(getattr(self, 'flash', ''))
+        had_flash = bool(getattr(self, 'flash', ''))
         self._caret = None
         self.cmd.set_mode(Mode.PENDING_UPDATE)
         try:
@@ -41,14 +67,17 @@ class AtomicDraw:
             self.cmd.set_cursor_visible(self._caret is not None)
         finally:
             self.cmd.reset_mode(Mode.PENDING_UPDATE)
-        self._arm_flash_timer(shown)
+        # только если кадр действительно погасил flash: при раннем
+        # выходе _draw_frame (диалог, пикер) сообщение ещё на экране,
+        # и таймер, взведённый вхолостую, перевзводился бы вечно
+        self._arm_flash_timer(had_flash and not getattr(self, 'flash', ''))
 
-    def _arm_flash_timer(self, shown: bool) -> None:
+    def _arm_flash_timer(self, consumed: bool) -> None:
         if self._flash_timer is not None:
             self._flash_timer.cancel()   # новый кадр — старый отсчёт неактуален
             self._flash_timer = None
         loop = getattr(self, 'asyncio_loop', None)
-        if not shown or loop is None:
+        if not consumed or loop is None:
             return
         self._flash_timer = loop.call_later(self.FLASH_TTL, self._flash_expired)
 

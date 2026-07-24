@@ -52,7 +52,7 @@ class SearchFilesTest(unittest.TestCase):
             f.write(content)
 
     def _rels(self, items):
-        return sorted(it['rel'] for it in items)
+        return sorted(it['path'] for it in items)
 
     def test_smart_case_finds_all_registers(self):
         items, truncated = G.search_files(self.repo, 'beta')
@@ -71,7 +71,7 @@ class SearchFilesTest(unittest.TestCase):
 
     def test_lines_and_stat(self):
         items, _ = G.search_files(self.repo, 'beta')
-        by_rel = {it['rel']: it for it in items}
+        by_rel = {it['path']: it for it in items}
         b = by_rel['sub/b.txt']
         # совпадение — строка (не вхождение): двойное beta в первой
         # строке даёт одну запись

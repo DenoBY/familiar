@@ -1,14 +1,13 @@
-"""Утилиты vcs-китов: форматирование строк по ширине, статусы, IDE-шум.
+"""Утилиты vcs-китов: сборка цветной строки, статусы, IDE-шум.
 
 Модуль без состояния и без зависимостей от git — только преобразования
-строк и таблицы констант для отрисовки. Раскладка и текстовые примитивы
-— общие, из modules.keylayout / modules.text.
+строк и таблицы констант для отрисовки. Раскладку и текстовые примитивы
+потребители берут напрямую из modules.keylayout / modules.text.
 """
 
 from kittens.tui.operations import styled
 
-from ..keylayout import chord, ctrl_letter, to_latin  # noqa: F401  (ре-экспорт для review/log)
-from ..text import pad, short_path, truncate  # noqa: F401
+from ..text import truncate
 
 
 # Статус изменения → цвет имени в дереве файлов, в стиле IDE

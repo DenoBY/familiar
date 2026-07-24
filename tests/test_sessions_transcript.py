@@ -2,7 +2,7 @@ import unittest
 
 import kittymock  # noqa: F401
 import modules.session.transcript as T
-from modules.session.data import Entry
+from modules.session.conversation import Entry
 from modules.text import HOME
 
 
@@ -13,30 +13,35 @@ def texts(lines):
     return [ln.text for ln in lines]
 
 
-class TestToolLabel(unittest.TestCase):
+class TestToolArg(unittest.TestCase):
+    """Подпись вызова собирает _tool из tool_arg и display_name —
+    проверяем их, а не отдельную «витринную» склейку.
+    """
+
     def test_known_key_per_tool(self):
-        self.assertEqual(T.tool_label('Bash', {'command': 'git status',
-                                               'description': 'status'}),
-                         'Bash(git status)')
-        self.assertEqual(T.tool_label('Grep', {'pattern': 'def foo', 'glob': '*.py'}),
-                         'Grep(def foo)')
+        self.assertEqual(T.tool_arg('Bash', {'command': 'git status',
+                                             'description': 'status'}),
+                         'git status')
+        self.assertEqual(T.tool_arg('Grep', {'pattern': 'def foo', 'glob': '*.py'}),
+                         'def foo')
 
     def test_path_is_shortened(self):
-        label = T.tool_label('Read', {'file_path': HOME + '/x/y.py'})
-        self.assertEqual(label, 'Read(~/x/y.py)')
+        self.assertEqual(T.tool_arg('Read', {'file_path': HOME + '/x/y.py'}),
+                         '~/x/y.py')
 
-    def test_multiline_command_collapses(self):
-        self.assertEqual(T.tool_label('Bash', {'command': 'a\n  b'}), 'Bash(a b)')
+    def test_multiline_command_keeps_newlines(self):
+        # рендер режет аргумент по ARG_LINES сам — здесь переносы целы
+        self.assertEqual(T.tool_arg('Bash', {'command': 'a\n  b'}), 'a\n  b')
 
     def test_unknown_tool_falls_back_to_first_string(self):
-        self.assertEqual(T.tool_label('Weird', {'n': 1, 'q': 'text'}), 'Weird(text)')
+        self.assertEqual(T.tool_arg('Weird', {'n': 1, 'q': 'text'}), 'text')
 
     def test_no_input(self):
-        self.assertEqual(T.tool_label('Weird', None), 'Weird()')
+        self.assertEqual(T.tool_arg('Weird', None), '')
 
     def test_edit_is_named_update(self):
-        self.assertEqual(T.tool_label('Edit', {'file_path': '/p/x.py'}, '/p'),
-                         'Update(x.py)')
+        self.assertEqual(T.display_name('Edit'), 'Update')
+        self.assertEqual(T.tool_arg('Edit', {'file_path': '/p/x.py'}, '/p'), 'x.py')
 
     def test_path_inside_project_is_relative(self):
         self.assertEqual(T.display_path('/p/a/b.py', '/p'), 'a/b.py')

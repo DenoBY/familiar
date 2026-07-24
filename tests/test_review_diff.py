@@ -121,8 +121,48 @@ class TestUnifiedRows(unittest.TestCase):
     def test_expanded_gap_shows_context(self):
         before, after = self._big()
         rows, plains, *_ = unified(
-            before, after, '.py', 40, context=3, expanded={0})
+            before, after, '.py', 40, context=3, expanded={0: D.GAP_STEP})
         self.assertFalse(any('hidden' in p for p in plains))
+
+    def test_gap_opens_in_steps_not_all_at_once(self):
+        # 120 скрытых строк не должны вываливаться целиком: весь файл
+        # показывает отдельный режим, здесь нужен контекст порциями
+        before = ''.join(f'l{i}\n' for i in range(140))
+        after = before.replace('l0\n', 'X\n').replace('l139\n', 'Y\n')
+        _, plains, *_ = unified(before, after, '.py', 60, context=3)
+        sep = next(p for p in plains if 'hidden' in p)
+        self.assertIn('132 lines hidden', sep)          # 138 равных − 3 − 3
+        self.assertIn(f'Enter for {D.GAP_STEP} more', sep)
+
+        _, plains, *_ = unified(before, after, '.py', 60, context=3,
+                                expanded={0: D.GAP_STEP})
+        sep = next(p for p in plains if 'hidden' in p)
+        self.assertIn('82 lines hidden', sep)           # 132 − 50 раскрытых
+
+    def test_last_step_offers_plain_expand(self):
+        before = ''.join(f'l{i}\n' for i in range(20))
+        after = before.replace('l0\n', 'X\n').replace('l19\n', 'Y\n')
+        _, plains, *_ = unified(before, after, '.py', 60, context=3)
+        sep = next(p for p in plains if 'hidden' in p)
+        self.assertIn('Enter to expand', sep)   # скрытого меньше шага
+
+    def test_expanded_lines_continue_the_code_above(self):
+        # код читается сверху вниз: после верхнего куска идёт его
+        # продолжение, а разделитель уезжает вниз на раскрытое
+        before = ''.join(f'l{i}\n' for i in range(140))
+        after = before.replace('l0\n', 'X\n').replace('l139\n', 'Y\n')
+        _, plains, *_ = unified(before, after, '.py', 60, context=3)
+        base = next(i for i, p in enumerate(plains) if 'hidden' in p)
+        _, plains2, *_ = unified(before, after, '.py', 60, context=3,
+                                 expanded={0: D.GAP_STEP})
+        moved = next(i for i, p in enumerate(plains2) if 'hidden' in p)
+        self.assertEqual(moved, base + D.GAP_STEP)
+        self.assertEqual(len(plains2), len(plains) + D.GAP_STEP)
+        # первое раскрытое — ровно следующая строка за верхним
+        # контекстом (l1..l3), а не вырезка из середины
+        first = next(i for i, p in enumerate(plains2) if p.rstrip().endswith('l4'))
+        prev = next(i for i, p in enumerate(plains2) if p.rstrip().endswith('l3'))
+        self.assertEqual(first, prev + 1)
 
     def test_added_file_one_column_all_adds(self):
         rows, plains, hunks, linenos, scopes, gaps, kinds, vis, *_ = unified(
@@ -293,9 +333,9 @@ class TestChangeMap(unittest.TestCase):
 
 class TestBuildTree(unittest.TestCase):
     def _items(self):
-        return [{'rel': 'a/b.py', 'kind': 'modified', 'stat': (1, 2)},
-                {'rel': 'a/c.py', 'kind': 'added', 'stat': (3, 0)},
-                {'rel': 'd.py', 'kind': 'deleted', 'stat': None}]
+        return [{'path': 'a/b.py', 'kind': 'modified', 'stat': (1, 2)},
+                {'path': 'a/c.py', 'kind': 'added', 'stat': (3, 0)},
+                {'path': 'd.py', 'kind': 'deleted', 'stat': None}]
 
     def test_expanded(self):
         rows = D.build_tree(self._items(), set())
@@ -316,7 +356,7 @@ class TestBuildTree(unittest.TestCase):
         self.assertEqual(rows[1]['name'], 'd.py')
 
     def _grouped(self):
-        return self._items() + [{'rel': 'a/g.py', 'kind': 'untracked',
+        return self._items() + [{'path': 'a/g.py', 'kind': 'untracked',
                                  'stat': (1, 0), 'group': 'Unversioned Files'}]
 
     def test_group_node_last_and_namespaced(self):
@@ -324,9 +364,9 @@ class TestBuildTree(unittest.TestCase):
         grp = rows[4]
         self.assertEqual((grp['type'], grp['name'], grp['count'], grp['depth']),
                          ('dir', 'Unversioned Files', 1, 0))
-        self.assertIsNone(grp['path'])
+        self.assertIsNone(grp['dir'])
         inner = rows[5]
-        self.assertEqual((inner['name'], inner['depth'], inner['path']), ('a', 1, 'a'))
+        self.assertEqual((inner['name'], inner['depth'], inner['dir']), ('a', 1, 'a'))
         self.assertNotEqual(inner['key'], rows[0]['key'])
         self.assertEqual(rows[6]['name'], 'g.py')
 

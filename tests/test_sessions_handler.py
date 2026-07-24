@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 import kittymock  # noqa: F401
+import modules.session.conversation as Cv
 import modules.session.data as Dt
 import session as S
 from kittymock import EventType, KeyEvent, MouseEvent, draw_text, wire
@@ -180,7 +181,7 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview.entries = [Dt.Entry('result', body)]
+        self.h.preview.entries = [Cv.Entry('result', body)]
         self._rebuild()
         return len(self.h.preview.lines)
 
@@ -212,6 +213,11 @@ class SessionsHandlerTest(unittest.TestCase):
         self._folded_preview()
         self.h.on_text('\x0f')
         self.assertEqual(self.h.preview.expanded, {0})
+
+    def test_control_byte_in_paste_is_content_not_a_hotkey(self):
+        self._folded_preview()
+        self.h.on_text('\x0f', in_bracketed_paste=True)
+        self.assertEqual(self.h.preview.expanded, set())
 
     def test_cmd_c_copies_on_cyrillic_layout(self):
         self._open_A()
@@ -268,8 +274,8 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview.entries = [Dt.Entry('result', body),
-                                  Dt.Entry('result', body)]
+        self.h.preview.entries = [Cv.Entry('result', body),
+                                  Cv.Entry('result', body)]
         self._rebuild()
         self.h.expand_all()
         self.assertEqual(self.h.preview.expanded, {0, 1})
@@ -282,8 +288,8 @@ class SessionsHandlerTest(unittest.TestCase):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
         body = '\n'.join(f'line {i}' for i in range(30))
-        self.h.preview.entries = [Dt.Entry('result', body),
-                                  Dt.Entry('result', body)]
+        self.h.preview.entries = [Cv.Entry('result', body),
+                                  Cv.Entry('result', body)]
         self._rebuild()
         self.h.toggle_fold(0)
         self.h.expand_all()
@@ -295,7 +301,7 @@ class SessionsHandlerTest(unittest.TestCase):
         # выглядел бы сломанным
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.preview.entries = [Dt.Entry('result', 'x' * 200 + 'needle')]
+        self.h.preview.entries = [Cv.Entry('result', 'x' * 200 + 'needle')]
         self._rebuild()
         self.h.preview.search_query = 'needle'
         self.h.preview.find_matches(self.h.screen_size.cols)
@@ -334,8 +340,8 @@ class SessionsHandlerTest(unittest.TestCase):
         # между репликами — длинный вывод, чтобы прыжок был заметен
         entries = []
         for n in range(3):
-            entries.append(Dt.Entry('user', f'вопрос {n}'))
-            entries.append(Dt.Entry('result', body))
+            entries.append(Cv.Entry('user', f'вопрос {n}'))
+            entries.append(Cv.Entry('result', body))
         self.h.preview.entries = entries
         self._rebuild()
         return [i for i, ln in enumerate(self.h.preview.lines) if ln.prompt]
@@ -358,7 +364,7 @@ class SessionsHandlerTest(unittest.TestCase):
     def test_jump_prompt_without_prompts(self):
         self._open_A()
         self.h.open_preview(self.h.sessions[0])
-        self.h.preview.entries = [Dt.Entry('result', 'ok')]
+        self.h.preview.entries = [Cv.Entry('result', 'ok')]
         self._rebuild()
         self.h.jump_prompt(1)
         self.assertEqual(self.h.status, 'no prompts')

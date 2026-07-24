@@ -5,43 +5,51 @@ import kittymock  # noqa: F401  (регистрирует путь к модул
 import modules.vcs.navdef as N
 
 
-class TestExtractSymbol(unittest.TestCase):
+def name_at(plain, col):
+    """Имя под колонкой — первое поле symbol_at, с которого кит и
+    начинает go-to-definition.
+    """
+    found = N.symbol_at(plain, col)
+    return found[0] if found else None
+
+
+class TestSymbolUnderCursor(unittest.TestCase):
     def test_middle_of_word(self):
-        self.assertEqual(N.extract_symbol('foo_bar baz', 2), 'foo_bar')
+        self.assertEqual(name_at('foo_bar baz', 2), 'foo_bar')
 
     def test_start_of_word(self):
-        self.assertEqual(N.extract_symbol('foo_bar baz', 0), 'foo_bar')
+        self.assertEqual(name_at('foo_bar baz', 0), 'foo_bar')
 
     def test_end_boundary_belongs_left(self):
         # курсор впритык справа к слову
-        self.assertEqual(N.extract_symbol('foo baz', 3), 'foo')
+        self.assertEqual(name_at('foo baz', 3), 'foo')
 
     def test_second_word(self):
-        self.assertEqual(N.extract_symbol('foo baz', 5), 'baz')
+        self.assertEqual(name_at('foo baz', 5), 'baz')
 
     def test_on_whitespace_none(self):
-        self.assertIsNone(N.extract_symbol('foo   baz', 4))
+        self.assertIsNone(name_at('foo   baz', 4))
 
     def test_on_isolated_punctuation_none(self):
         # знак, не примыкающий к слову справа-слева — не идентификатор
-        self.assertIsNone(N.extract_symbol('a . b', 2))  # '.'
+        self.assertIsNone(name_at('a . b', 2))  # '.'
 
     def test_paren_after_name_picks_callee(self):
         # клик по '(' сразу за именем → само имя (переход к вызову)
-        self.assertEqual(N.extract_symbol('foo(x)', 3), 'foo')
+        self.assertEqual(name_at('foo(x)', 3), 'foo')
 
     def test_dotted_call_picks_attr(self):
         s = 'self.render_diff(x)'
-        self.assertEqual(N.extract_symbol(s, 7), 'render_diff')
+        self.assertEqual(name_at(s, 7), 'render_diff')
 
     def test_negative_col(self):
-        self.assertIsNone(N.extract_symbol('foo', -1))
+        self.assertIsNone(name_at('foo', -1))
 
     def test_leading_underscore_and_digits(self):
-        self.assertEqual(N.extract_symbol('_x1 = 2', 1), '_x1')
+        self.assertEqual(name_at('_x1 = 2', 1), '_x1')
 
     def test_col_past_end(self):
-        self.assertIsNone(N.extract_symbol('foo', 99))
+        self.assertIsNone(name_at('foo', 99))
 
 
 def _matches_any(patterns, line):

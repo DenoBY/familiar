@@ -18,9 +18,10 @@ from ..highlight import (
     render_code,
     word_ranges,
 )
-from .data import Entry
+from ..text import pad, plural, short_path, truncate, wrap_text
+from .conversation import Entry
 from .markdown import markdown_lines
-from .util import ASK_REJECTED, ASK_TOOL, pad, plural, short_path, truncate, wrap_text
+from .util import ASK_REJECTED, ASK_TOOL
 
 
 class Line(NamedTuple):
@@ -153,11 +154,6 @@ def tool_arg(name: str, tool_input: 'dict | None', root: str = '') -> str:
     if key in _PATH_KEYS:
         val = display_path(val, root)
     return val.strip()
-
-
-def tool_label(name: str, tool_input: 'dict | None', root: str = '') -> str:
-    arg = ' '.join(tool_arg(name, tool_input, root).split())
-    return f'{display_name(name)}({arg})'
 
 
 def bash_category(command: str) -> str:

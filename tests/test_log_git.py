@@ -148,7 +148,7 @@ class LogGitTest(unittest.TestCase):
         files = self.by_path(G.commit_files(self.repo, head))
         self.assertEqual(files['a.txt']['kind'], 'modified')
         self.assertEqual(files['c.txt']['kind'], 'added')
-        self.assertEqual(files['a.txt']['rel'], 'a.txt')
+        self.assertEqual(files['a.txt']['path'], 'a.txt')
 
     # --- commit_contents ---
 

@@ -18,9 +18,9 @@ import shlex
 import sys
 import time
 
-from kittens.tui.handler import Handler, result_handler
+from kittens.tui.handler import result_handler
 from kittens.tui.loop import Loop, MouseButton
-from kittens.tui.operations import MouseTracking, styled
+from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
 
@@ -32,16 +32,10 @@ if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.clipboard import osc52
-from modules.confirm import ConfirmQuit
-from modules.dragselect import DragSelect
-from modules.draw import AtomicDraw
-from modules.inputline import InputLine
-from modules.keylayout import chord
+from modules.handler import OverlayHandler
+from modules.keylayout import chord, ctrl_letter, to_latin
 from modules.overlay import mark_overlay, restore_layout
-from modules.pointer import PointerCursor
 from modules.session.data import (
-    STATUS_COLOR,
-    STATUS_LABEL,
     append_custom_title,
     build_projects,
     load_sessions,
@@ -49,16 +43,21 @@ from modules.session.data import (
     scan_projects,
 )
 from modules.session.preview import Preview
-from modules.session.util import human_age, short_path, to_latin, truncate
-from modules.update import start_check, update_hint
+from modules.session.util import human_age
+from modules.text import short_path, truncate
 
 
-class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCursor,
-                      Handler):
+# Цвет строки живой сессии по статусу из реестра
+# ~/.claude/sessions/<pid>.json. Палитра, а не данные: статус
+# приходит из реестра, цвет — решение этого экрана.
+_STATUS_COLOR = {
+    'busy': 'green',
+    'idle': 'cyan',
+    'waiting': 'yellow',
+}
 
-    # full (не buttons_and_drag): нужны события движения без нажатой
-    # кнопки — иначе не поймать наведение для смены формы указателя.
-    mouse_tracking = MouseTracking.full
+
+class SessionsHandler(OverlayHandler):
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close sessions?'
 
@@ -84,8 +83,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
 
     # --- жизненный цикл ---
 
-    def initialize(self) -> None:
-        self.cmd.set_cursor_visible(False)
+    def load_state(self) -> None:
         self.running = running_sessions()          # {sessionId: info}
         self.running_ids = set(self.running)
         self._all_projects = scan_projects()
@@ -97,17 +95,9 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
         if current:
             self.open_project(current)
 
-        self.flash = update_hint() or ''
-        start_check()
-        self.draw_screen()
-
     def rebuild_projects(self) -> None:
         self.projects = build_projects(self._all_projects, self.running_ids,
                                        self.show_all)
-
-    def finalize(self) -> None:
-        self.cmd.set_cursor_visible(True)
-        self.reset_pointer()
 
     # --- переходы между экранами ---
 
@@ -143,10 +133,13 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
 
     # --- геометрия ---
 
+    def header_rows(self) -> int:
+        # на экране проектов шапки нет; на остальных — заголовок и
+        # разделитель под ним
+        return 0 if self.screen == 'projects' else 2
+
     def visible_rows(self) -> int:
-        # на экране проектов шапки нет — только футер (1 строка),
-        # на остальных: шапка + разделитель + футер (3 строки).
-        reserved = 1 if self.screen == 'projects' else 3
+        reserved = self.header_rows() + 1   # плюс футер
         if self.input_mode:
             reserved += 1   # отдельная строка поля ввода над футером
         return max(1, self.screen_size.rows - reserved)
@@ -223,7 +216,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
                 self.print()
 
         if self.input_mode:
-            self._draw_input_line(0 if self.screen == 'projects' else 2)
+            self._draw_input_line()
 
         # footer — без финального перевода строки, иначе экран
         # прокрутится вверх на одну строку и шапка уедет за верх окна.
@@ -249,7 +242,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             self.print()
 
         if self.input_mode:
-            self._draw_input_line(2)
+            self._draw_input_line()
 
         self.print(styled(truncate(self._footer(), cols),
                           fg='green' if self.flash else 'gray'), end='')
@@ -320,10 +313,10 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             # только базовый статус в колонку (waitingFor опускаем —
             # иначе блок «едет»); состояние и так видно по цвету
             # точки/строки
-            right_text = STATUS_LABEL.get(status, status or 'running')
+            right_text = status or 'running'
             if s.get('bg'):
                 right_text = 'bg ' + right_text
-            color = STATUS_COLOR.get(status, 'green')
+            color = _STATUS_COLOR.get(status, 'green')
         else:
             right_text = human_age(self.now - s['mtime'])
             color = 'gray'
@@ -351,13 +344,13 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             return ' worktree name (empty = auto): '
         return f' {self.input_mode}: '
 
-    def _draw_input_line(self, header_rows: int) -> None:
+    def _draw_input_line(self) -> None:
         """Отдельная строка поля ввода (над футером) в режиме ввода."""
         cols = self.screen_size.cols
         prefix = self.input_prefix()
         self.print(styled(truncate(prefix + self.input_buffer, cols),
                           fg='cyan', bold=True))
-        self.set_caret(header_rows + self.visible_rows(),
+        self.set_caret(self.header_rows() + self.visible_rows(),
                        min(len(prefix) + self.input_pos, cols - 1))
 
     def _footer(self) -> str:
@@ -420,7 +413,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
     def preview_scroll(self, delta: int) -> None:
         self.preview.scroll(delta, self.visible_rows())
         self.status = ''
-        self.draw_screen()
+        self.schedule_draw()
 
     def preview_jump(self, to_end: bool) -> None:
         self.preview.jump(to_end, self.visible_rows())
@@ -564,7 +557,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
         if n == 0:
             return
         self.sel = max(0, min(n - 1, self.sel + delta))
-        self.draw_screen()
+        self.schedule_draw()
 
     def activate(self) -> None:
         item = self.current_item()
@@ -703,13 +696,13 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             return
         if self.input_text(text):
             return
+        ctrl = ctrl_letter(text, in_bracketed_paste)
+        if ctrl is not None and self._preview_ctrl(ctrl):
+            return
 
         for ch in text:
             c = to_latin(ch)
             if self.screen == 'preview':
-                if '\x01' <= ch <= '\x1a':          # C0-байт → ctrl+буква
-                    self._preview_ctrl(chr(ord(ch) + 96))
-                    continue
                 if c in ('q', 'Q'):
                     self.quit_loop(0)
                     return
@@ -768,15 +761,13 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
                 self.start_rename()
 
     def _preview_row_at(self, ev) -> 'int | None':
-        r = ev.cell_y - 2                      # шапка + разделитель
+        r = ev.cell_y - self.header_rows()
         if not (0 <= r < self.visible_rows()):
             return None
         row = self.preview.offset + r
         return row if 0 <= row < len(self.preview.lines) else None
 
-    def _wanted_pointer(self, ev) -> 'str | None':
-        if self.confirm_active:
-            return self.confirm_pointer(ev)
+    def _pointer_for(self, ev) -> 'str | None':
         # только в просмотре сессии: рука — на сворачиваемой записи,
         # текст — на прочих строках (drag-select); в списках стрелка
         if self.screen != 'preview':
@@ -786,9 +777,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             return None
         return 'pointer' if self.preview.lines[row].entry >= 0 else 'text'
 
-    def on_mouse_event(self, ev) -> None:
-        if self.confirm_click(ev):
-            return
+    def _on_mouse(self, ev) -> None:
         self.update_pointer(ev)
         # колесо мыши: в предпросмотре — скролл текста, в списках —
         # движение по строкам
@@ -801,7 +790,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             return
         if self.screen == 'preview' and self.drag_select(ev):
             return
-        super().on_mouse_event(ev)
+        super()._on_mouse(ev)
 
     # --- хуки DragSelect (выделение мышью в предпросмотре) ---
 
@@ -834,8 +823,7 @@ class SessionsHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect, PointerCur
             else:
                 self.draw_screen()
             return
-        head = 0 if self.screen == 'projects' else 2   # на проектах шапки нет
-        r = ev.cell_y - head
+        r = ev.cell_y - self.header_rows()
         if r < 0:
             return
         idx = self.offset + r

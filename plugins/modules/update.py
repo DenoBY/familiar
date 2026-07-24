@@ -11,6 +11,7 @@ brew сам не сообщает об обновлениях, поэтому к
 
 import json
 import os
+import tempfile
 import threading
 import time
 import urllib.request
@@ -59,13 +60,26 @@ def _load() -> dict:
 
 
 def _save(data: dict) -> None:
+    """Записать кэш атомарно (tmp + os.replace).
+
+    Пишет демон-поток: на выходе из кита его убивают на произвольном
+    месте, и запись «на месте» оставила бы обрезанный json.
+    """
     path = _cache_path()
+    tmp = None
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(data, f)
+        os.replace(tmp, path)
     except OSError:
-        pass   # кэш — best effort: без него просто не будет подсказки
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        # кэш — best effort: без него просто не будет подсказки
 
 
 def _ts(data: dict, key: str) -> float:
@@ -91,11 +105,13 @@ def _fetch_latest() -> 'str | None':
 
 
 def _refresh() -> None:
-    data = _load()
-    # checked пишется и при ошибке сети: офлайн-день не должен
-    # превращаться в запрос при каждом открытии кита.
-    data['checked'] = time.time()
     latest = _fetch_latest()
+    # Кэш перечитывается ПОСЛЕ сети: пока поток висел в запросе,
+    # update_hint() соседнего кита мог записать сюда 'notified' —
+    # снимок, снятый до запроса, затёр бы его и показал подсказку
+    # повторно. checked пишется и при ошибке сети: офлайн-день не
+    # должен превращаться в запрос при каждом открытии кита.
+    data = {**_load(), 'checked': time.time()}
     if latest:
         data['latest'] = latest
     _save(data)

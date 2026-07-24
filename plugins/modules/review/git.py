@@ -6,21 +6,28 @@ git-примитивов из modules.vcs.git. Без зависимостей �
 
 import os
 
-# Ре-экспорт примитивов: тесты берут их отсюда
-# (import modules.review.git as G).
-from ..vcs.git import (  # noqa: F401
+from ..vcs.git import (
     classify_status,
     count_lines,
-    git_blob,
     git_numstat,
-    git_root,
     has_head,
-    last_error,
-    read_text,
     run_git,
     set_error,
 )
 from ..vcs.util import is_noise
+
+
+# Потолок на построчный подсчёт untracked-файла: считается на КАЖДОМ
+# скане (в т.ч. при живом refresh), а дамп на сотни мегабайт даёт
+# только бесполезное «+N строк».
+MAX_COUNT_BYTES = 4_000_000
+
+
+def _too_big(path: str) -> bool:
+    try:
+        return os.path.getsize(path) > MAX_COUNT_BYTES
+    except OSError:
+        return True    # нет доступа/файла — считать нечего
 
 
 def scan_changes(root: str) -> list[dict]:
@@ -55,9 +62,12 @@ def scan_changes(root: str) -> list[dict]:
         if it['untracked']:
             # noise-каталоги (venv, node_modules…) не читаем: их
             # может быть тысячи, а в дереве они по умолчанию
-            # скрыты — статистика не нужна.
-            noise = is_noise(it['path'])
-            it['stat'] = None if noise else (count_lines(os.path.join(root, it['path'])), 0)
+            # скрыты — статистика не нужна. is_noise — по
+            # относительному пути: в абсолютном сработали бы папки
+            # над корнем репозитория.
+            absp = os.path.join(root, it['path'])
+            skip = is_noise(it['path']) or _too_big(absp)
+            it['stat'] = None if skip else (count_lines(absp), 0)
         else:
             it['stat'] = stats.get(it['path'])
     items.sort(key=lambda it: it['path'])

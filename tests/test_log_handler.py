@@ -6,7 +6,7 @@ import unittest
 
 import kittymock  # noqa: F401
 import log as L
-from kittymock import MouseEvent, draw_text, wire
+from kittymock import MouseEvent, draw_text, run_threads_inline, wire
 
 
 _ENV = {
@@ -119,36 +119,15 @@ class LogHandlerTest(unittest.TestCase):
     # --- push ---
 
     def _push_ready(self):
-        """Репозиторий с удалёнкой и незапушенным коммитом + loop,
-        исполняющий executor синхронно.
+        """Репозиторий с удалёнкой и незапушенным коммитом; сетевой
+        поток исполняется на месте, чтобы не ждать его гонкой.
         """
         remote = tempfile.mkdtemp(prefix='cclog_pushremote_')
         self.addCleanup(shutil.rmtree, remote, True)
         subprocess.run(['git', 'init', '--bare', '-q', remote], check=True,
                        capture_output=True, env=os.environ)
         self._git('remote', 'add', 'origin', remote)
-
-        class Fut:
-            def __init__(self, v):
-                self.v = v
-
-            def cancelled(self):
-                return False
-
-            def exception(self):
-                return None
-
-            def result(self):
-                return self.v
-
-            def add_done_callback(self, cb):
-                cb(self)
-
-        class Loop(kittymock.ImmediateLoop):
-            def run_in_executor(self, _pool, fn, *a):
-                return Fut(fn(*a))
-
-        self.h.asyncio_loop = Loop()
+        run_threads_inline(self)
         self.h.reload_commits()
         return remote
 
@@ -234,7 +213,7 @@ class LogHandlerTest(unittest.TestCase):
             def cancel(self):
                 self.cancelled = True
 
-        class DeferredLoop:
+        class DeferredLoop(kittymock.ImmediateLoop):
             def call_later(self, delay, cb, *args):
                 t = Timer()
                 scheduled.append((t, cb, args))
@@ -326,6 +305,41 @@ class LogHandlerTest(unittest.TestCase):
         self.h.open_commit()
         self.h._diff_key('ESCAPE')                         # tree → назад к списку
         self.assertEqual(self.h.screen, 'commits')
+
+    # --- поиск по диффу (движок в общей базе DiffTreeView) ---
+
+    def _open_diff_of(self, name):
+        self.h.sel = 0
+        self.h.open_commit()
+        self.h.tsel = next(i for i, r in enumerate(self.h.rows)
+                           if r['type'] == 'file' and r['name'] == name)
+        self.h.load_diff()
+
+    def test_search_applies_live_and_counts_matches(self):
+        # проводка режима 'search' живёт в базе: у log своих веток
+        # под неё нет, и без них ⌘f выглядел бы рабочим, но не искал
+        self._open_diff_of('a.txt')
+        self.h.start_search()
+        self.assertEqual(self.h.input_mode, 'search')
+        self.h.input_text('changed')
+        self.assertEqual(self.h.search_query, 'changed')
+        self.assertTrue(self.h.search_matches)
+
+    def test_escape_clears_search_state(self):
+        self._open_diff_of('a.txt')
+        self.h.start_search()
+        self.h.input_text('changed')
+        self.h.cancel_input()
+        self.assertEqual(self.h.search_query, '')
+        self.assertEqual(self.h.search_matches, [])
+        self.assertEqual(self.h.search_idx, 0)
+
+    def test_match_counter_in_footer(self):
+        self._open_diff_of('a.txt')
+        self.h.start_search()
+        self.h.input_text('changed')
+        self.h.commit_input()
+        self.assertIn('n/N 1/', self.h._footer())
 
     # --- копирование ---
 
