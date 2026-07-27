@@ -29,6 +29,16 @@ class TestIsNoise(unittest.TestCase):
         self.assertFalse(U.is_noise('src/main.py'))
         self.assertFalse(U.is_noise('a/b/c'))
 
+    def test_build_artifacts_only_at_the_root(self):
+        self.assertTrue(U.is_noise('vendor/laravel/framework/src/x.php'))
+        self.assertTrue(U.is_noise('dist/app.js'))
+        # опубликованные шаблоны пакета Laravel — исходники проекта
+        self.assertFalse(U.is_noise('resources/views/vendor/voyager/read.blade.php'))
+        self.assertFalse(U.is_noise('app/build/Kernel.php'))
+
+    def test_root_name_without_directory_is_not_noise(self):
+        self.assertFalse(U.is_noise('build'))
+
 
 class TestStatusStyle(unittest.TestCase):
     def test_known_statuses(self):

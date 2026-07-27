@@ -9,6 +9,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 
 
 # Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs:
@@ -119,6 +120,59 @@ def running_sessions() -> 'dict[str, dict]':
             'pid': pid,
         }
     return result
+
+
+# kitty кладёт в окружение кита pid процесса окна, поверх которого
+# открыт оверлей (Boss.run_kitten: KITTY_CHILD_PID) — то самое окно,
+# что придёт в handle_result как target_window_id.
+_WINDOW_PID_VAR = 'KITTY_CHILD_PID'
+
+# Сколько ppid-шагов проходить от процесса claude до процесса окна:
+# при запуске из кита шелл делает exec (0 шагов), при ручном `claude`
+# в интерактивном шелле — 1-2; запас на обёртки вроде login.
+_MAX_PARENT_HOPS = 8
+
+
+def _parent_pids() -> dict[int, int]:
+    try:
+        out = subprocess.run(('ps', '-Ao', 'pid=,ppid='), capture_output=True,
+                             timeout=4, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    parents = {}
+    for line in out.stdout.decode('utf-8', 'replace').splitlines():
+        pid, _, ppid = line.strip().partition(' ')
+        ppid = ppid.strip()
+        if pid.isdigit() and ppid.isdigit():
+            parents[int(pid)] = int(ppid)
+    return parents
+
+
+def window_session_id(running: 'dict[str, dict]') -> 'str | None':
+    """id сессии, идущей в окне, поверх которого открыт кит.
+
+    Процесс claude — это либо сам процесс окна (шелл сделал exec),
+    либо его потомок; связь ищется по дереву ppid.
+    """
+    raw = os.environ.get(_WINDOW_PID_VAR, '')
+    if not raw.isdigit():
+        return None
+    window_pid = int(raw)
+    by_pid = {info['pid']: sid for sid, info in running.items() if info.get('pid')}
+    if not by_pid:
+        return None
+    if window_pid in by_pid:
+        return by_pid[window_pid]
+    parents = _parent_pids()
+    for pid, sid in by_pid.items():
+        cur = parents.get(pid)
+        for _ in range(_MAX_PARENT_HOPS):
+            if cur is None or cur <= 1:
+                break
+            if cur == window_pid:
+                return sid
+            cur = parents.get(cur)
+    return None
 
 
 def scan_projects() -> list[dict]:

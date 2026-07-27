@@ -228,6 +228,30 @@ class TestRunningSessions(TmpDirTest):
         self.assertEqual(res['S1']['cwd'], '/c')
 
 
+class TestWindowSessionId(unittest.TestCase):
+    RUNNING = {'S1': {'pid': 100}, 'S2': {'pid': 200}}
+
+    def call(self, window_pid, parents=None):
+        env = {} if window_pid is None else {Dt._WINDOW_PID_VAR: str(window_pid)}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(Dt, '_parent_pids', return_value=parents or {}):
+            return Dt.window_session_id(self.RUNNING)
+
+    def test_no_env_var(self):
+        self.assertIsNone(self.call(None))
+
+    def test_window_process_is_the_session(self):
+        # шелл сделал exec claude — pid окна и pid сессии совпадают
+        self.assertEqual(self.call(200), 'S2')
+
+    def test_session_is_a_descendant(self):
+        # claude запущен из интерактивного шелла окна: 100 → 42 → 7
+        self.assertEqual(self.call(7, {100: 42, 42: 7, 200: 1}), 'S1')
+
+    def test_foreign_process_tree(self):
+        self.assertIsNone(self.call(999, {100: 42, 42: 1, 200: 1}))
+
+
 class TestScanProjects(TmpDirTest):
     def setUp(self):
         super().setUp()

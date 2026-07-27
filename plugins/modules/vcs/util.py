@@ -26,12 +26,20 @@ STATUS_STYLE = {
 # Переключаются клавишей u.
 NOISE_DIRS = {
     '.idea', '.vscode', '.git', '.DS_Store', 'node_modules', '__pycache__',
-    '.venv', 'venv', 'dist', 'build', 'target', 'vendor', '.next', '.nuxt',
-    '.pytest_cache', '.mypy_cache', '.gradle', '.cache', 'coverage',
+    '.venv', 'venv', '.next', '.nuxt', '.pytest_cache', '.mypy_cache',
+    '.gradle', '.cache',
 }
+
+# Артефакты с именами, которые встречаются и у исходников: Laravel
+# держит опубликованные шаблоны пакетов в resources/views/vendor, и
+# скрывать их нельзя. Такие имена — шум только в корне репозитория.
+NOISE_ROOTS = {'vendor', 'dist', 'build', 'target', 'coverage'}
 
 
 def is_noise(rel: str) -> bool:
+    root, sep, _ = rel.partition('/')
+    if sep and root in NOISE_ROOTS:
+        return True
     return any(part in NOISE_DIRS for part in rel.split('/'))
 
 

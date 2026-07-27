@@ -41,6 +41,7 @@ from modules.session.data import (
     load_sessions,
     running_sessions,
     scan_projects,
+    window_session_id,
 )
 from modules.session.preview import Preview
 from modules.session.util import human_age
@@ -89,8 +90,10 @@ class SessionsHandler(OverlayHandler):
         self._all_projects = scan_projects()
         self.rebuild_projects()
 
-        # Если вызвали из папки проекта — сразу открываем его сессии.
-        # Иначе стартуем со списка проектов (режим выбора проекта).
+        # Каскад: сессия окна под оверлеем → проект по cwd окна →
+        # список проектов (режим выбора проекта).
+        if self.open_current_session():
+            return
         current = next((p for p in self.projects if p['is_current']), None)
         if current:
             self.open_project(current)
@@ -121,6 +124,27 @@ class SessionsHandler(OverlayHandler):
         self.offset = 0
         self.filter_query = ''
         self.status = ''
+
+    def open_current_session(self) -> bool:
+        """Сессия окна под оверлеем: открыть её проект и выделить её.
+
+        False — окно не занято сессией либо её файла ещё нет в
+        ~/.claude/projects (первые секунды жизни).
+        """
+        sid = window_session_id(self.running)
+        if not sid:
+            return False
+        fname = sid + '.jsonl'
+        project = next((p for p in self.projects
+                        if any(os.path.basename(f) == fname for f in p['files'])), None)
+        if project is None:
+            return False
+        self.open_project(project)
+        for i, s in enumerate(self.sessions):
+            if s['id'] == sid:
+                self.sel = i
+                break
+        return True
 
     def back_to_projects(self) -> None:
         self.screen = 'projects'

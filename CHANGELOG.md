@@ -5,6 +5,31 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.28.0] — 2026-07-27
+
+### Fixed
+
+- review, log: changes under a path like `resources/views/vendor/…`
+  are no longer hidden as noise. The "ignored folders" filter matched
+  any path segment, so Laravel's published package templates — plain
+  project sources tracked by git — disappeared from the tree, and a
+  repository whose only change lived there looked clean. Names that
+  source folders share with build artifacts (`vendor`, `dist`,
+  `build`, `target`, `coverage`) now count as noise only at the root
+  of the repository; unambiguous ones (`node_modules`,
+  `__pycache__`, `.idea`, …) keep being hidden at any depth.
+
+### Changed
+
+- session: opening the kitten from a window that is already running a
+  Claude session now lands on that session — its project opens and
+  the cursor sits on its row, instead of the top of the list. kitty
+  hands the kitten the pid of the process in the window underneath
+  the overlay, and the session is matched through the process tree,
+  so a project with several live sessions still resolves to the right
+  one. From a plain shell nothing changes: the current project's
+  sessions, or the project list.
+
 ## [0.27.0] — 2026-07-25
 
 ### Changed

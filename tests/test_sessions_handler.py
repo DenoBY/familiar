@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import kittymock  # noqa: F401
 import modules.session.conversation as Cv
@@ -112,6 +113,36 @@ class SessionsHandlerTest(unittest.TestCase):
         self.assertEqual(len(self.h.sessions), 1)
         self.assertEqual(self.h.sessions[0]['id'], 'sid-a')
         self.assertEqual(self.h.sessions[0]['title'], 'hello from A')
+
+    def _add_session(self, project, sid, first_msg, mtime):
+        f = os.path.join(project['dir'], sid + '.jsonl')
+        with open(f, 'w') as fh:
+            fh.write(json.dumps({'type': 'user', 'cwd': project['path'],
+                                 'message': {'content': first_msg}}) + '\n')
+        os.utime(f, (mtime, mtime))
+        project['probes'].append({'file': f, 'entrypoint': 'cli', 'mtime': mtime})
+        self.h.rebuild_projects()
+
+    def test_open_current_session_puts_cursor_on_window_session(self):
+        self._add_session(self.projA, 'sid-a2', 'newer session', NOW - 10)
+        with mock.patch.object(S, 'window_session_id', return_value='sid-a'):
+            self.assertTrue(self.h.open_current_session())
+        self.assertEqual(self.h.screen, 'sessions')
+        self.assertEqual(self.h.project['name'], 'projA')
+        # свежая sid-a2 стоит первой — курсор всё равно на сессии окна
+        self.assertEqual(self.h.sel, 1)
+        self.assertEqual(self.h.current_item()['id'], 'sid-a')
+
+    def test_open_current_session_skipped_without_session(self):
+        with mock.patch.object(S, 'window_session_id', return_value=None):
+            self.assertFalse(self.h.open_current_session())
+        self.assertEqual(self.h.screen, 'projects')
+
+    def test_open_current_session_skipped_for_unknown_id(self):
+        # сессия жива, но её файла ещё нет в ~/.claude/projects
+        with mock.patch.object(S, 'window_session_id', return_value='sid-new'):
+            self.assertFalse(self.h.open_current_session())
+        self.assertEqual(self.h.screen, 'projects')
 
     def test_active_session_sorted_first(self):
         self.h.running = {'sid-a': {'status': 'busy', 'cwd': '/x', 'waitingFor': None}}
