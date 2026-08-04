@@ -50,5 +50,5 @@ def search_files(root: str, query: str,
         total += 1
     items = list(by_path.values())
     for it in items:
-        it['stat'] = (len(it['lines']), None)
+        it['matches'] = len(it['lines'])
     return items, truncated

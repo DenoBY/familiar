@@ -605,7 +605,8 @@ def build_tree(items: list[dict], collapsed: set) -> list[dict]:
         for fname, idx in sorted(node['files']):
             rows.append({'type': 'file', 'depth': depth, 'name': fname,
                          'idx': idx, 'kind': items[idx]['kind'],
-                         'stat': items[idx].get('stat')})
+                         'stat': items[idx].get('stat'),
+                         'matches': items[idx].get('matches')})
 
     walk(plain, 0, '', '', None)
     for name in sorted(groups):

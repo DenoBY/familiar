@@ -5,6 +5,27 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.29.0] — 2026-08-04
+
+### Changed
+
+- review: pressing `⌘⇧F` while already in Find in Files now reopens the
+  query line with the current query instead of closing the mode — after
+  finding one thing the next step is usually searching for another.
+  Closing search still works from the query line (`⌘⇧F` again) and with
+  `Esc`.
+
+### Fixed
+
+- review: in Find in Files the per-file match count is no longer printed
+  as a green `+N`. It reused the diff statistics column, so a file with
+  one match looked like a file with one added line — as if it had
+  uncommitted changes. The count is now a plain grey number.
+- review, log, session: Blade comments `{{-- … --}}` are now greyed out
+  as comments, including multi-line ones. Pygments has no Blade lexer,
+  so the commented-out markup was painted as live markup and a disabled
+  block looked exactly like a working one.
+
 ## [0.28.0] — 2026-07-27
 
 ### Fixed

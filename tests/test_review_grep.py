@@ -69,14 +69,17 @@ class SearchFilesTest(unittest.TestCase):
         items, _ = G.search_files(self.repo, 'BETA')
         self.assertEqual(self._rels(items), ['a.py'])
 
-    def test_lines_and_stat(self):
+    def test_lines_and_match_count(self):
         items, _ = G.search_files(self.repo, 'beta')
         by_rel = {it['path']: it for it in items}
         b = by_rel['sub/b.txt']
         # совпадение — строка (не вхождение): двойное beta в первой
         # строке даёт одну запись
         self.assertEqual(b['lines'], [(1, 'beta beta'), (3, 'beta again')])
-        self.assertEqual(b['stat'], (2, None))
+        self.assertEqual(b['matches'], 2)
+        # не 'stat': его дерево рисует зелёным '+N', как добавленные
+        # строки диффа
+        self.assertNotIn('stat', b)
         self.assertEqual(b['kind'], 'match')
 
     def test_regex_mode(self):

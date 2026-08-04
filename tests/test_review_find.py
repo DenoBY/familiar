@@ -78,11 +78,22 @@ class ReviewFindModeTest(unittest.TestCase):
         self.enter_find('needle')
         self.assertTrue(self.h.find_mode)
         self.assertEqual(self.h.view_mode, 'final')
-        self.h.input_key('ENTER')
-        self.h.toggle_find()
+        self.h.toggle_find()   # из строки запроса — выход из режима
         self.assertFalse(self.h.find_mode)
         self.assertEqual([r['name'] for r in self.h.rows], before_names)
         self.assertEqual(self.h.view_mode, 'diff')
+
+    def test_toggle_over_results_returns_to_query(self):
+        # найдя одно, обычно ищут следующее: ⌘⇧f над результатами
+        # правит запрос, а не закрывает поиск
+        self.enter_find('needle')
+        self.h.input_key('ENTER')
+        self.h.toggle_find()
+        self.assertTrue(self.h.find_mode)
+        self.assertEqual(self.h.input_mode, 'find')
+        self.assertEqual(self.h.input_buffer, 'needle')
+        self.h.toggle_find()
+        self.assertFalse(self.h.find_mode)
 
     def test_chord_toggles_mode(self):
         self.h.on_key(KeyEvent(key='f', super=True, shift=True))
@@ -104,7 +115,7 @@ class ReviewFindModeTest(unittest.TestCase):
         self.enter_find('needle')
         self.assertEqual(self.h.filter_query, '')
         self.h.input_key('ENTER')
-        self.h.toggle_find()
+        self.h.on_key(KeyEvent(key='ESCAPE'))
         self.assertEqual(self.h.filter_query, 'read')
         rels = {it['path'] for it in self.h.items}
         self.assertIn('docs/readme.md', rels)   # снова правки ревью
@@ -122,7 +133,7 @@ class ReviewFindModeTest(unittest.TestCase):
         self.assertNotIn('vendor', names)
         self.assertEqual(self.h.n_files, 3)
         by_rel = {it['path']: it for it in self.h.items}
-        self.assertEqual(by_rel['app.py']['stat'], (2, None))
+        self.assertEqual(by_rel['app.py']['matches'], 2)
 
     def test_short_query_does_not_search(self):
         self.enter_find('n')

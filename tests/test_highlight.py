@@ -91,6 +91,20 @@ class TestTextColors(unittest.TestCase):
         tail = cols[0][code.index('#'):]
         self.assertFalse(all(c == H.C_COMMENT for c in tail))
 
+    def test_blade_comment_covers_markup_inside(self):
+        # {{-- --}} Pygments не знает: закомментированную разметку он
+        # красил как живую — закомментированный блок было не отличить
+        code = '{{-- off --}}\n{{--\n<div class="x">\n--}}\n<b>on</b>'
+        cols = H.text_colors(code, '.php')
+        for i in range(4):
+            self.assertTrue(all(c == H.C_COMMENT for c in cols[i]), i)
+        self.assertFalse(any(c == H.C_COMMENT for c in cols[4]))
+
+    def test_unclosed_blade_comment_runs_to_the_end(self):
+        code = '{{--\n<div class="x">'
+        cols = H.text_colors(code, '.php')
+        self.assertTrue(all(c == H.C_COMMENT for c in cols[1]))
+
     def test_php_file_with_open_tag_highlights_as_php(self):
         code = "<?php\nclass Foo {}"
         self.assertEqual(dict(roles(code, '.php', line=1))['class'], H.C_KEYWORD)

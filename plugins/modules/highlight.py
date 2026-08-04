@@ -10,6 +10,7 @@
 diff правок), поэтому лежит в корне пакета modules.
 """
 
+import bisect
 import difflib
 import os
 import re
@@ -252,6 +253,28 @@ def _php_lexer(text: str):
     return _pygments_lexer('.php')                             # голый фрагмент — inline-php
 
 
+# Blade-лексера в Pygments нет, html+php красит закомментированный
+# кусок как обычную разметку. Незакрытый комментарий тянем до конца
+# текста — так же показывают IDE.
+_BLADE_COMMENT = re.compile(r'\{\{--(?:.*?--\}\}|.*)', re.DOTALL)
+
+
+def _paint_blade_comments(text: str, lines: 'list[list[int | None]]') -> None:
+    """Кладёт цвет комментария поверх цветов лексера, правя lines."""
+    if '{{--' not in text:
+        return
+    starts = [0]
+    for sep in _LINE_SPLIT.finditer(text):
+        starts.append(sep.end())
+    for m in _BLADE_COMMENT.finditer(text):
+        i = bisect.bisect_right(starts, m.start()) - 1
+        while i < len(lines) and starts[i] < m.end():
+            row, base = lines[i], starts[i]
+            for k in range(max(m.start() - base, 0), min(m.end() - base, len(row))):
+                row[k] = C_COMMENT
+            i += 1
+
+
 def _is_call(tokens: list, idx: int) -> bool:
     """За именем — открывающая скобка, значит это вызов функции.
 
@@ -286,7 +309,8 @@ def text_colors(text: str, ext: str) -> 'list[list[int | None]] | None':
     Лексим текст целиком, а не построчно: только так видны докстринги,
     многострочные строки и f-string-интерполяция.
     """
-    lexer = _php_lexer(text) if ext in _PHP_EXTS else _pygments_lexer(ext)
+    is_php = ext in _PHP_EXTS
+    lexer = _php_lexer(text) if is_php else _pygments_lexer(ext)
     if lexer is None or len(text) > MAX_HIGHLIGHT_BYTES:
         return None
     tokens = list(lexer.get_tokens(text))
@@ -305,6 +329,8 @@ def text_colors(text: str, ext: str) -> 'list[list[int | None]] | None':
                 lines.append([])
             if chunk:
                 lines[-1].extend([color] * len(chunk))
+    if is_php:
+        _paint_blade_comments(text, lines)
     return lines
 
 

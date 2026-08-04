@@ -685,10 +685,14 @@ class ReviewHandler(DiffTreeView):
     # --- Find in Files (Cmd+Shift+F) ---
 
     def toggle_find(self) -> None:
-        if self.find_mode:
+        if not self.find_mode:
+            self._enter_find()
+        elif self.input_mode == 'find':
             self._exit_find()
         else:
-            self._enter_find()
+            # найдя одно, обычно ищут следующее: ⌘⇧f над результатами
+            # возвращает к запросу, а закрывает поиск уже из него
+            self.start_input('find', self.find_query)
 
     def _enter_find(self) -> None:
         if not self.root:

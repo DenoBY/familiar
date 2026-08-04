@@ -54,6 +54,24 @@ THUMB_FG = 244   # ползунки обеих панелей: заметнее 
 SHIFT_MOD = 0b1
 
 
+def _row_counters(row: dict) -> 'list[tuple[str, dict]]':
+    """Правая колонка строки файла: (текст, стиль) для +N/−N диффа либо
+    для числа совпадений поиска.
+
+    У совпадений свой счётчик, а не диффовый: зелёное «+N» читалось бы
+    как добавленные строки — файл выглядел бы изменённым.
+    """
+    if row.get('matches'):
+        return [(str(row['matches']), {'fg': 'gray'})]
+    stat = row.get('stat') or (None, None)
+    segs = []
+    if stat[0]:
+        segs.append((f'+{stat[0]}', {'fg': 'green'}))
+    if stat[1]:
+        segs.append((f'−{stat[1]}', {'fg': 'red'}))
+    return segs
+
+
 class DiffTreeView(OverlayHandler):
 
     def __init__(self, root: 'str | None') -> None:
@@ -446,10 +464,8 @@ class DiffTreeView(OverlayHandler):
         # префикс-пробелы держат выравнивание имён под
         # колонкой шеврона папок
         color = STATUS_STYLE.get(row['kind'], 'gray')
-        stat = row.get('stat')
-        radd = f'+{stat[0]}' if stat and stat[0] else ''
-        rdel = f'−{stat[1]}' if stat and stat[1] else ''
-        stat_str = ' '.join(x for x in (radd, rdel) if x)
+        segs = _row_counters(row)
+        stat_str = ' '.join(text for text, _ in segs)
         rlen = len(stat_str)
         prefix = f'{indent}  '
         budget = width - len(prefix) - rlen - (1 if rlen else 0)
@@ -458,12 +474,7 @@ class DiffTreeView(OverlayHandler):
         if highlight:
             return styled(pad(prefix + name + ' ' * gap + stat_str, width), reverse=True)
         out = styled(prefix, fg=color, bold=True) + styled(name, fg=color) + ' ' * gap
-        parts = []
-        if radd:
-            parts.append(styled(radd, fg='green'))
-        if rdel:
-            parts.append(styled(rdel, fg='red'))
-        return out + ' '.join(parts)
+        return out + ' '.join(styled(text, **style) for text, style in segs)
 
     # --- дифф выбранного файла ---
 
