@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 import kittymock  # noqa: F401
-import modules.review.git as G
+import modules.vcs.worktree as G
 
 
 _ENV = {

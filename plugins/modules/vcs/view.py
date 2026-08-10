@@ -53,6 +53,11 @@ THUMB_FG = 244   # ползунки обеих панелей: заметнее 
 # выделение даже в grabbed-режиме.
 SHIFT_MOD = 0b1
 
+# Сколько строк контекста оставляем над целью прыжка ([ ], поиск,
+# аннотации): цель, прижатая к краю панели, читается хуже — не видно,
+# откуда пришли.
+JUMP_MARGIN = 3
+
 
 def _row_counters(row: dict) -> 'list[tuple[str, dict]]':
     """Правая колонка строки файла: (текст, стиль) для +N/−N диффа либо
@@ -158,6 +163,29 @@ class DiffTreeView(OverlayHandler):
 
     def visible_rows(self) -> int:
         return max(1, self.screen_size.rows - 3 - self.input_rows())
+
+    def sticky_line(self, offset: 'int | None' = None) -> str:
+        """Липкий заголовок скоупа над строкой offset (пусто — нет).
+
+        Он же занимает первую строку правой панели, поэтому от него
+        зависит вся вертикальная геометрия диффа.
+        """
+        off = self.diff_offset if offset is None else offset
+        return self.diff_scope[off] if 0 < off < len(self.diff_scope) else ''
+
+    def diff_visible_rows(self, offset: 'int | None' = None) -> int:
+        """Сколько строк диффа реально помещается в панель: липкий
+        заголовок съедает строку, и без учёта этого нижняя строка
+        считается видимой, а на экране её нет.
+        """
+        return max(1, self.visible_rows() - (1 if self.sticky_line(offset) else 0))
+
+    def diff_offset_max(self) -> int:
+        """Предельная прокрутка диффа: сдвиг открывает липкий
+        заголовок, и до последней строки нужен ещё один шаг.
+        """
+        off = max(0, len(self.diff_rows) - self.visible_rows())
+        return off + 1 if off and self.sticky_line(off) else off
 
     def left_width(self) -> int:
         return max(18, min(48, self.screen_size.cols * 2 // 5))
@@ -648,21 +676,36 @@ class DiffTreeView(OverlayHandler):
         self.draw_screen()
 
     def diff_scroll(self, delta: int) -> None:
-        limit = max(0, len(self.diff_rows) - self.visible_rows())
-        self.diff_offset = max(0, min(limit, self.diff_offset + delta))
+        self.diff_offset = max(0, min(self.diff_offset_max(), self.diff_offset + delta))
         if self.focus == 'diff':
-            vis = self.visible_rows()
-            lo, hi = self.diff_offset, self.diff_offset + vis - 1
+            lo = self.diff_offset
+            hi = lo + self.diff_visible_rows() - 1
             if not (lo <= self.diff_cur <= hi):
                 self.diff_cur = self._focus_landing(lo)
         self.schedule_draw()
 
     def _ensure_cursor_visible(self) -> None:
-        vis = self.visible_rows()
-        if self.diff_cur < self.diff_offset:
-            self.diff_offset = self.diff_cur
-        elif self.diff_cur >= self.diff_offset + vis:
-            self.diff_offset = self.diff_cur - vis + 1
+        # два прохода: сдвиг окна сам открывает или прячет липкий
+        # заголовок, а с ним меняется и высота панели
+        for _ in range(2):
+            vis = self.diff_visible_rows()
+            if self.diff_cur < self.diff_offset:
+                self.diff_offset = self.diff_cur
+            elif self.diff_cur >= self.diff_offset + vis:
+                self.diff_offset = self.diff_cur - vis + 1
+            else:
+                return
+
+    def reveal_cursor(self, margin: int = JUMP_MARGIN) -> None:
+        """Показать курсор с контекстом: цель у самого края панели
+        (или за ней) — прокрутить так, чтобы над ней осталось margin
+        строк. Курсор в середине кадра окно не дёргает.
+        """
+        vis = self.diff_visible_rows()
+        m = min(margin, max(0, (vis - 1) // 2))
+        if self.diff_offset + m <= self.diff_cur <= self.diff_offset + vis - 1 - m:
+            return
+        self.diff_offset = max(0, min(self.diff_offset_max(), self.diff_cur - m))
 
     def hscroll_by(self, delta: int) -> None:
         new = min(self.hscroll_max, max(0, self.hscroll + delta))
@@ -673,6 +716,13 @@ class DiffTreeView(OverlayHandler):
         self.schedule_draw()
 
     def jump_hunk(self, direction: int) -> None:
+        """Прыжок к соседнему блоку изменений (в поиске — к соседнему
+        совпадению).
+
+        Фокус уводим в дифф даже из дерева: курсор рисуется только на
+        сфокусированной панели, иначе прыжок виден как безымянный
+        сдвиг текста — непонятно, куда попали.
+        """
         if not self.diff_hunks:
             return
         base = self.diff_cur if self.focus == 'diff' else self.diff_offset
@@ -682,12 +732,9 @@ class DiffTreeView(OverlayHandler):
             nxt = next((h for h in reversed(self.diff_hunks) if h < base), None)
         if nxt is None:
             return
-        if self.focus == 'diff':
-            self.diff_cur = nxt
-            self._ensure_cursor_visible()
-        else:
-            limit = max(0, len(self.diff_rows) - self.visible_rows())
-            self.diff_offset = min(nxt, limit)
+        self.focus = 'diff'
+        self.diff_cur = nxt
+        self.reveal_cursor()
         self.draw_screen()
 
     def expand_gap(self, di: int) -> None:
@@ -710,8 +757,7 @@ class DiffTreeView(OverlayHandler):
         else:
             self.diff_offset += start + inner - di
             self.diff_cur = start + inner
-        limit = max(0, len(self.diff_rows) - self.visible_rows())
-        self.diff_offset = max(0, min(self.diff_offset, limit))
+        self.diff_offset = max(0, min(self.diff_offset, self.diff_offset_max()))
         self.diff_cur = max(0, min(self.diff_cur, len(self.diff_rows) - 1))
         self.draw_screen()
 
@@ -774,8 +820,8 @@ class DiffTreeView(OverlayHandler):
         if di is None:
             di = self.diff_hunks[0] if self.diff_hunks else self._first_landable(0)
         self.diff_cur = min(di, max(0, len(self.diff_rows) - 1))
-        limit = max(0, len(self.diff_rows) - self.visible_rows())
-        self.diff_offset = max(0, min(limit, self.diff_cur - self.visible_rows() // 2))
+        self.diff_offset = max(0, min(self.diff_offset_max(),
+                                      self.diff_cur - self.visible_rows() // 2))
 
     def set_focus(self, target: str) -> None:
         if target == self.focus:
@@ -908,8 +954,8 @@ class DiffTreeView(OverlayHandler):
         if not self.search_matches:
             return
         row = self.search_matches[self.search_idx]
-        limit = max(0, len(self.diff_rows) - self.visible_rows())
-        self.diff_offset = max(0, min(limit, row - self.visible_rows() // 2))
+        self.diff_offset = max(0, min(self.diff_offset_max(),
+                                      row - self.visible_rows() // 2))
 
     def search_next(self, direction: int) -> None:
         if not self.search_matches:
@@ -1081,9 +1127,7 @@ class DiffTreeView(OverlayHandler):
         cur = self.current_item()
         cur_rel = cur['path'] if cur else None
         cur_match = self.search_matches[self.search_idx] if self.search_matches else -1
-        sticky = ''
-        if 0 < self.diff_offset < len(self.diff_scope):
-            sticky = self.diff_scope[self.diff_offset]
+        sticky = self.sticky_line()
         if not self.rows:
             self.print(styled('  ' + (self.status or self._empty_pane_msg()), fg='gray'))
             for _ in range(vis - 1):
@@ -1137,8 +1181,7 @@ class DiffTreeView(OverlayHandler):
             return None
         if ev.cell_x < self.left_width():
             return None
-        sticky = (0 < self.diff_offset < len(self.diff_scope)
-                  and self.diff_scope[self.diff_offset])
+        sticky = self.sticky_line()
         if sticky and r == 0:
             return None
         di = self.diff_offset + (r - 1 if sticky else r)

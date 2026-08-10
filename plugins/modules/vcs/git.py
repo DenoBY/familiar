@@ -149,6 +149,48 @@ def git_blob(root: str, ref: str, path: str) -> str:
     return b.decode('utf-8', 'replace') if b else ''
 
 
+def list_files(root: str, rev: str = '') -> list[str]:
+    """Файлы репозитория: в рабочем дереве — трекнутые и новые (без
+    игнорируемых), в ревизии — её дерево.
+    """
+    if rev:
+        out = run_git(root, 'ls-tree', '-r', '--name-only', rev, timeout=15)
+    else:
+        out = run_git(root, 'ls-files', '--cached', '--others', '--exclude-standard',
+                      timeout=15)
+    return out.splitlines() if out else []
+
+
+def path_exists(root: str, rel: str, rev: str = '') -> bool:
+    """Есть ли путь (файл или каталог) в рабочем дереве или ревизии."""
+    if rev:
+        return run_git(root, 'cat-file', '-e', f'{rev}:{rel}') is not None
+    return os.path.exists(os.path.join(root, rel))
+
+
+def read_source(root: str, rel: str, rev: str = '') -> str:
+    """Содержимое файла: с диска либо из объекта ревизии."""
+    return git_blob(root, rev, rel) if rev else read_text(os.path.join(root, rel))
+
+
+def grep_scope(rev: str) -> list[str]:
+    """Хвост аргументов `git grep`, задающий, где искать.
+
+    Ставится после паттернов. В рабочем дереве добавляем `--untracked`
+    (определения в новых файлах — частый случай при ревью), с ревизией
+    он запрещён самим git.
+    """
+    return [rev] if rev else ['--untracked']
+
+
+def strip_rev(token: str, rev: str) -> str:
+    """Убрать префикс ревизии из пути в выводе git grep: с ревизией он
+    отдаёт `<rev>:<path>` одним токеном.
+    """
+    prefix = f'{rev}:'
+    return token[len(prefix):] if rev and token.startswith(prefix) else token
+
+
 def classify_status(xy: str) -> str:
     if '?' in xy:
         return 'untracked'

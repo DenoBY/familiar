@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import kittymock  # noqa: F401
-from modules.review import grep as G
+from modules.vcs import grep as G
 from modules.vcs.git import last_error
 
 

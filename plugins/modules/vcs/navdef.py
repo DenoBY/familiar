@@ -22,7 +22,7 @@ import os
 import re
 from typing import NamedTuple
 
-from .git import run_git
+from .git import grep_scope, list_files, path_exists, read_source, run_git
 
 
 class Target(NamedTuple):
@@ -220,10 +220,12 @@ def rank_candidates(raw: 'list[tuple[str, int, str]]', cur_rel: 'str | None',
 
 # ────────────────────────── git grep ──────────────────────────
 
-def _parse_grep(out: str) -> 'list[tuple[str, int, str]]':
+def _parse_grep(out: str, rev: str = '') -> 'list[tuple[str, int, str]]':
     raw: list[tuple[str, int, str]] = []
     for ln in out.splitlines():
-        parts = ln.split(':', 2)          # path:line:text (путь без ':' у git)
+        # path:line:text (путь без ':' у git); с ревизией git ставит
+        # её первым полем
+        parts = ln.split(':', 3)[1:] if rev else ln.split(':', 2)
         if len(parts) != 3 or not parts[1].isdigit():
             continue
         raw.append((parts[0], int(parts[1]), parts[2]))
@@ -231,48 +233,45 @@ def _parse_grep(out: str) -> 'list[tuple[str, int, str]]':
 
 
 def run_git_grep(root: str, patterns: list[str],
-                 pathspec: 'str | list[str] | None' = None) -> 'list[tuple[str, int, str]]':
+                 pathspec: 'str | list[str] | None' = None,
+                 rev: str = '') -> 'list[tuple[str, int, str]]':
     """git grep по OR-набору паттернов; пусто при отсутствии совпадений.
 
-    `--untracked` — чтобы находить определения в новых (ещё не
-    закоммиченных) файлах, частый кейс при ревью. `pathspec` сужает
-    поиск до файла/каталога (резолв импортов) или файлов языка.
+    `pathspec` сужает поиск до файла/каталога (резолв импортов) или
+    файлов языка; `rev` — искать в снимке коммита, а не в рабочем
+    дереве (см. grep_scope).
     """
-    args = ['grep', '-n', '-I', '-E', '--untracked']
+    args = ['grep', '-n', '-I', '-E']
     for p in patterns:
         args += ['-e', p]
+    args += grep_scope(rev)
     if pathspec:
         specs = [pathspec] if isinstance(pathspec, str) else pathspec
         args += ['--', *specs]
     out = run_git(root, *args, timeout=15)
-    return _parse_grep(out) if out else []
+    return _parse_grep(out, rev) if out else []
 
 
-def _search_repo(root: str, ext: str, name: str) -> 'list[tuple[str, int, str]]':
+def _search_repo(root: str, ext: str, name: str,
+                 rev: str = '') -> 'list[tuple[str, int, str]]':
     """Repo-wide поиск объявления в два прохода: языковые паттерны по
     файлам языка, при промахе — generic-паттерн по всем исходникам
     (определение в смежном языке не должно теряться).
     """
     pats, spec = _lang_patterns(ext, name), _LANG_PATHSPEC.get(ext)
     if pats and spec:
-        raw = run_git_grep(root, pats, pathspec=spec)
+        raw = run_git_grep(root, pats, pathspec=spec, rev=rev)
         if raw:
             return raw
-    return run_git_grep(root, _generic_patterns(name), pathspec=_CODE_PATHSPEC)
+    return run_git_grep(root, _generic_patterns(name), pathspec=_CODE_PATHSPEC, rev=rev)
 
 
-def _list_files(root: str) -> list[str]:
-    out = run_git(root, 'ls-files', '--cached', '--others', '--exclude-standard',
-                  timeout=15)
-    return out.splitlines() if out else []
-
-
-def _find_by_suffix(root: str, suffixes: list[str]) -> 'str | None':
+def _find_by_suffix(root: str, suffixes: list[str], rev: str = '') -> 'str | None':
     """Первый файл (трекнутый/новый), чей путь равен суффиксу или
     оканчивается на `/суффикс` (короткий путь — раньше). Пакет может
     лежать под префиксом (`plugins/modules/...`).
     """
-    files = _list_files(root)
+    files = list_files(root, rev)
     best = None
     for suf in suffixes:
         for f in files:
@@ -282,13 +281,10 @@ def _find_by_suffix(root: str, suffixes: list[str]) -> 'str | None':
     return best
 
 
-def _exists(root: str, rel: str) -> bool:
-    return os.path.exists(os.path.join(root, rel))
-
-
 # ─────────────── импорт-резолверы по языкам ───────────────
 
-def _py_import(root: str, cur_rel: str, source: str, symbol: str) -> 'ImportHit | None':
+def _py_import(root: str, cur_rel: str, source: str, symbol: str,
+               rev: str = '') -> 'ImportHit | None':
     # многострочный `import (a, b)` схлопываем в одну строку
     src = re.sub(r'import[ \t]*\(([^)]*)\)',
                  lambda m: 'import ' + ' '.join(m.group(1).split()), source, flags=re.S)
@@ -297,7 +293,7 @@ def _py_import(root: str, cur_rel: str, source: str, symbol: str) -> 'ImportHit 
         dots, mod, names = m.group(1), m.group(2), m.group(3)
         for orig, alias in _import_names(names):
             if alias == symbol:
-                path = _py_module_file(root, cur_rel, len(dots), mod)
+                path = _py_module_file(root, cur_rel, len(dots), mod, rev)
                 return ImportHit(path, orig) if path else None
     for m in re.finditer(r'^[ \t]*import[ \t]+(.+)$', src, re.M):
         for part in m.group(1).split(','):
@@ -307,7 +303,7 @@ def _py_import(root: str, cur_rel: str, source: str, symbol: str) -> 'ImportHit 
             mod = toks[0]
             alias = toks[2] if len(toks) >= 3 and toks[1] == 'as' else mod.split('.')[0]
             if alias == symbol:
-                path = _py_module_file(root, cur_rel, 0, mod)
+                path = _py_module_file(root, cur_rel, 0, mod, rev)
                 return ImportHit(path, None) if path else None
     return None
 
@@ -327,7 +323,8 @@ def _import_names(names: str) -> 'list[tuple[str, str]]':
     return out
 
 
-def _py_module_file(root: str, cur_rel: str, level: int, mod: str) -> 'str | None':
+def _py_module_file(root: str, cur_rel: str, level: int, mod: str,
+                    rev: str = '') -> 'str | None':
     parts = mod.split('.') if mod else []
     if level > 0:                                   # относительный импорт
         base = os.path.dirname(cur_rel)
@@ -335,11 +332,11 @@ def _py_module_file(root: str, cur_rel: str, level: int, mod: str) -> 'str | Non
             base = os.path.dirname(base)
         rel = '/'.join([p for p in [base, *parts] if p])
         for cand in (f'{rel}.py', f'{rel}/__init__.py'):
-            if _exists(root, cand):
+            if path_exists(root, cand, rev):
                 return cand
         return None
     suffix = '/'.join(parts)                        # абсолютный dotted
-    return _find_by_suffix(root, [f'{suffix}.py', f'{suffix}/__init__.py'])
+    return _find_by_suffix(root, [f'{suffix}.py', f'{suffix}/__init__.py'], rev)
 
 
 # обе формы: group(1) — клауза импорта, group(2) — спецификатор модуля
@@ -350,12 +347,13 @@ _JS_IMPORT_RES = (
 )
 
 
-def _js_import(root: str, cur_rel: str, source: str, symbol: str) -> 'ImportHit | None':
+def _js_import(root: str, cur_rel: str, source: str, symbol: str,
+               rev: str = '') -> 'ImportHit | None':
     for rx in _JS_IMPORT_RES:
         for m in rx.finditer(source):
             hit = _js_clause(m.group(1), symbol)
             if hit is not None:          # (name|'') — символ есть в этом импорте
-                path = _js_spec_file(root, cur_rel, m.group(2))
+                path = _js_spec_file(root, cur_rel, m.group(2), rev)
                 return ImportHit(path, hit or None) if path else None
     return None
 
@@ -380,51 +378,51 @@ def _js_clause(clause: str, symbol: str) -> 'str | None':
     return None
 
 
-def _js_spec_file(root: str, cur_rel: str, spec: str) -> 'str | None':
+def _js_spec_file(root: str, cur_rel: str, spec: str, rev: str = '') -> 'str | None':
     if not spec.startswith('.'):        # bare/alias (node_modules, tsconfig) — пас
         return None
     base = os.path.normpath(os.path.join(os.path.dirname(cur_rel), spec))
     cands = [f'{base}{e}' for e in _JS_EXTS]
     cands += [f'{base}/index{e}' for e in _JS_EXTS]
     for c in cands:
-        if _exists(root, c):
+        if path_exists(root, c, rev):
             return c
     return None
 
 
-def _php_import(root: str, cur_rel: str, source: str, symbol: str) -> 'ImportHit | None':
+def _php_import(root: str, cur_rel: str, source: str, symbol: str,
+                rev: str = '') -> 'ImportHit | None':
     for m in re.finditer(r'^[ \t]*use[ \t]+(?:function[ \t]+)?([\w\\]+)'
                          r'(?:[ \t]+as[ \t]+(\w+))?[ \t]*;', source, re.M):
         fqn, alias = m.group(1), m.group(2)
         name = alias or fqn.rstrip('\\').split('\\')[-1]
         if name == symbol:
-            path = _php_psr4_file(root, fqn)
+            path = _php_psr4_file(root, fqn, rev)
             leaf = fqn.rstrip('\\').split('\\')[-1]
             return ImportHit(path, leaf) if path else None
     return None
 
 
-def _php_psr4_file(root: str, fqn: str) -> 'str | None':
-    psr4 = _php_psr4_map(root)
+def _php_psr4_file(root: str, fqn: str, rev: str = '') -> 'str | None':
+    psr4 = _php_psr4_map(root, rev)
     fqn = fqn.lstrip('\\')
     best = None
     for prefix, base in psr4.items():
         if fqn.startswith(prefix):
             tail = fqn[len(prefix):].replace('\\', '/')
             cand = '/'.join([p for p in [base.rstrip('/'), tail] if p]) + '.php'
-            if _exists(root, cand) and (best is None or len(prefix) > best[0]):
+            if path_exists(root, cand, rev) and (best is None or len(prefix) > best[0]):
                 best = (len(prefix), cand)
     if best:
         return best[1]
     # без composer/PSR-4 — по имени класса (файл обычно = класс)
-    return _find_by_suffix(root, [fqn.replace('\\', '/').split('/')[-1] + '.php'])
+    return _find_by_suffix(root, [fqn.replace('\\', '/').split('/')[-1] + '.php'], rev)
 
 
-def _php_psr4_map(root: str) -> 'dict[str, str]':
+def _php_psr4_map(root: str, rev: str = '') -> 'dict[str, str]':
     try:
-        with open(os.path.join(root, 'composer.json'), encoding='utf-8') as f:
-            data = json.load(f)
-    except (OSError, ValueError):
+        data = json.loads(read_source(root, 'composer.json', rev))
+    except ValueError:
         return {}
     out: dict[str, str] = {}
     for key in ('autoload', 'autoload-dev'):
@@ -437,10 +435,10 @@ def _php_psr4_map(root: str) -> 'dict[str, str]':
 
 
 def _go_import(root: str, source: str, symbol: str,
-               qualifier: 'str | None') -> 'ImportHit | None':
+               qualifier: 'str | None', rev: str = '') -> 'ImportHit | None':
     if not qualifier:                   # Go резолвит через `pkg.Symbol`
         return None
-    module, mod_root = _go_module(root)
+    module, mod_root = _go_module(root, rev)
     for path, alias in _go_imports(source):
         name = alias or path.rstrip('/').split('/')[-1]
         if name != qualifier:
@@ -448,7 +446,7 @@ def _go_import(root: str, source: str, symbol: str,
         if module and path.startswith(module):
             tail = path[len(module):].lstrip('/')
             d = '/'.join([p for p in [mod_root, tail] if p])
-            if _exists(root, d):
+            if path_exists(root, d, rev):
                 return ImportHit(d, symbol)   # каталог пакета — grep внутри
         return None
     return None
@@ -467,30 +465,27 @@ def _go_imports(source: str) -> 'list[tuple[str, str | None]]':
     return out
 
 
-def _go_module(root: str) -> 'tuple[str | None, str]':
+def _go_module(root: str, rev: str = '') -> 'tuple[str | None, str]':
     """(module path из go.mod, каталог go.mod относительно root)."""
-    for cand in _find_gomod(root):
-        try:
-            with open(os.path.join(root, cand), encoding='utf-8') as f:
-                for ln in f:
-                    m = re.match(r'module[ \t]+(\S+)', ln)
-                    if m:
-                        return m.group(1), os.path.dirname(cand)
-        except OSError:
-            continue
+    for cand in _find_gomod(root, rev):
+        for ln in read_source(root, cand, rev).splitlines():
+            m = re.match(r'module[ \t]+(\S+)', ln)
+            if m:
+                return m.group(1), os.path.dirname(cand)
     return None, ''
 
 
-def _find_gomod(root: str) -> list[str]:
-    return [f for f in _list_files(root) if os.path.basename(f) == 'go.mod']
+def _find_gomod(root: str, rev: str = '') -> list[str]:
+    return [f for f in list_files(root, rev) if os.path.basename(f) == 'go.mod']
 
 
 def _resolve_import(root: str, ext: str, cur_rel: 'str | None', source: str,
-                    symbol: str, qualifier: 'str | None') -> 'ImportHit | None':
+                    symbol: str, qualifier: 'str | None',
+                    rev: str = '') -> 'ImportHit | None':
     if cur_rel is None or not source:
         return None
     if ext == '.go':
-        return _go_import(root, source, symbol, qualifier)
+        return _go_import(root, source, symbol, qualifier, rev)
     if ext == '.py':
         resolver = _py_import
     elif ext in _JS_EXTS:
@@ -499,13 +494,13 @@ def _resolve_import(root: str, ext: str, cur_rel: 'str | None', source: str,
         resolver = _php_import
     else:
         return None
-    hit = resolver(root, cur_rel, source, symbol)
+    hit = resolver(root, cur_rel, source, symbol, rev)
     if hit is not None:
         return hit
     # символ не импортирован, но импортирован его квалификатор
     # (`Order::create`, `mod.func`) — символ ищем в файле квалификатора
     if qualifier and qualifier not in _SELF_REFS:
-        qhit = resolver(root, cur_rel, source, qualifier)
+        qhit = resolver(root, cur_rel, source, qualifier, rev)
         if qhit and qhit.path:
             return ImportHit(qhit.path, symbol)
     return None
@@ -514,13 +509,15 @@ def _resolve_import(root: str, ext: str, cur_rel: 'str | None', source: str,
 def resolve_definition(root: str, cur_rel: 'str | None', ext: str, symbol: str, *,
                        is_attr: bool = False, is_call: bool = False,
                        qualifier: 'str | None' = None,
-                       cur_source: 'str | None' = None) -> list[Target]:
-    hit = _resolve_import(root, ext, cur_rel, cur_source or '', symbol, qualifier)
+                       cur_source: 'str | None' = None,
+                       rev: str = '') -> list[Target]:
+    hit = _resolve_import(root, ext, cur_rel, cur_source or '', symbol, qualifier, rev)
     if hit and hit.path:
         if hit.name is None:
             return [Target(hit.path, 1, 'def', hit.path)]
         hit_ext = os.path.splitext(hit.path)[1] or ext
-        raw = run_git_grep(root, def_patterns(hit_ext, hit.name), pathspec=hit.path)
+        raw = run_git_grep(root, def_patterns(hit_ext, hit.name), pathspec=hit.path,
+                           rev=rev)
         ranked = rank_candidates(raw, cur_rel, hit.name, is_attr=is_attr, is_call=is_call)
         if ranked:
             return ranked
@@ -529,11 +526,11 @@ def resolve_definition(root: str, cur_rel: 'str | None', ext: str, symbol: str, 
         # `self.x`/`$this->x`: объявление почти всегда в текущем файле —
         # grep одного файла вместо repo-wide; промах (унаследованный
         # метод) — общий путь
-        raw = run_git_grep(root, def_patterns(ext, symbol), pathspec=cur_rel)
+        raw = run_git_grep(root, def_patterns(ext, symbol), pathspec=cur_rel, rev=rev)
         ranked = rank_candidates(raw, cur_rel, symbol, is_attr=is_attr, is_call=is_call)
         if ranked:
             return ranked
-    raw = _search_repo(root, ext, symbol)
+    raw = _search_repo(root, ext, symbol, rev)
     ranked = rank_candidates(raw, cur_rel, symbol, is_attr=is_attr, is_call=is_call)
     return _prefer_self(ranked, cur_rel, qualifier)
 

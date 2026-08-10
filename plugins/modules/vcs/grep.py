@@ -3,9 +3,10 @@ item'ы дерева.
 
 git grep вместо собственного обходчика: учитывает .gitignore,
 с --untracked видит и новые файлы, -I пропускает бинарники.
+С ревизией ищем в снимке коммита — там же, что показывает дифф.
 """
 
-from ..vcs.git import git_lines, set_error
+from .git import git_lines, grep_scope, set_error, strip_rev
 
 
 # Потолок совпадений: живой поиск по короткому запросу в большом
@@ -13,8 +14,8 @@ from ..vcs.git import git_lines, set_error
 MAX_MATCHES = 2000
 
 
-def search_files(root: str, query: str,
-                 regex: bool = False) -> tuple[list[dict], bool]:
+def search_files(root: str, query: str, regex: bool = False,
+                 rev: str = '') -> tuple[list[dict], bool]:
     """item'ы DiffTreeView по совпадениям запроса и флаг обрезки.
 
     Регистр — smart-case: запрос без заглавных ищется без учёта
@@ -23,8 +24,7 @@ def search_files(root: str, query: str,
     """
     if not query:
         return [], False
-    args = ['grep', '-I', '-n', '-z', '--untracked', '--no-color',
-            '-E' if regex else '-F']
+    args = ['grep', '-I', '-n', '-z', '--no-color', '-E' if regex else '-F']
     if query == query.lower():
         args.append('-i')
     # rc=1 без stderr («нет совпадений») не трогает last_error —
@@ -36,11 +36,12 @@ def search_files(root: str, query: str,
     # отдаёт десятки мегабайт, и захват целиком тратил бы память и
     # время event loop на строки, которые всё равно за MAX_MATCHES.
     # с -z и путь, и номер строки завершаются NUL: path\0lineno\0text
-    for line in git_lines(root, *args, '-e', query, '--'):
+    for line in git_lines(root, *args, '-e', query, *grep_scope(rev), '--'):
         if total >= MAX_MATCHES:
             truncated = True
             break
         path, _, rest = line.partition('\0')
+        path = strip_rev(path, rev)   # с ревизией git отдаёт `<rev>:<path>`
         lineno, sep, text = rest.partition('\0')
         if not sep or not lineno.isdigit():
             continue

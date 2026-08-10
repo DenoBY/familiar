@@ -5,6 +5,31 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.30.0] — 2026-08-10
+
+### Added
+
+- log: opening a commit now gives the full review screen, the same one
+  `review` uses for uncommitted changes. Line comments (`c`, `{`/`}`,
+  `w` export, `s` send to Claude), go-to-definition (`⌥`+click, `d`,
+  `⌃o` back), Find in Files (`⌘⇧F`), file marks (`⇧↑↓`, `⇧`/`⌥`+click),
+  the tree filter (`f`), opening in an editor (`e`) and the `⌃u`/`⌃d`
+  half-page scroll all work there now. Definitions and search results
+  come from the commit snapshot, so they match the code the diff shows,
+  not the current working tree.
+
+### Fixed
+
+- review, log: the cursor no longer disappears below the bottom of the
+  diff pane. The sticky scope header (`▸ def …`) takes one row, but
+  navigation counted the pane as one row taller — so moving down with
+  arrows, `[`/`]` or scrolling parked the cursor on a row that was not
+  drawn.
+- review, log: `[`/`]` now shows the hunk with a few lines of context
+  above it instead of pressing it against the pane edge, and, when
+  pressed from the file tree, moves the focus to the diff so the cursor
+  is visible.
+
 ## [0.29.0] — 2026-08-04
 
 ### Changed

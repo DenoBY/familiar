@@ -1,12 +1,13 @@
-"""Git-слой review-кита: сбор списка изменённых файлов.
+"""Рабочее дерево как источник изменений: список незакоммиченных
+правок и операции над ними (git add, откат).
 
-Специфика review (незакоммиченные правки) поверх общих
-git-примитивов из modules.vcs.git. Без зависимостей от TUI.
+Поверх общих git-примитивов из modules.vcs.git, без зависимостей
+от TUI. Парная сторона — modules.vcs.commit (снимок коммита).
 """
 
 import os
 
-from ..vcs.git import (
+from .git import (
     classify_status,
     count_lines,
     git_numstat,
@@ -14,7 +15,7 @@ from ..vcs.git import (
     run_git,
     set_error,
 )
-from ..vcs.util import is_noise
+from .util import is_noise
 
 
 # Потолок на построчный подсчёт untracked-файла: считается на КАЖДОМ

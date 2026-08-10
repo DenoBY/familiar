@@ -15,6 +15,7 @@ from kittymock import (
     wire,
 )
 from modules.vcs.diff import gutter_width
+from modules.vcs.goto import ALT_MOD
 
 
 _ENV = {
@@ -177,7 +178,7 @@ class GotoDefinitionTest(unittest.TestCase):
         self.h.goto_definition = lambda *a: got.append(a)
         self.h._word_at = lambda ev: ('sym', False, False, None)
         ev = MouseEvent(cell_x=50, cell_y=5, buttons=MouseButton.LEFT)
-        ev.mods = R._ALT_MOD
+        ev.mods = ALT_MOD
         self.h.on_mouse_event(ev)
         self.assertEqual(got, [('sym', False, False, None)])
 
@@ -252,7 +253,7 @@ class GotoDefinitionTest(unittest.TestCase):
         di = next(i for i, p in enumerate(self.h.diff_plain) if 'unique_def' in p)
         idx = self.h.diff_plain[di].index('unique_def')
         ev = MouseEvent(cell_x=self.h.left_width() + 3 + idx, cell_y=di + 2)
-        ev.mods = R._ALT_MOD
+        ev.mods = ALT_MOD
         self.assertEqual(self.h._wanted_pointer(ev), 'pointer')
 
     # --- русская раскладка ---

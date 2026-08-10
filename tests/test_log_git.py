@@ -6,6 +6,8 @@ import unittest
 
 import kittymock  # noqa: F401
 import modules.log.git as G
+import modules.vcs.commit as C
+from modules.vcs.git import EMPTY_TREE
 
 
 _ENV = {
@@ -137,15 +139,15 @@ class LogGitTest(unittest.TestCase):
 
     def test_commit_files_root_commit(self):
         root_sha = G.load_commits(self.repo, limit=99)[-1]['sha']
-        self.assertEqual(G.first_parent(self.repo, root_sha), G.EMPTY_TREE)
-        files = self.by_path(G.commit_files(self.repo, root_sha))
+        self.assertEqual(C.first_parent(self.repo, root_sha), EMPTY_TREE)
+        files = self.by_path(C.commit_files(self.repo, root_sha))
         self.assertEqual(set(files), {'a.txt', 'dir/b.txt'})
         self.assertEqual(files['a.txt']['kind'], 'added')
         self.assertEqual(files['a.txt']['stat'], (3, 0))
 
     def test_commit_files_second_commit(self):
         head = G.load_commits(self.repo)[0]['sha']
-        files = self.by_path(G.commit_files(self.repo, head))
+        files = self.by_path(C.commit_files(self.repo, head))
         self.assertEqual(files['a.txt']['kind'], 'modified')
         self.assertEqual(files['c.txt']['kind'], 'added')
         self.assertEqual(files['a.txt']['path'], 'a.txt')
@@ -154,15 +156,15 @@ class LogGitTest(unittest.TestCase):
 
     def test_commit_contents_modified(self):
         head = G.load_commits(self.repo)[0]['sha']
-        it = self.by_path(G.commit_files(self.repo, head))['a.txt']
-        before, after = G.commit_contents(self.repo, head, it)
+        it = self.by_path(C.commit_files(self.repo, head))['a.txt']
+        before, after = C.commit_contents(self.repo, head, it)
         self.assertEqual(before, 'a1\na2\na3\n')
         self.assertEqual(after, 'a1\na2 changed\na3\na4\n')
 
     def test_commit_contents_added_has_empty_before(self):
         head = G.load_commits(self.repo)[0]['sha']
-        it = self.by_path(G.commit_files(self.repo, head))['c.txt']
-        before, after = G.commit_contents(self.repo, head, it)
+        it = self.by_path(C.commit_files(self.repo, head))['c.txt']
+        before, after = C.commit_contents(self.repo, head, it)
         self.assertEqual(before, '')
         self.assertEqual(after, 'c1\n')
 

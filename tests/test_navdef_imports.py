@@ -156,9 +156,9 @@ class ImportResolveTest(unittest.TestCase):
         calls = []
         orig = N.run_git_grep
 
-        def spy(root, patterns, pathspec=None):
+        def spy(root, patterns, pathspec=None, rev=''):
             calls.append(pathspec)
-            return orig(root, patterns, pathspec=pathspec)
+            return orig(root, patterns, pathspec=pathspec, rev=rev)
 
         N.run_git_grep = spy
         try:

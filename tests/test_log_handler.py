@@ -75,20 +75,20 @@ class LogHandlerTest(unittest.TestCase):
         self.assertIn('add feature', text)
 
     def test_footer_offers_the_other_mode(self):
-        self.assertIn('a all branches', self.h._footer())
+        self.assertIn('a all branches', self.h._commits_footer())
         self.h.all_branches = True
-        self.assertIn('a current branch', self.h._footer())
+        self.assertIn('a current branch', self.h._commits_footer())
 
     def test_filter_commits(self):
-        self.h.filter_query = 'feature'
+        self.h.commit_filter = 'feature'
         self.h.rebuild_commits()
         self.assertEqual([c['subject'] for c in self.h.commits], ['add feature'])
 
     def test_escape_clears_filter_then_asks_to_close(self):
-        self.h.filter_query = 'feature'
+        self.h.commit_filter = 'feature'
         self.h.rebuild_commits()
         self.h._commits_key('ESCAPE')           # применённый фильтр сбрасывается
-        self.assertEqual(self.h.filter_query, '')
+        self.assertEqual(self.h.commit_filter, '')
         self.assertEqual(len(self.h.commits), 2)
         self.h._commits_key('ESCAPE')           # дно каскада: вопрос вместо выхода
         self.assertTrue(self.h.confirm_active)
@@ -303,7 +303,7 @@ class LogHandlerTest(unittest.TestCase):
     def test_escape_returns_to_commits(self):
         self.h.sel = 0
         self.h.open_commit()
-        self.h._diff_key('ESCAPE')                         # tree → назад к списку
+        self.h._review_key('ESCAPE')                         # tree → назад к списку
         self.assertEqual(self.h.screen, 'commits')
 
     # --- поиск по диффу (движок в общей базе DiffTreeView) ---

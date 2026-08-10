@@ -10,6 +10,8 @@ import kittymock  # noqa: F401
 import review as R
 from kittymock import EventType, MouseButton, MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key, is_code_row
+from modules.vcs.editor import editor_command
+from modules.vcs.source import UNVERSIONED
 
 
 _ENV = {
@@ -59,7 +61,7 @@ class ReviewHandlerTest(unittest.TestCase):
             f.write(content)
 
     def _expand_unversioned(self):
-        self.h.collapsed.discard(group_key(R.UNVERSIONED))
+        self.h.collapsed.discard(group_key(UNVERSIONED))
         self.h.rebuild_tree()
 
     def _select_file(self, basename):
@@ -88,7 +90,7 @@ class ReviewHandlerTest(unittest.TestCase):
     def test_untracked_grouped_and_collapsed(self):
         grp = [r for r in self.h.rows if r.get('group')]
         self.assertEqual(len(grp), 1)
-        self.assertEqual(grp[0]['name'], R.UNVERSIONED)
+        self.assertEqual(grp[0]['name'], UNVERSIONED)
         self.assertTrue(grp[0]['collapsed'])
         self.assertEqual(grp[0]['count'], 1)
         self.assertEqual(grp[0]['depth'], 0)
@@ -1213,28 +1215,28 @@ class EditorCommandTest(unittest.TestCase):
     def test_terminal_editor(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'vim'
-        cmd, gui = R.editor_command(self.proj, '/f.py', 10)
+        cmd, gui = editor_command(self.proj, '/f.py', 10)
         self.assertFalse(gui)
         self.assertEqual(cmd, ['vim', '+10', '/f.py'])
 
     def test_gui_editor_code(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'code'
-        cmd, gui = R.editor_command(self.proj, '/f.py', 7)
+        cmd, gui = editor_command(self.proj, '/f.py', 7)
         self.assertTrue(gui)
         self.assertEqual(cmd, ['code', '-g', '/f.py:7'])
 
     def test_gui_editor_subl_positional(self):
         os.environ.pop('VISUAL', None)
         os.environ['EDITOR'] = 'subl'
-        cmd, gui = R.editor_command(self.proj, '/f.py', 3)
+        cmd, gui = editor_command(self.proj, '/f.py', 3)
         self.assertTrue(gui)
         self.assertEqual(cmd, ['subl', '/f.py:3'])
 
     def test_visual_precedence(self):
         os.environ['VISUAL'] = 'code'
         os.environ['EDITOR'] = 'vim'
-        cmd, gui = R.editor_command(self.proj, '/f.py', 1)
+        cmd, gui = editor_command(self.proj, '/f.py', 1)
         self.assertTrue(gui)
         self.assertEqual(cmd[0], 'code')
 
