@@ -133,7 +133,7 @@ _WINDOW_PID_VAR = 'KITTY_CHILD_PID'
 _MAX_PARENT_HOPS = 8
 
 
-def _parent_pids() -> dict[int, int]:
+def parent_pids() -> dict[int, int]:
     try:
         out = subprocess.run(('ps', '-Ao', 'pid=,ppid='), capture_output=True,
                              timeout=4, stdin=subprocess.DEVNULL)
@@ -148,22 +148,22 @@ def _parent_pids() -> dict[int, int]:
     return parents
 
 
-def window_session_id(running: 'dict[str, dict]') -> 'str | None':
-    """id сессии, идущей в окне, поверх которого открыт кит.
+def session_id_for_pid(window_pid: int, running: 'dict[str, dict]',
+                       parents: 'dict[int, int] | None' = None) -> 'str | None':
+    """id сессии claude, идущей в окне с процессом window_pid.
 
     Процесс claude — это либо сам процесс окна (шелл сделал exec),
-    либо его потомок; связь ищется по дереву ppid.
+    либо его потомок; связь ищется по дереву ppid. Готовую таблицу
+    родителей можно передать: при обходе многих окон (снимок
+    состояния) один вызов ps на всех дешевле, чем на каждое окно.
     """
-    raw = os.environ.get(_WINDOW_PID_VAR, '')
-    if not raw.isdigit():
-        return None
-    window_pid = int(raw)
     by_pid = {info['pid']: sid for sid, info in running.items() if info.get('pid')}
     if not by_pid:
         return None
     if window_pid in by_pid:
         return by_pid[window_pid]
-    parents = _parent_pids()
+    if parents is None:
+        parents = parent_pids()
     for pid, sid in by_pid.items():
         cur = parents.get(pid)
         for _ in range(_MAX_PARENT_HOPS):
@@ -173,6 +173,14 @@ def window_session_id(running: 'dict[str, dict]') -> 'str | None':
                 return sid
             cur = parents.get(cur)
     return None
+
+
+def window_session_id(running: 'dict[str, dict]') -> 'str | None':
+    """id сессии, идущей в окне, поверх которого открыт кит."""
+    raw = os.environ.get(_WINDOW_PID_VAR, '')
+    if not raw.isdigit():
+        return None
+    return session_id_for_pid(int(raw), running)
 
 
 def scan_projects() -> list[dict]:

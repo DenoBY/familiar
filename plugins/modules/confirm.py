@@ -105,20 +105,31 @@ class ConfirmQuit:
 
     # --- отрисовка ---
 
+    def confirm_rows(self) -> list[tuple[str, str]]:
+        """Строки над кнопками: (текст, оформленный текст).
+
+        Обе версии нужны вместе: ширину для центрирования считаем по
+        чистому тексту, печатаем оформленный — в нём escape. Подкласс
+        переопределяет, когда вопроса в одну строку мало.
+        """
+        return [(self.QUIT_CONFIRM_MSG, styled(self.QUIT_CONFIRM_MSG, bold=True))]
+
     def draw_quit_confirm(self) -> bool:
         if not self.confirm_active:
             return False
         self.cmd.clear_screen()
         rows, cols = self.screen_size.rows, self.screen_size.cols
         # вопрос + пустая строка + три строки кнопок, всё по центру
-        top = max(0, (rows - 5) // 2)
+        lines = self.confirm_rows()
+        height = len(lines) + 4
+        top = max(0, (rows - height) // 2)
         for _ in range(top):
             self.print()
-        self.print(' ' * max(0, (cols - len(self.QUIT_CONFIRM_MSG)) // 2)
-                   + styled(self.QUIT_CONFIRM_MSG, bold=True))
+        for plain, decorated in lines:
+            self.print(' ' * max(0, (cols - len(plain)) // 2) + decorated)
         self.print()
-        self._draw_buttons(top + 2, cols)
-        for _ in range(rows - top - 5 - 1):
+        self._draw_buttons(top + len(lines) + 1, cols)
+        for _ in range(rows - top - height - 1):
             self.print()
         return True
 

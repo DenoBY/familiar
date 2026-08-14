@@ -136,6 +136,10 @@ def _install():
     operations.Mode = Mode
     key_encoding.EventType = EventType
     fast_data_types.Color = Color
+    # Безусловный выход, который просит кит quit; значение — из самой
+    # kitty. Вызовы проверяют тесты, подменяя функцию у себя.
+    fast_data_types.IMPERATIVE_CLOSE_REQUESTED = 3
+    fast_data_types.set_application_quit_request = lambda request: None
 
     for name, mod in [
         ('kittens', kittens), ('kittens.tui', tui),

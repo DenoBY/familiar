@@ -19,6 +19,6 @@ select = ["E", "F", "I", "W"]
 max-doc-length = 72
 
 [tool.ruff.lint.isort]
-known-first-party = ["modules", "review", "session", "log", "kittymock"]
+known-first-party = ["modules", "review", "session", "log", "quit", "kittymock"]
 # В репо после блока импортов — две пустые строки (PEP 8 для top-level кода).
 lines-after-imports = 2

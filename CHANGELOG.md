@@ -5,6 +5,41 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.31.0] — 2026-08-15
+
+### Added
+
+- restore: kitty now remembers the windows you had open and brings them
+  back. A snapshot of every OS window, tab, split, layout and working
+  directory is taken in the background, when a window is closed and on
+  quit; it is restored on the next start and, at any time, with `⌘⇧T`
+  (the last snapshot also survives closing every window, which on macOS
+  leaves kitty itself running). A tab that was running `claude` comes
+  back as `claude --resume <that session>`, with the conversation
+  already on screen. A tab running an interactive program from a safe
+  list (`nvim`, `htop`, `lazygit`, `less`, …) gets it started again;
+  every other tab is restored with its shell, its directory and the
+  scrollback it had. Nothing else is re-executed — a `rm` that happened
+  to be in the snapshot will not run again. Ten snapshots are kept, and
+  an unchanged terminal is not written to disk again, so the background
+  timer costs nothing while you are away; `familiar disable` reports the
+  directory the snapshots live in, since they hold terminal output.
+  Enable with `familiar enable --all` or `--restore-session`; turn it
+  off with `--no-restore-session`.
+- quit: `⌘Q` now asks in a full-tab screen instead of kitty's built-in
+  prompt, which is drawn over the active window and in a split ends up
+  the size of that split — easy to miss for something that closes
+  everything. The screen lists the Claude Code sessions running right
+  now, and takes a fresh snapshot before leaving, so nothing done since
+  the last background one is lost. The `Yes`/`No` buttons are the ones
+  the kittens already use — arrows/`tab`/click to pick, `enter` to
+  press; `y` quits outright, `esc`/`n`/`Ctrl+C` cancel and put the
+  layout back. Comes with the window snapshots.
+- terminal: closing now asks before it loses anything — an OS window
+  with more than one tab confirms on close, and `⌘W` confirms when the
+  pane is running something (a pane sitting at the shell prompt still
+  closes in one press).
+
 ## [0.30.0] — 2026-08-10
 
 ### Added

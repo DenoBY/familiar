@@ -234,7 +234,7 @@ class TestWindowSessionId(unittest.TestCase):
     def call(self, window_pid, parents=None):
         env = {} if window_pid is None else {Dt._WINDOW_PID_VAR: str(window_pid)}
         with mock.patch.dict(os.environ, env, clear=True), \
-                mock.patch.object(Dt, '_parent_pids', return_value=parents or {}):
+                mock.patch.object(Dt, 'parent_pids', return_value=parents or {}):
             return Dt.window_session_id(self.RUNNING)
 
     def test_no_env_var(self):

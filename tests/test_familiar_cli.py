@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import unittest
+from unittest import mock
 
 
 _TESTS = os.path.dirname(os.path.abspath(__file__))
@@ -217,6 +218,45 @@ class SelectionTests(unittest.TestCase):
         self._parse_error("--kittens", "session")
 
 
+class RestoreTests(unittest.TestCase):
+    def _resolve(self, *argv):
+        args = familiar.build_parser().parse_args(["enable", *argv])
+        return familiar._resolve_restore(args)
+
+    def test_on_with_all(self):
+        self.assertTrue(self._resolve("--all"))
+
+    def test_off_for_a_plain_selection(self):
+        self.assertFalse(self._resolve("session"))
+        self.assertFalse(self._resolve("--kittens"))
+
+    def test_explicit_flags_win(self):
+        self.assertFalse(self._resolve("--all", "--no-restore-session"))
+        self.assertTrue(self._resolve("session", "--restore-session"))
+
+    def test_conf_wires_watcher_startup_session_and_key(self):
+        conf = familiar.render_generated_conf(["session"], False, restore=True)
+        session = familiar.restore_session_path()
+        self.assertIn("watcher " + familiar.plugins_dir() + "/watchers/restore.py", conf)
+        self.assertIn("startup_session " + session, conf)
+        self.assertIn(f"map cmd+shift+t goto_session {session}", conf)
+
+    def test_cyrillic_duplicate_for_the_restore_key(self):
+        conf = familiar.render_generated_conf([], False, restore=True)
+        self.assertIn("map cmd+shift+е goto_session", conf)
+
+    def test_nothing_written_when_off(self):
+        conf = familiar.render_generated_conf(["session"], True)
+        self.assertNotIn("watcher ", conf)
+        self.assertNotIn("startup_session", conf)
+
+    def test_detected_regardless_of_root(self):
+        self.assertTrue(familiar._has_restore(
+            "watcher /other/root/plugins/watchers/restore.py"))
+        self.assertFalse(familiar._has_restore(
+            "# watcher /r/plugins/watchers/restore.py"))
+
+
 class WiredRootTests(unittest.TestCase):
     def test_root_from_kitten_map(self):
         conf = familiar.render_generated_conf(["session"], False)
@@ -319,6 +359,29 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(self._read(self.kitty_conf), self.ORIGINAL)
         self.assertFalse(os.path.exists(self.generated))
         self.assertIn("enabled:    no", _run(["status"]))
+
+    def test_enable_creates_the_startup_session_placeholder(self):
+        """Без файла kitty пишет в лог «failed to read session file»
+        при каждом старте, пока watcher не снимет первый снимок.
+        """
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.config_dir}):
+            _run(["enable", "session", "--restore-session"])
+            self.assertTrue(os.path.exists(familiar.restore_session_path()))
+
+    def test_disable_reports_snapshots_left_behind(self):
+        """Удалять записи сеансов молча нельзя, оставлять молча — тоже:
+        в дампах вывод терминала, а подобрать их уже некому.
+        """
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.config_dir}):
+            _run(["enable", "session", "--restore-session"])
+            out = _run(["disable"])
+        self.assertIn("window snapshots left on disk", out)
+        self.assertIn(os.path.join(self.config_dir, "familiar", "restore"), out)
+
+    def test_disable_stays_quiet_without_snapshots(self):
+        _run(["enable", "session"])
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.config_dir}):
+            self.assertNotIn("snapshots", _run(["disable"]))
 
     def test_enable_is_idempotent(self):
         _run(["enable", "review"])

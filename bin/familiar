@@ -19,6 +19,7 @@ kitty.conf — для отката терминал-режима, который
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -127,6 +128,21 @@ def kitty_config_dir() -> str:
     return os.path.expanduser("~/.config/kitty")
 
 
+def restore_state_dir() -> str:
+    """Корень состояния снимков окон.
+
+    Зеркалит modules/restore/store.py: CLI — автономный однофайловый
+    скрипт и пакет китов не импортирует (ср. latest_release). Тест
+    test_restore_store сверяет обе реализации.
+    """
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "familiar", "restore")
+
+
+def restore_session_path() -> str:
+    return os.path.join(restore_state_dir(), "last", "session.kitty-session")
+
+
 def _terminal_include_line() -> str:
     return "include " + os.path.join(config_source_dir(), "terminal.conf")
 
@@ -136,6 +152,15 @@ def _theme_include_line(theme: str) -> str:
 
 
 TERMINAL_SUFFIX = "/config/terminal.conf"
+WATCHER_SUFFIX = "/plugins/watchers/restore.py"
+
+# Cmd+Shift+T — вернуть снимок вручную (T на ЙЦУКЕН даёт «е»).
+# Нужен помимо startup_session: kitty на macOS переживает закрытие
+# последнего окна, и новое открывается уже без стартовой сессии.
+RESTORE_KEYS = ("t", "е")
+
+# Cmd+Q перехватывает кит подтверждения (Q на ЙЦУКЕН даёт «й»).
+QUIT_KEYS = ("q", "й")
 
 # Тема по умолчанию — вид, который был до появления флага: палитра
 # look/ghostty.conf и её подсветка в китах. Её include уже сидит в
@@ -174,6 +199,8 @@ def wired_root(generated: str) -> str | None:
                     return line[line.rindex(" ") + 1:-len(suffix)]
         elif line.startswith("include ") and line.endswith(TERMINAL_SUFFIX):
             return line[len("include "):-len(TERMINAL_SUFFIX)]
+        elif line.startswith("watcher ") and line.endswith(WATCHER_SUFFIX):
+            return line[len("watcher "):-len(WATCHER_SUFFIX)]
     return None
 
 
@@ -189,6 +216,11 @@ def wired_theme(generated: str) -> str:
     return DEFAULT_THEME
 
 
+def _has_restore(generated: str) -> bool:
+    return any(line.startswith("watcher ") and line.endswith(WATCHER_SUFFIX)
+               for line in (raw.strip() for raw in generated.splitlines()))
+
+
 def _has_terminal_include(generated: str) -> bool:
     # По суффиксу, а не по пути вызванной копии: иначе brew-бинарь
     # сообщал бы «terminal: no» о терминал-конфиге, подключённом из
@@ -197,29 +229,56 @@ def _has_terminal_include(generated: str) -> bool:
                for line in (raw.strip() for raw in generated.splitlines()))
 
 
-def _kitten_maps(name: str, plugins: str) -> list[str]:
-    k = KITTENS[name]
-    entry = os.path.join(plugins, k["file"])
-    # goto_layout stack перед kitten: оверлей наследует размер окна,
-    # под которым открыт, — в stack активное окно занимает весь таб,
-    # и кит открывается во весь экран даже из сплита. Прежний layout
-    # возвращает handle_result кита (modules/overlay.py). Если stack
-    # не включён в enabled_layouts, kitty молча логирует ошибку и кит
-    # открывается по-старому, в размер сплита.
+def _overlay_maps(name: str, entry: str, keys: tuple[str, ...],
+                  mods: str) -> list[str]:
+    """Пара map-строк на раскладку: открыть кит и не открыть повторно.
+
+    goto_layout stack перед kitten: оверлей наследует размер окна,
+    под которым открыт, — в stack активное окно занимает весь таб,
+    и кит открывается во весь экран даже из сплита. Прежний layout
+    возвращает handle_result кита (modules/overlay.py). Если stack
+    не включён в enabled_layouts, kitty молча логирует ошибку и кит
+    открывается по-старому, в размер сплита.
+    """
     combine = (
         "combine @ remote_control close-window --match var:cc_plugin "
         "--ignore-no-match @ goto_layout stack @ kitten " + entry
     )
+    lines = []
+    for key in keys:
+        lines.append(f"map --when-focus-on var:cc_plugin={name} {mods}{key} discard_event")
+        lines.append(f"map {mods}{key} {combine}")
+    return lines
+
+
+def _kitten_maps(name: str, plugins: str) -> list[str]:
+    k = KITTENS[name]
+    entry = os.path.join(plugins, k["file"])
     lines = [f"# {name} — {k['desc']}"]
-    for key in (k["key"], k["ru"]):
-        lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+shift+{key} discard_event")
-        lines.append(f"map cmd+shift+{key} {combine}")
+    lines += _overlay_maps(name, entry, (k["key"], k["ru"]), "cmd+shift+")
     find = k.get("find")
     if find:
         lines.append(f"# Find in Files — only inside the {name} overlay: pass the key"
                      " through to the kitten (it toggles the mode); no global mapping")
         for key in find:
             lines.append(f"map --when-focus-on var:cc_plugin={name} cmd+shift+{key}")
+    return lines
+
+
+def _restore_lines(plugins: str) -> list[str]:
+    session = restore_session_path()
+    lines = [
+        "# restore — snapshot of the open windows, brought back on start",
+        "watcher " + os.path.join(plugins, "watchers", "restore.py"),
+        "startup_session " + session,
+        "# Cmd+Shift+T — bring the last snapshot back by hand",
+    ]
+    lines += [f"map cmd+shift+{key} goto_session {session}" for key in RESTORE_KEYS]
+    # Свой вопрос при выходе: штатный рисуется размером со сплит, а
+    # kitty не зовёт watcher'ы при завершении — снимок делает кит.
+    lines.append("# Cmd+Q — full-tab quit confirmation, snapshots before leaving")
+    lines += _overlay_maps("quit", os.path.join(plugins, "quit.py"),
+                           QUIT_KEYS, "cmd+")
     return lines
 
 
@@ -242,7 +301,8 @@ def _clipboard_unmaps(names: list[str]) -> list[str]:
 
 
 def render_generated_conf(names: list[str], with_terminal: bool,
-                          theme: str = DEFAULT_THEME) -> str:
+                          theme: str = DEFAULT_THEME,
+                          restore: bool = False) -> str:
     """Содержимое ~/.config/kitty/familiar.conf под выбранный режим."""
     ordered = [n for n in KITTENS if n in names]
     out = [
@@ -264,6 +324,9 @@ def render_generated_conf(names: list[str], with_terminal: bool,
         out += ["# Syntax highlighting theme for the kittens:",
                 f"env {THEME_ENV}={theme}", ""]
     plugins = plugins_dir()
+    if restore:
+        out += _restore_lines(plugins)
+        out.append("")
     for name in ordered:
         out += _kitten_maps(name, plugins)
         out.append("")
@@ -375,8 +438,27 @@ def _resolve_selection(args: argparse.Namespace) -> tuple[list[str], bool]:
     return names, args.terminal
 
 
+def _resolve_restore(args: argparse.Namespace) -> bool:
+    """Снимок окон: явный флаг, а без него — вместе с --all."""
+    return bool(args.all) if args.restore_session is None else args.restore_session
+
+
+def _ensure_session_placeholder() -> None:
+    """Заглушка снимка: startup_session не должен указывать в пустоту.
+
+    kitty читает стартовую сессию до того, как watcher сделает первый
+    снимок, — а пустой файл она понимает как «окно по умолчанию».
+    """
+    path = restore_session_path()
+    if os.path.exists(path):
+        return
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    _write(path, "")
+
+
 def cmd_enable(args: argparse.Namespace) -> None:
     names, with_terminal = _resolve_selection(args)
+    restore = _resolve_restore(args)
     config_dir = kitty_config_dir()
     kitty_conf = os.path.join(config_dir, "kitty.conf")
 
@@ -388,12 +470,15 @@ def cmd_enable(args: argparse.Namespace) -> None:
             raise SystemExit("cancelled")
 
     backup = _backup_once(kitty_conf)
+    if restore:
+        _ensure_session_placeholder()
     _write(os.path.join(config_dir, GENERATED_CONF),
-           render_generated_conf(names, with_terminal, args.theme))
+           render_generated_conf(names, with_terminal, args.theme, restore))
     _write(kitty_conf, upsert_managed_block(_read(kitty_conf),
                                             f"include {GENERATED_CONF}"))
 
-    enabled = ", ".join(names + (["terminal"] if with_terminal else []))
+    enabled = ", ".join(names + (["terminal"] if with_terminal else [])
+                        + (["restore"] if restore else []))
     print(f"enabled: {enabled}")
     if args.theme != DEFAULT_THEME:
         print(f"theme:   {args.theme}"
@@ -401,6 +486,24 @@ def cmd_enable(args: argparse.Namespace) -> None:
     if backup:
         print(f"backup:  {backup}")
     print("reload kitty (Cmd+Ctrl+, on macOS) or restart it to apply")
+
+
+def _snapshot_leftovers() -> str | None:
+    """Отчёт о снимках, оставшихся после disable.
+
+    Молча удалять их нельзя (это записи сеансов пользователя), молча
+    оставлять — тоже: в дампах лежит вывод терминала, а подобрать их
+    после отключения уже некому.
+    """
+    root = restore_state_dir()
+    if not os.path.isdir(root):
+        return None
+    total = 0
+    for dirpath, _, files in os.walk(root):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.path.getsize(os.path.join(dirpath, name))
+    return f"{root} ({total // 1024} KB)"
 
 
 def cmd_disable(args: argparse.Namespace) -> None:
@@ -431,6 +534,11 @@ def cmd_disable(args: argparse.Namespace) -> None:
     elif found and os.path.exists(backup):
         print(f"backup available for a full revert: {backup} "
               "(familiar disable --restore)")
+    leftovers = _snapshot_leftovers() if found else None
+    if leftovers:
+        print(f"window snapshots left on disk: {leftovers}")
+        print("  they hold terminal output — remove with: rm -rf "
+              + restore_state_dir())
     if found or restored:
         print("reload kitty to apply")
 
@@ -453,6 +561,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         active = [n for n in KITTENS if f"cc_plugin={n} " in generated]
         print(f"kittens:    {', '.join(active) or '—'}")
         print(f"terminal:   {'yes' if _has_terminal_include(generated) else 'no'}")
+        print(f"restore:    {'yes' if _has_restore(generated) else 'no'}")
         print(f"theme:      {wired_theme(generated)}")
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(backup):
@@ -496,6 +605,10 @@ def build_parser() -> argparse.ArgumentParser:
     enable.add_argument("--terminal", action="store_true",
                         help="add the terminal config to the selection "
                              "(alone — terminal config only)")
+    enable.add_argument("--restore-session", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="keep a snapshot of open windows and bring it back "
+                             "on start and on Cmd+Shift+T (default: on with --all)")
     enable.add_argument("--theme", choices=THEMES, default=DEFAULT_THEME,
                         help="color theme: kitten syntax highlighting, plus the "
                              "terminal palette when --terminal/--all is used")
