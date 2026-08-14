@@ -5,6 +5,19 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.31.1] — 2026-08-15
+
+### Fixed
+
+- terminal: pressing `Cmd+W` several times no longer stacks one close
+  confirmation on top of another — kitty draws that question as an overlay,
+  so every press used to add one more to answer. While the question is up,
+  the key does nothing.
+- terminal: `Cmd+W` inside a kitten overlay now closes the kitten the way
+  `⌃c` does, instead of asking to kill its window. Killing it skipped the
+  kitten's own exit, so the tab was left in the stack layout it was switched
+  to when the overlay opened, and the splits never came back.
+
 ## [0.31.0] — 2026-08-15
 
 ### Added
