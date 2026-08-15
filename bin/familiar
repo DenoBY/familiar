@@ -239,6 +239,10 @@ def _overlay_maps(name: str, entry: str, keys: tuple[str, ...],
     возвращает handle_result кита (modules/overlay.py). Если stack
     не включён в enabled_layouts, kitty молча логирует ошибку и кит
     открывается по-старому, в размер сплита.
+
+    Условный map — ПОСЛЕ безусловного: из подходящих kitty берёт
+    последний объявленный (`matches[-1]` в matching_key_actions), а
+    безусловный подходит всегда, и стоя ниже он перекрыл бы условие.
     """
     combine = (
         "combine @ remote_control close-window --match var:cc_plugin "
@@ -246,8 +250,8 @@ def _overlay_maps(name: str, entry: str, keys: tuple[str, ...],
     )
     lines = []
     for key in keys:
-        lines.append(f"map --when-focus-on var:cc_plugin={name} {mods}{key} discard_event")
         lines.append(f"map {mods}{key} {combine}")
+        lines.append(f"map --when-focus-on var:cc_plugin={name} {mods}{key} discard_event")
     return lines
 
 

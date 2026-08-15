@@ -5,6 +5,19 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.31.2] — 2026-08-15
+
+### Fixed
+
+- terminal: the `Cmd+W` guards shipped in 0.31.1 never fired. Two reasons,
+  both fixed: among the mappings that apply kitty picks the **last** one
+  declared, and the unconditional `Cmd+W` was declared below them; and a
+  `cmdline:` match is tested against each argument of the process on its
+  own, so the pattern written for the whole command line matched nothing.
+- The same ordering mistake made the `discard_event` guard on the kitten
+  hotkeys (`Cmd+Shift+S`/`R`/`L`) dead in the generated `familiar.conf` —
+  a repeat press was only saved by the chain that closes the open overlay.
+
 ## [0.31.1] — 2026-08-15
 
 ### Fixed

@@ -70,6 +70,16 @@ class RenderTests(unittest.TestCase):
         conf = familiar.render_generated_conf(["review"], False)
         self.assertIn("@ goto_layout stack @ kitten ", conf)
 
+    def test_conditional_map_goes_after_the_unconditional_one(self):
+        """Из подходящих map kitty берёт последний объявленный, а
+        безусловный подходит всегда: стоя ниже, он перекрыл бы
+        discard_event, и повторное нажатие снова открывало бы кит.
+        """
+        conf = familiar.render_generated_conf(["session"], False)
+        lines = [ln for ln in conf.splitlines() if "cmd+shift+s " in ln]
+        self.assertLess(next(i for i, ln in enumerate(lines) if "combine" in ln),
+                        next(i for i, ln in enumerate(lines) if "discard_event" in ln))
+
     def test_review_gets_find_in_files_maps(self):
         conf = familiar.render_generated_conf(["review"], False)
         # ⌘⇧f работает только в фокусе review (проброс клавиши киту);
