@@ -70,6 +70,24 @@ class RenderTests(unittest.TestCase):
         conf = familiar.render_generated_conf(["review"], False)
         self.assertIn("@ goto_layout stack @ kitten ", conf)
 
+    def test_close_kitten_takes_over_cmd_w_in_terminal_mode(self):
+        conf = familiar.render_generated_conf(["session"], True)
+        self.assertIn("cmd+w kitten " + familiar.plugins_dir() + "/close.py "
+                      + familiar.plugins_dir() + "/close_ask.py", conf)
+
+    def test_close_kitten_needs_the_terminal_config(self):
+        # без splits.conf cmd+w панель не закрывает — и переопределять
+        # тогда нечего
+        self.assertNotIn("close.py", familiar.render_generated_conf(["session"], False))
+
+    def test_close_map_wins_over_the_kitten_overlay_guards(self):
+        """Оба блока трогают cmd+w, а выигрывает последний объявленный:
+        сначала кит close, следом — уточнение для оверлеев.
+        """
+        conf = familiar.render_generated_conf(["session"], True)
+        self.assertLess(conf.index("cmd+w kitten "),
+                        conf.index("var:cc_plugin --allow-fallback=ascii cmd+w"))
+
     def test_conditional_map_goes_after_the_unconditional_one(self):
         """Из подходящих map kitty берёт последний объявленный, а
         безусловный подходит всегда: стоя ниже, он перекрыл бы

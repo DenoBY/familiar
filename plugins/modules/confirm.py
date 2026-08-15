@@ -10,11 +10,14 @@ confirm_key/confirm_text/confirm_click в начале on_key/on_text/
 on_mouse_event, draw_quit_confirm — в начале _draw_frame.
 """
 
+from kittens.tui.handler import Handler
 from kittens.tui.loop import EventType as MouseEventType
 from kittens.tui.loop import MouseButton
-from kittens.tui.operations import styled
+from kittens.tui.operations import MouseTracking, styled
 
+from .draw import AtomicDraw
 from .keylayout import chord, ctrl_letter, to_latin
+from .pointer import PointerCursor
 
 
 _GAP = 3   # пробелы между кнопками
@@ -147,3 +150,58 @@ class ConfirmQuit:
                    for i, (label, fg) in enumerate(_BUTTONS))
         for part in range(3):
             self.print(' ' * left + yes[part] + ' ' * _GAP + no[part])
+
+
+class ConfirmScreen(ConfirmQuit, AtomicDraw, PointerCursor, Handler):
+    """Кит, который целиком является одним вопросом (quit, close).
+
+    Подкласс задаёт содержимое — confirm_rows(); ответ читает его
+    handle_result по флагу confirmed.
+    """
+
+    mouse_tracking = MouseTracking.full
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.confirmed = False
+
+    def initialize(self) -> None:
+        self.cmd.set_cursor_visible(False)
+        self.start_quit_confirm()
+
+    def finalize(self) -> None:
+        self.cmd.set_cursor_visible(True)
+        self.reset_pointer()
+
+    def _confirm_done(self, yes: bool) -> None:
+        self.confirmed = yes
+        self.quit_loop(0)
+
+    # Ввод: ⌃c у оверлеев значит «закрыть кит», а здесь закрытие кита —
+    # это и есть ответ; отвечаем им «нет», как безопасным по умолчанию.
+    def on_key(self, key_event) -> None:
+        if chord(key_event, 'ctrl', 'c'):
+            self._confirm_done(False)
+            return
+        self.confirm_key(key_event)
+
+    def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
+        if ctrl_letter(text, in_bracketed_paste) == 'c':
+            self._confirm_done(False)
+            return
+        self.confirm_text(text)
+
+    def on_mouse_event(self, ev) -> None:
+        self.confirm_click(ev)
+
+    def _wanted_pointer(self, ev) -> 'str | None':
+        return self.confirm_pointer(ev)
+
+    def on_interrupt(self) -> None:
+        self._confirm_done(False)
+
+    def on_eot(self) -> None:
+        self._confirm_done(False)
+
+    def _draw_frame(self) -> None:
+        self.draw_quit_confirm()

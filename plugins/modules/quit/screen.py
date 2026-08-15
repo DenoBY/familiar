@@ -7,13 +7,9 @@
 
 import os
 
-from kittens.tui.handler import Handler
-from kittens.tui.operations import MouseTracking, styled
+from kittens.tui.operations import styled
 
-from ..confirm import ConfirmQuit
-from ..draw import AtomicDraw
-from ..keylayout import chord, ctrl_letter
-from ..pointer import PointerCursor
+from ..confirm import ConfirmScreen
 from ..session.data import running_sessions
 from ..text import plural, truncate
 
@@ -55,57 +51,16 @@ def body(sessions: list[tuple[str, str]], width: int) -> list[tuple[str, str]]:
     return rows
 
 
-class QuitScreen(ConfirmQuit, AtomicDraw, PointerCursor, Handler):
+class QuitScreen(ConfirmScreen):
     """Вопрос на весь экран; ответ читает handle_result кита."""
-
-    mouse_tracking = MouseTracking.full
 
     def __init__(self) -> None:
         super().__init__()
-        self.confirmed = False
         self.sessions: list[tuple[str, str]] = []
 
     def initialize(self) -> None:
-        self.cmd.set_cursor_visible(False)
         self.sessions = live_sessions()
-        self.start_quit_confirm()
-
-    def finalize(self) -> None:
-        self.cmd.set_cursor_visible(True)
-        self.reset_pointer()
+        super().initialize()
 
     def confirm_rows(self) -> list[tuple[str, str]]:
         return body(self.sessions, self.screen_size.cols - 4)
-
-    def _confirm_done(self, yes: bool) -> None:
-        self.confirmed = yes
-        self.quit_loop(0)
-
-    # Ввод: ⌃c у оверлеев значит «закрыть кит», здесь бы значил «выйти
-    # из kitty» — для аварийной клавиши слишком много власти.
-    def on_key(self, key_event) -> None:
-        if chord(key_event, 'ctrl', 'c'):
-            self._confirm_done(False)
-            return
-        self.confirm_key(key_event)
-
-    def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
-        if ctrl_letter(text, in_bracketed_paste) == 'c':
-            self._confirm_done(False)
-            return
-        self.confirm_text(text)
-
-    def on_mouse_event(self, ev) -> None:
-        self.confirm_click(ev)
-
-    def _wanted_pointer(self, ev) -> 'str | None':
-        return self.confirm_pointer(ev)
-
-    def on_interrupt(self) -> None:
-        self._confirm_done(False)
-
-    def on_eot(self) -> None:
-        self._confirm_done(False)
-
-    def _draw_frame(self) -> None:
-        self.draw_quit_confirm()

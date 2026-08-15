@@ -304,6 +304,25 @@ def _clipboard_unmaps(names: list[str]) -> list[str]:
     return lines
 
 
+def _close_lines(plugins: str) -> list[str]:
+    """Cmd+W через свой кит вместо штатного вопроса kitty.
+
+    Только в терминал-режиме: сам Cmd+W (закрыть панель) приходит из
+    keys/splits.conf, без него переопределять нечего. Строки идут
+    после `include terminal.conf`, поэтому перекрывают safety.conf —
+    у kitty из подходящих map выигрывает последний объявленный.
+    """
+    entry = os.path.join(plugins, "close.py")
+    ask = os.path.join(plugins, "close_ask.py")
+    return [
+        "# close — pane close confirmation that names what is running",
+        f"map --allow-fallback=ascii cmd+w kitten {entry} {ask}",
+        "# In an overlay Cmd+W closes the kitten itself (its own ⌃c)",
+        "map --when-focus-on var:cc_plugin --allow-fallback=ascii "
+        "cmd+w send_text all \\x03",
+    ]
+
+
 def render_generated_conf(names: list[str], with_terminal: bool,
                           theme: str = DEFAULT_THEME,
                           restore: bool = False) -> str:
@@ -337,6 +356,11 @@ def render_generated_conf(names: list[str], with_terminal: bool,
     clip = _clipboard_unmaps(ordered)
     if clip:
         out += clip
+        out.append("")
+    if with_terminal:
+        # Последним блоком: перекрывает и safety.conf, и условные map
+        # китов выше — из подходящих kitty берёт последний.
+        out += _close_lines(plugins)
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 

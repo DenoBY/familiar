@@ -5,6 +5,19 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.32.0] — 2026-08-15
+
+### Added
+
+- close: `Cmd+W` now asks in the pane itself and names what is actually
+  running there. kitty's built-in question prints the first foreground
+  process it finds, so a pane running Claude Code was announced as
+  `caffeinate` or an MCP server binary, path and all; this one says
+  `claude · <project> · <status>` and reminds you the conversation is
+  saved. A plain program is named without its path (`nvim src/main.py`),
+  and a pane sitting at the shell prompt still closes in one press.
+  The buttons are the ones the kittens already use.
+
 ## [0.31.2] — 2026-08-15
 
 ### Fixed
