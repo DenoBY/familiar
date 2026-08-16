@@ -7,7 +7,9 @@ Esc на дне каскада не должен молча закрывать �
 
 Подкласс должен первым делом отдавать ввод диалогу:
 confirm_key/confirm_text/confirm_click в начале on_key/on_text/
-on_mouse_event, draw_quit_confirm — в начале _draw_frame.
+on_mouse_event, draw_quit_confirm — в начале _draw_frame. Флаг
+in_bracketed_paste доводить до confirm_text обязательно: иначе
+вставленный текст диалог примет за ответ.
 """
 
 from kittens.tui.handler import Handler
@@ -23,6 +25,11 @@ from .pointer import PointerCursor
 _GAP = 3   # пробелы между кнопками
 _BUTTONS = (('Yes', 'green'), ('No', 'red'))
 
+# Высота под пустой строкой-разделителем: рамка кнопок или их же
+# однострочный вариант.
+_FRAMED_H = 1 + 3
+_COMPACT_H = 1 + 1
+
 
 def _button_rows(label: str, focus: bool, fg: str) -> tuple[str, str, str]:
     border = 'yellow' if focus else 'gray'
@@ -33,9 +40,39 @@ def _button_rows(label: str, focus: bool, fg: str) -> tuple[str, str, str]:
             styled(f'╰{bar}╯', fg=border))
 
 
+def _button_row(label: str, focus: bool, fg: str) -> str:
+    border = 'yellow' if focus else 'gray'
+    return (styled('[ ', fg=border) + styled(label, fg=fg, bold=focus)
+            + styled(' ]', fg=border))
+
+
+def _fit_rows(lines: list[tuple[str, str]],
+              rows: int) -> tuple[list[tuple[str, str]], bool]:
+    """Содержимое и признак «кнопки в одну строку» под высоту панели.
+
+    Оверлей открыт в размер панели, а панель бывает в несколько строк:
+    сначала выкидываем пустые разделители, потом сжимаем кнопки, потом
+    режем хвост (подсказку) — вопрос остаётся всегда.
+    """
+    if len(lines) + _FRAMED_H <= rows:
+        return lines, False
+    lines = [row for row in lines if row[0]]
+    if len(lines) + _FRAMED_H <= rows:
+        return lines, False
+    while len(lines) > 1 and len(lines) + _COMPACT_H > rows:
+        lines.pop()
+    return lines, True
+
+
 class ConfirmQuit:
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close?'
+
+    # Что значит ⌃c в открытом диалоге. У оверлеев — «да»: клавиша и
+    # так закрывает кит, диалог ей не преграда. Кит, который сам
+    # является вопросом (ConfirmScreen), отвечает ею «нет» — там
+    # закрытие кита и есть ответ, а безопасный ответ — отказ.
+    CONFIRM_CTRL_C = True
 
     confirm_active = False
     _confirm_focus = 0          # 0 — Yes, 1 — No
@@ -59,8 +96,8 @@ class ConfirmQuit:
     def confirm_key(self, key_event) -> bool:
         if not self.confirm_active:
             return False
-        if chord(key_event, 'ctrl', 'c'):   # ⌃c выходит всегда, диалог не преграда
-            self._confirm_done(True)
+        if chord(key_event, 'ctrl', 'c'):
+            self._confirm_done(self.CONFIRM_CTRL_C)
             return True
         k = key_event.key
         if k == 'ENTER':
@@ -72,11 +109,15 @@ class ConfirmQuit:
             self.draw_screen()
         return True   # прочие клавиши глотаем: под диалогом ничего не живёт
 
-    def confirm_text(self, text: str) -> bool:
+    def confirm_text(self, text: str, in_bracketed_paste: bool = False) -> bool:
         if not self.confirm_active:
             return False
+        if in_bracketed_paste:
+            # Вставка — содержимое, а не ответ: буфер, начинающийся с
+            # «y» (или несущий \x03), закрывал бы окно за пользователя.
+            return True
         if ctrl_letter(text) == 'c':        # на кириллице ⌃c приходит C0-байтом
-            self._confirm_done(True)
+            self._confirm_done(self.CONFIRM_CTRL_C)
             return True
         c = to_latin(text[:1]).lower()
         if c == 'y':
@@ -122,34 +163,43 @@ class ConfirmQuit:
             return False
         self.cmd.clear_screen()
         rows, cols = self.screen_size.rows, self.screen_size.cols
-        # вопрос + пустая строка + три строки кнопок, всё по центру
-        lines = self.confirm_rows()
-        height = len(lines) + 4
+        lines, compact = _fit_rows(self.confirm_rows(), rows)
+        height = len(lines) + (_COMPACT_H if compact else _FRAMED_H)
         top = max(0, (rows - height) // 2)
         for _ in range(top):
             self.print()
         for plain, decorated in lines:
             self.print(' ' * max(0, (cols - len(plain)) // 2) + decorated)
         self.print()
-        self._draw_buttons(top + len(lines) + 1, cols)
-        for _ in range(rows - top - height - 1):
+        self._draw_buttons(top + len(lines) + 1, cols, compact)
+        for _ in range(max(0, rows - top - height - 1)):
             self.print()
         return True
 
-    def _draw_buttons(self, first_row: int, cols: int) -> None:
+    def _draw_buttons(self, first_row: int, cols: int, compact: bool) -> None:
         widths = [len(label) + 4 for label, _ in _BUTTONS]   # '│ Yes │'
-        left = max(0, (cols - sum(widths) - _GAP) // 2)
+        # Перенос строки развалил бы рамку, поэтому в тесной панели
+        # промежуток жмётся до пробела; уже 14 колонок кнопки всё
+        # равно не помещаются.
+        gap = _GAP if sum(widths) + _GAP <= cols else 1
+        left = max(0, (cols - sum(widths) - gap) // 2)
         hitboxes = []
         x = left
         for w in widths:
-            hitboxes.append((first_row + 1, x, x + w))
-            x += w + _GAP
+            hitboxes.append((first_row + (0 if compact else 1), x, x + w))
+            x += w + gap
         self._confirm_hitboxes = tuple(hitboxes)
 
-        yes, no = (_button_rows(label, self._confirm_focus == i, fg)
+        focus = self._confirm_focus
+        if compact:
+            self.print(' ' * left + (' ' * gap).join(
+                _button_row(label, focus == i, fg)
+                for i, (label, fg) in enumerate(_BUTTONS)))
+            return
+        yes, no = (_button_rows(label, focus == i, fg)
                    for i, (label, fg) in enumerate(_BUTTONS))
         for part in range(3):
-            self.print(' ' * left + yes[part] + ' ' * _GAP + no[part])
+            self.print(' ' * left + yes[part] + ' ' * gap + no[part])
 
 
 class ConfirmScreen(ConfirmQuit, AtomicDraw, PointerCursor, Handler):
@@ -160,6 +210,7 @@ class ConfirmScreen(ConfirmQuit, AtomicDraw, PointerCursor, Handler):
     """
 
     mouse_tracking = MouseTracking.full
+    CONFIRM_CTRL_C = False
 
     def __init__(self) -> None:
         super().__init__()
@@ -177,19 +228,11 @@ class ConfirmScreen(ConfirmQuit, AtomicDraw, PointerCursor, Handler):
         self.confirmed = yes
         self.quit_loop(0)
 
-    # Ввод: ⌃c у оверлеев значит «закрыть кит», а здесь закрытие кита —
-    # это и есть ответ; отвечаем им «нет», как безопасным по умолчанию.
     def on_key(self, key_event) -> None:
-        if chord(key_event, 'ctrl', 'c'):
-            self._confirm_done(False)
-            return
         self.confirm_key(key_event)
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
-        if ctrl_letter(text, in_bracketed_paste) == 'c':
-            self._confirm_done(False)
-            return
-        self.confirm_text(text)
+        self.confirm_text(text, in_bracketed_paste)
 
     def on_mouse_event(self, ev) -> None:
         self.confirm_click(ev)

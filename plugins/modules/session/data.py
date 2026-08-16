@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 
 # Хранилище переносится переменной CLAUDE_CONFIG_DIR (docs:
@@ -133,7 +134,20 @@ _WINDOW_PID_VAR = 'KITTY_CHILD_PID'
 _MAX_PARENT_HOPS = 8
 
 
+# Кит close зовётся из процесса kitty, где `ps` форкается синхронно и
+# держит весь терминал: на серии нажатий ⌘W хватает одного снимка.
+_PARENTS_TTL = 2.0
+_parents_cache: 'tuple[float, dict[int, int]] | None' = None
+
+
 def parent_pids() -> dict[int, int]:
+    """Таблица {pid: ppid} по всем процессам, снимок общий на процесс
+    и не старше _PARENTS_TTL секунд.
+    """
+    global _parents_cache
+    now = time.monotonic()
+    if _parents_cache and now - _parents_cache[0] < _PARENTS_TTL:
+        return _parents_cache[1]
     try:
         out = subprocess.run(('ps', '-Ao', 'pid=,ppid='), capture_output=True,
                              timeout=4, stdin=subprocess.DEVNULL)
@@ -145,6 +159,7 @@ def parent_pids() -> dict[int, int]:
         ppid = ppid.strip()
         if pid.isdigit() and ppid.isdigit():
             parents[int(pid)] = int(ppid)
+    _parents_cache = (now, parents)
     return parents
 
 

@@ -716,7 +716,7 @@ class SessionsHandler(OverlayHandler):
         return False
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
-        if self.confirm_text(text):
+        if self.confirm_text(text, in_bracketed_paste):
             return
         if self.input_text(text):
             return

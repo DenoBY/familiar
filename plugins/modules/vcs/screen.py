@@ -464,7 +464,7 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         return False
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
-        if self.confirm_text(text):
+        if self.confirm_text(text, in_bracketed_paste):
             return
         if self._pending_active():
             if to_latin(text[:1]) in ('y', 'Y'):

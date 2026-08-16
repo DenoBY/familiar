@@ -252,6 +252,33 @@ class TestWindowSessionId(unittest.TestCase):
         self.assertIsNone(self.call(999, {100: 42, 42: 1, 200: 1}))
 
 
+class TestParentPidsCache(unittest.TestCase):
+    def setUp(self):
+        Dt._parents_cache = None
+        self.addCleanup(setattr, Dt, '_parents_cache', None)
+        patch = mock.patch.object(Dt.subprocess, 'run')
+        self.run = patch.start()
+        self.addCleanup(patch.stop)
+        self.run.return_value = mock.Mock(stdout=b' 100 42\n 42 1\n')
+
+    def test_fresh_snapshot_is_reused(self):
+        self.assertEqual(Dt.parent_pids(), {100: 42, 42: 1})
+        Dt.parent_pids()
+        self.assertEqual(self.run.call_count, 1)
+
+    def test_stale_snapshot_is_dropped(self):
+        Dt.parent_pids()
+        taken, table = Dt._parents_cache
+        Dt._parents_cache = (taken - Dt._PARENTS_TTL - 1, table)
+        Dt.parent_pids()
+        self.assertEqual(self.run.call_count, 2)
+
+    def test_exec_case_never_reaches_ps(self):
+        # pid окна и есть pid claude — дерево процессов не нужно
+        self.assertEqual(Dt.session_id_for_pid(100, {'S': {'pid': 100}}), 'S')
+        self.run.assert_not_called()
+
+
 class TestScanProjects(TmpDirTest):
     def setUp(self):
         super().setUp()

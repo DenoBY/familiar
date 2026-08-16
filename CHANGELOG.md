@@ -5,6 +5,29 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.32.1] — 2026-08-17
+
+### Fixed
+
+- close: `Cmd+W` no longer answers its own question. The confirmation is
+  an overlay, and inside a kitten overlay `Cmd+W` sends `⌃c` — so the key
+  that raised the question dismissed it on the second press. It is ignored
+  while the question is up; `esc`, `n`, `Ctrl+C` and the `No` button still
+  cancel it.
+- close: the guard that keeps `Cmd+W` from stacking questions was silently
+  switched off by the 0.32.0 mapping. kitty still draws its own `ask`
+  overlay for `confirm_os_window_close`, and inside it `Cmd+W` opened the
+  pane question on top — announcing `kitten ask --type=yesno` as the thing
+  that runs there. The guard is repeated after the kitten mapping, where
+  it wins again.
+- close: the question now fits the pane it is drawn in. In a six-row
+  split the blank separators go first, then the button frames shrink to
+  `[ Yes ] [ No ]`, and the hint is dropped last — before, the whole
+  dialog scrolled out of sight. In a narrow pane the gap between the
+  buttons tightens to a single space instead of wrapping their frames.
+- Pasting into a confirmation no longer answers it: a buffer starting
+  with `y` closed the pane (or quit kitty) by itself.
+
 ## [0.32.0] — 2026-08-15
 
 ### Added

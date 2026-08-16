@@ -27,8 +27,9 @@ class TestBody(unittest.TestCase):
 
 
 class TestScreen(unittest.TestCase):
-    def screen(self, label='claude · kitty · busy', hint='Saved.'):
-        h = wire(Cs.CloseScreen(label, hint), rows=24, cols=80)
+    def screen(self, label='claude · kitty · busy', hint='Saved.',
+               rows=24, cols=80):
+        h = wire(Cs.CloseScreen(label, hint), rows=rows, cols=cols)
         h.start_quit_confirm()
         return h
 
@@ -45,6 +46,17 @@ class TestScreen(unittest.TestCase):
     def test_screen_fits_its_rows(self):
         h = self.screen()
         self.assertLessEqual(len(h.out), h.screen_size.rows)
+
+    def test_screen_fits_a_low_pane_too(self):
+        """Оверлей открыт в размер панели, а нижний сплит бывает
+        в шесть строк: вопрос должен влезать, а не уезжать скроллом.
+        """
+        for rows in (4, 6, 8):
+            h = self.screen(hint='The conversation is saved — reopen it later.',
+                            rows=rows, cols=60)
+            with self.subTest(rows=rows):
+                self.assertLessEqual(len(h.out), rows)
+                self.assertIn('Close this pane?', draw_text(h))
 
     def test_enter_confirms(self):
         h = self.screen()

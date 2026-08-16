@@ -40,7 +40,9 @@ def _session(window) -> 'dict | None':
         pid = window.child.pid
     except (AttributeError, OSError):
         return None
-    sid = session_id_for_pid(pid, running) if pid else None
+    if not pid:
+        return None
+    sid = session_id_for_pid(pid, running)
     return running.get(sid) if sid else None
 
 

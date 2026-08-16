@@ -310,16 +310,29 @@ def _close_lines(plugins: str) -> list[str]:
     Только в терминал-режиме: сам Cmd+W (закрыть панель) приходит из
     keys/splits.conf, без него переопределять нечего. Строки идут
     после `include terminal.conf`, поэтому перекрывают safety.conf —
-    у kitty из подходящих map выигрывает последний объявленный.
+    у kitty из подходящих map выигрывает последний объявленный. По той
+    же причине уточнения safety.conf приходится повторять здесь: свой
+    безусловный map перекрыл бы и их.
     """
     entry = os.path.join(plugins, "close.py")
     ask = os.path.join(plugins, "close_ask.py")
     return [
         "# close — pane close confirmation that names what is running",
         f"map --allow-fallback=ascii cmd+w kitten {entry} {ask}",
+        # Вопрос про ВСЁ окно (confirm_os_window_close) kitty
+        # по-прежнему рисует китом `ask`.
+        "# kitty's own ask overlay (confirm_os_window_close): no question on top",
+        "map --when-focus-on cmdline:^ask$ --allow-fallback=ascii "
+        "cmd+w discard_event",
         "# In an overlay Cmd+W closes the kitten itself (its own ⌃c)",
         "map --when-focus-on var:cc_plugin --allow-fallback=ascii "
         "cmd+w send_text all \\x03",
+        # Кит close — сам вопрос про Cmd+W: клавиша, которой его
+        # позвали, на него не отвечает.
+        "# ... except the close question itself: Cmd+W neither repeats"
+        " nor cancels it",
+        "map --when-focus-on var:cc_plugin=close --allow-fallback=ascii "
+        "cmd+w discard_event",
     ]
 
 

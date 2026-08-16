@@ -15,6 +15,59 @@ class Dummy(ConfirmQuit, PointerCursor):
         return self.confirm_pointer(ev) if self.confirm_active else None
 
 
+class TallDummy(Dummy):
+    """Вопрос с подписью и подсказкой — как у кита close."""
+
+    def confirm_rows(self):
+        rows = [('Close this pane?', 'Close this pane?')]
+        for text in ('claude · familiar · busy', 'The conversation is saved.'):
+            rows += [('', ''), (text, text)]
+        return rows
+
+
+class FitToPaneTest(unittest.TestCase):
+    """Оверлей close открыт в размер панели, а она бывает крошечной."""
+
+    def screen(self, rows, cols=60):
+        h = wire(TallDummy(), rows=rows, cols=cols)
+        h.start_quit_confirm()
+        return h
+
+    def test_tall_pane_keeps_the_framed_buttons(self):
+        text = draw_text(self.screen(24))
+        self.assertIn('│ Yes │', text)
+        self.assertIn('The conversation is saved.', text)
+
+    def test_low_pane_drops_blank_lines_and_button_frames(self):
+        h = self.screen(6)
+        self.assertLessEqual(len(h.out), 6)
+        text = draw_text(h)
+        self.assertIn('Close this pane?', text)
+        self.assertIn('claude · familiar · busy', text)
+        self.assertIn('[ Yes ]', text)
+
+    def test_the_question_survives_even_in_three_rows(self):
+        h = self.screen(3)
+        self.assertLessEqual(len(h.out), 3)
+        self.assertIn('Close this pane?', draw_text(h))
+        self.assertIn('[ Yes ]', draw_text(h))
+
+    def test_narrow_pane_does_not_wrap_the_buttons(self):
+        """Перенос развалил бы рамку — вместо этого жмётся зазор.
+
+        Содержимое здесь длиннее панели, но его режет сам подкласс
+        (у close это truncate по ширине в body).
+        """
+        h = self.screen(24, cols=14)
+        row = h._confirm_hitboxes[0][0]
+        self.assertLessEqual(len(draw_text(h).split('\n')[row]), 14)
+
+    def test_buttons_stay_clickable_after_shrinking(self):
+        h = self.screen(6)
+        (row, x0, _), _ = h._confirm_hitboxes
+        self.assertEqual(draw_text(h).split('\n')[row][x0:x0 + 7], '[ Yes ]')
+
+
 class ConfirmQuitTest(unittest.TestCase):
     def setUp(self):
         self.h = wire(Dummy(), rows=20, cols=80)
@@ -75,6 +128,13 @@ class ConfirmQuitTest(unittest.TestCase):
         self.h.start_quit_confirm()
         self.h.confirm_text('\x03')         # на кириллице ⌃c приходит C0-байтом
         self.assertEqual(self.h.quits, [0])
+
+    def test_paste_is_not_an_answer(self):
+        self.h.start_quit_confirm()
+        self.assertTrue(self.h.confirm_text('yes, please', in_bracketed_paste=True))
+        self.assertTrue(self.h.confirm_text('\x03', in_bracketed_paste=True))
+        self.assertTrue(self.h.confirm_active)
+        self.assertEqual(self.h.quits, [])
 
     def test_click_buttons(self):
         self.h.start_quit_confirm()

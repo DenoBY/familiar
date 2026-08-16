@@ -80,13 +80,24 @@ class RenderTests(unittest.TestCase):
         # тогда нечего
         self.assertNotIn("close.py", familiar.render_generated_conf(["session"], False))
 
-    def test_close_map_wins_over_the_kitten_overlay_guards(self):
-        """Оба блока трогают cmd+w, а выигрывает последний объявленный:
-        сначала кит close, следом — уточнение для оверлеев.
+    def test_cmd_w_block_declares_the_guards_after_the_kitten(self):
+        """Из подходящих map kitty берёт последний объявленный, а
+        безусловный подходит всегда — значит оба уточнения safety.conf
+        (вопрос kitty `ask`, оверлеи китов) и точечное для самого
+        вопроса close обязаны стоять НИЖЕ строки с китом.
         """
         conf = familiar.render_generated_conf(["session"], True)
-        self.assertLess(conf.index("cmd+w kitten "),
-                        conf.index("var:cc_plugin --allow-fallback=ascii cmd+w"))
+        block = [ln for ln in conf.splitlines()
+                 if ln.startswith("map") and "cmd+w" in ln]
+        self.assertEqual(
+            [ln.partition(" cmd+w ")[2] for ln in block],
+            [f"kitten {familiar.plugins_dir()}/close.py"
+             f" {familiar.plugins_dir()}/close_ask.py",
+             "discard_event",          # cmdline:^ask$ — вопрос самой kitty
+             "send_text all \\x03",    # любой оверлей кита — закрыть кит
+             "discard_event"])         # var:cc_plugin=close — сам вопрос
+        self.assertIn("cmdline:^ask$", block[1])
+        self.assertIn("var:cc_plugin=close", block[3])
 
     def test_conditional_map_goes_after_the_unconditional_one(self):
         """Из подходящих map kitty берёт последний объявленный, а
@@ -292,7 +303,8 @@ class WiredRootTests(unittest.TestCase):
 
     def test_root_from_terminal_only_conf(self):
         conf = familiar.render_generated_conf([], True)
-        self.assertNotIn("cc_plugin=", conf)
+        # киты из списка не подключены; close идёт с терминал-конфигом
+        self.assertEqual(set(re.findall(r"cc_plugin=(\w+)", conf)), {"close"})
         self.assertEqual(familiar.wired_root(conf), familiar.app_root())
 
     def test_unknown_content_returns_none(self):
@@ -423,7 +435,7 @@ class EndToEndTests(unittest.TestCase):
         _run(["enable", "--terminal", "-y"])
         generated = self._read(self.generated)
         self.assertIn("terminal.conf", generated)
-        self.assertNotIn("cc_plugin=", generated)
+        self.assertEqual(set(re.findall(r"cc_plugin=(\w+)", generated)), {"close"})
 
         status = _run(["status"])
         self.assertIn("terminal:   yes", status)

@@ -572,7 +572,7 @@ class CommitLogHandler(ReviewScreen):
         if self.screen != 'commits':
             super().on_text(text, in_bracketed_paste)
             return
-        if self.confirm_text(text):
+        if self.confirm_text(text, in_bracketed_paste):
             return
         if self.pending_push:
             if to_latin(text[:1]) in ('y', 'Y'):
