@@ -60,6 +60,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_navdef_imports.py` | import resolution against a **real temporary repository**: Python, JS/TS, PHP (PSR-4), Go (go.mod), relative paths |
 | `test_review_goto.py` | go-to-definition in the kitten: the candidate picker, read-only view of an external file, going back with ⌃o, a git failure instead of a false "no definition" |
 | `test_confirm.py` | the quit confirmation dialog: button focus, keys and clicks, ⌃c over the dialog |
+| `test_close_target.py` / `test_close_screen.py` / `test_close_handler.py` / `test_close_pane.py` | the `Cmd+W` question: naming the session or the program, the screen and its buttons, deciding whether to ask, and what closes after `Yes` — a session takes the shell under its overlay along |
 | `test_inputline.py` | the `modules.inputline` input line: caret, multi-line wrapping, ⌃w/⌃u |
 | `test_familiar_cli.py` | the `bin/familiar` CLI: `--version` against the formula's tag, rendering the generated config (includes, themes, unmaps), the managed block (insert/upsert/remove), `enable` selection flags, theme discovery and every theme has a look file |
 

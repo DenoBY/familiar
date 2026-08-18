@@ -22,6 +22,7 @@ class FakeWindow:
     def __init__(self, running=True, pid=0, cmdline=()):
         self.has_running_program = running
         self.child = FakeChild(pid, cmdline)
+        self.overlay_parent = None
 
 
 class FakeBoss:
@@ -43,8 +44,8 @@ class FakeBoss:
 
 class DecideTest(unittest.TestCase):
     def setUp(self):
-        patch = mock.patch.object(C, 'running_sessions', return_value={})
-        self.running = patch.start()
+        patch = mock.patch.object(C, 'claude_session', return_value=None)
+        self.session = patch.start()
         self.addCleanup(patch.stop)
 
     def run_close(self, window, args=('close', ASK)):
@@ -64,8 +65,8 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(boss.kittens, [(ASK, ('nvim a.py', ''))])
 
     def test_claude_window_is_named_by_its_session(self):
-        self.running.return_value = {'sid-1': {'pid': 500, 'cwd': '/x/familiar',
-                                               'status': 'busy'}}
+        self.session.return_value = {'pid': 500, 'cwd': '/x/familiar',
+                                     'status': 'busy'}
         boss = self.run_close(FakeWindow(pid=500, cmdline=['caffeinate', '-i']))
         path, (label, hint) = boss.kittens[0]
         self.assertEqual(label, 'claude · familiar · busy')
@@ -83,19 +84,32 @@ class DecideTest(unittest.TestCase):
 
 
 class AnswerTest(unittest.TestCase):
-    def run_answer(self, result):
-        boss = FakeBoss(FakeWindow())
+    def setUp(self):
+        patch = mock.patch.object(CA, 'close_pane')
+        self.close_pane = patch.start()
+        self.addCleanup(patch.stop)
+
+    def run_answer(self, result, window=None):
+        boss = FakeBoss(window)
         CA.handle_result(['close_ask'], result, 7, boss)
         return boss
 
     def test_yes_closes_the_pane(self):
-        self.assertEqual(self.run_answer({'action': 'close'}).closed, [7])
+        window = FakeWindow()
+        boss = self.run_answer({'action': 'close'}, window)
+        self.close_pane.assert_called_once_with(boss, window)
 
     def test_no_keeps_it(self):
-        self.assertEqual(self.run_answer({'action': 'cancel'}).closed, [])
+        self.run_answer({'action': 'cancel'}, FakeWindow())
+        self.close_pane.assert_not_called()
 
     def test_missing_result_keeps_it(self):
-        self.assertEqual(self.run_answer(None).closed, [])
+        self.run_answer(None, FakeWindow())
+        self.close_pane.assert_not_called()
+
+    def test_pane_closed_while_the_question_was_up(self):
+        self.run_answer({'action': 'close'})
+        self.close_pane.assert_not_called()
 
 
 class ScreenArgsTest(unittest.TestCase):

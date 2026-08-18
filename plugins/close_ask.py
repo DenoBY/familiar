@@ -4,10 +4,11 @@ close_ask — kitten для kitty.
 
 Экран вопроса «закрыть панель?» — вторая фаза кита close.py: тот в
 процессе kitty решает, нужен ли вопрос, и передаёт готовые строки
-аргументами. Сам ничего о процессах окна не знает.
+аргументами. Сам экран ничего о процессах окна не знает; что делать
+с панелью после «да» — забота modules.close.pane.
 
-Оверлей открывается в размер панели, а не во весь таб: закрывается
-именно панель, и layout трогать незачем (ср. цепочку `goto_layout
+Оверлей открывается в размер панели, а не во весь таб: дело касается
+одной панели, и layout трогать незачем (ср. цепочку `goto_layout
 stack` у остальных китов).
 
 Подключение — через close.py, см. его docstring.
@@ -24,6 +25,7 @@ from kittens.tui.loop import Loop
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from modules.close.pane import close as close_pane
 from modules.close.screen import CloseScreen
 from modules.overlay import mark_overlay
 
@@ -42,8 +44,11 @@ def main(args: list[str]) -> dict:
 @result_handler()
 def handle_result(args: list[str], result: 'dict | None',
                   target_window_id: int, boss) -> None:
-    if result and result.get('action') == 'close':
-        boss.mark_window_for_close(target_window_id)
+    if not result or result.get('action') != 'close':
+        return
+    window = boss.window_id_map.get(target_window_id)
+    if window is not None:
+        close_pane(boss, window)
 
 
 if __name__ == '__main__':

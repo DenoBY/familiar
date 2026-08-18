@@ -5,6 +5,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.32.2] — 2026-08-18
+
+### Fixed
+
+- close: confirming `Cmd+W` on a Claude Code session no longer leaves an empty
+  pane behind. The session kitten opens a session in an overlay over the shell
+  it was called from, and closing the overlay uncovered that shell — the split
+  (or the tab) stayed where the session had been. The shell underneath now
+  goes with it; a pane running anything else closes as before.
+
 ## [0.32.1] — 2026-08-17
 
 ### Fixed

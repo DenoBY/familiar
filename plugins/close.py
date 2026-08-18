@@ -28,22 +28,8 @@ from kittens.tui.handler import result_handler
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from modules.close.pane import claude_session
 from modules.close.target import describe
-from modules.session.data import running_sessions, session_id_for_pid
-
-
-def _session(window) -> 'dict | None':
-    running = running_sessions()
-    if not running:
-        return None
-    try:
-        pid = window.child.pid
-    except (AttributeError, OSError):
-        return None
-    if not pid:
-        return None
-    sid = session_id_for_pid(pid, running)
-    return running.get(sid) if sid else None
 
 
 def _cmdline(window) -> list[str]:
@@ -76,5 +62,5 @@ def handle_result(args: list[str], result: 'dict | None',
         # которая молча ничего не делает.
         boss.close_window_with_confirmation(True)
         return
-    label, hint = describe(_session(window), _cmdline(window))
+    label, hint = describe(claude_session(window), _cmdline(window))
     boss.kitten(ask, label, hint)

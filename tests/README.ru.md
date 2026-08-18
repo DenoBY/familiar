@@ -60,6 +60,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_navdef_imports.py` | резолв импортов на **настоящем временном репозитории**: Python, JS/TS, PHP (PSR-4), Go (go.mod), относительные пути |
 | `test_review_goto.py` | go-to-definition в ките: пикер кандидатов, read-only-просмотр внешнего файла, возврат по ⌃o, ошибка git вместо ложного «нет определения» |
 | `test_confirm.py` | диалог подтверждения выхода: фокус кнопок, клавиши и клики, ⌃c поверх диалога |
+| `test_close_target.py` / `test_close_screen.py` / `test_close_handler.py` / `test_close_pane.py` | вопрос по `Cmd+W`: название сессии или программы, экран с кнопками, решение спрашивать или нет и что закрывается после `Yes` — сессия уносит шелл из-под своего оверлея |
 | `test_inputline.py` | строка ввода `modules.inputline`: каретка, перенос многострочного текста, ⌃w/⌃u |
 | `test_familiar_cli.py` | CLI `bin/familiar`: `--version` против тега формулы, рендер генерируемого конфига (include'ы, темы, unmap'ы), managed-блок (insert/upsert/remove), флаги выбора для `enable`, скан тем и наличие look-файла у каждой темы |
 
