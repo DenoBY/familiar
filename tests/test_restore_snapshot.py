@@ -18,12 +18,26 @@ class FakeChild:
         self.foreground_processes = [{'cmdline': list(c)} for c in processes]
 
 
+class FakeLayout:
+    def __init__(self, name):
+        self.name = name
+
+
+class FakeTab:
+    def __init__(self, layout='splits'):
+        self.current_layout = FakeLayout(layout)
+
+
 class FakeWindow:
-    def __init__(self, id, pid=0, processes=(), text=''):
+    def __init__(self, id, pid=0, processes=(), text='', tab=None):
         self.id = id
         self.child = FakeChild(pid, processes)
         self.user_vars = {}
         self._text = text
+        self._tab = tab if tab is not None else FakeTab()
+
+    def tabref(self):
+        return self._tab
 
     def as_text(self, as_ansi=False, add_history=False):
         return self._text
@@ -143,6 +157,27 @@ class TestWriteSnapshot(SnapshotTest):
         self.assertIn('claude --resume sid-1', lines[0])
         self.assertIn('htop', lines[1])
         self.assertNotIn('claude', lines[1])
+
+
+class TestKittenOverlay(SnapshotTest):
+    """Кит держит таб в stack — снимок в этот момент теряет сплиты."""
+
+    def _kitten_window(self, layout):
+        window = FakeWindow(1, processes=[['zsh']], tab=FakeTab(layout))
+        window.user_vars['cc_plugin'] = 'review'
+        return window
+
+    def test_open_kitten_holds_the_snapshot_back(self):
+        self.assertIsNone(Sn.write_snapshot(FakeBoss([self._kitten_window('stack')])))
+
+    def test_snapshot_goes_once_the_layout_is_back(self):
+        """Порядок кита quit: layout вернули, окно кита ещё живо."""
+        window = self._kitten_window('splits')
+        self.assertIsNotNone(Sn.write_snapshot(FakeBoss([window])))
+
+    def test_stack_without_a_kitten_is_the_users_own(self):
+        window = FakeWindow(1, processes=[['zsh']], tab=FakeTab('stack'))
+        self.assertIsNotNone(Sn.write_snapshot(FakeBoss([window])))
 
 
 class TestSnapshotter(SnapshotTest):

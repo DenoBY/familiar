@@ -5,6 +5,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- restore: a snapshot taken while a kitten was open no longer flattens the
+  splits on the next start. Kittens open full-tab through `goto_layout stack`,
+  and kitty serializes such a tab as a stack — the split tree is not in the
+  snapshot at all, so there was nothing left to bring back, and the windows
+  came back as one row. The watcher now holds the snapshot back until the
+  layout returns; quitting through `Cmd+Q` still snapshots, since the kitten
+  puts the layout back before writing.
+
 ## [0.32.2] — 2026-08-18
 
 ### Fixed

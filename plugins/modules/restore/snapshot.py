@@ -13,6 +13,7 @@ import hashlib
 import os
 import time
 
+from ..overlay import OVERLAY_VAR, STACK
 from ..session.data import parent_pids, running_sessions, session_id_for_pid
 from . import store
 from .command import restore_command, safe_program
@@ -71,6 +72,22 @@ def _window_state(window, running: dict[str, dict],
             'cwd': running[sid].get('cwd') if sid else None}
 
 
+def _kitten_stack(boss) -> bool:
+    """Есть ли таб, загнанный в stack ради полноэкранного кита.
+
+    Пока оверлей кита открыт, таб держит цепочка `goto_layout stack`
+    из familiar.conf. kitty сериализует такой таб как Stack, и дерево
+    сплитов в снимок не попадает вовсе — вернуть его потом неоткуда.
+    """
+    for window in boss.all_windows:
+        if window is None or OVERLAY_VAR not in window.user_vars:
+            continue
+        tab = window.tabref()
+        if tab is not None and tab.current_layout.name == STACK:
+            return True
+    return False
+
+
 def _digest(lines: list[str], states: dict[str, dict]) -> str:
     parts = list(lines)
     for token in sorted(states):
@@ -84,10 +101,12 @@ def build(boss) -> 'dict | None':
     """Прочитать состояние kitty, ничего не записывая.
 
     None — когда снимать нечего: без окон снимок затёр бы прошлый
-    пустышкой, а именно он и нужен после случайного закрытия.
+    пустышкой, а именно он и нужен после случайного закрытия. Так же
+    и с открытым китом: лучше снимок постарше, чем свежий, но с
+    потерянными сплитами.
     """
     windows = [w for w in boss.all_windows if w is not None]
-    if not windows:
+    if not windows or _kitten_stack(boss):
         return None
     running = running_sessions()
     parents = parent_pids() if running else {}
