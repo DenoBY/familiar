@@ -12,10 +12,10 @@
 """
 
 from ..keylayout import to_latin
+from ..lsp.position import Target
 from ..text import plural
 from .git import last_error
 from .grep import MAX_MATCHES, search_files
-from .navdef import Target
 
 
 # Короче — не ищем (живой запрос из одной буквы в большом репозитории

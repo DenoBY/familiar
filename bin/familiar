@@ -25,6 +25,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import urllib.request
 
 
@@ -521,12 +522,49 @@ def cmd_enable(args: argparse.Namespace) -> None:
     enabled = ", ".join(names + (["terminal"] if with_terminal else [])
                         + (["restore"] if restore else []))
     print(f"enabled: {enabled}")
+    _offer_lsp(names, args)
     if args.theme != DEFAULT_THEME:
         print(f"theme:   {args.theme}"
               + ("" if with_terminal else " (kittens only — no --terminal)"))
     if backup:
         print(f"backup:  {backup}")
     print("reload kitty (Cmd+Ctrl+, on macOS) or restart it to apply")
+
+
+def _offer_lsp(names: list[str], args: argparse.Namespace) -> None:
+    """Предложить серверы тому, кто включил review или log.
+
+    Момент выбран не случайно: именно здесь человек заявил, что будет
+    смотреть код, — а go-to-definition без сервера не работает вовсе.
+    """
+    if getattr(args, "no_lsp", False) or not ({"review", "log"} & set(names)):
+        return
+    registry, install = _lsp_modules()
+    project = os.getcwd()
+    missing = []
+    for lang in sorted(registry.load(project)):
+        spec = registry.spec_for(lang, project, project)
+        if spec and spec.argv and install.find_binary(spec.argv[0]) is None:
+            missing.append(lang)
+    if not missing:
+        return
+    shown = ", ".join(missing[:6])
+    if len(missing) > 6:
+        shown += f", and {len(missing) - 6} more"
+    print("\ngo-to-definition needs a language server per language.")
+    print(f"not installed yet: {shown}")
+    # без tty спрашивать некого: brew test и CI повисли бы на вводе
+    if not sys.stdin.isatty():
+        print("install what you need:  familiar lsp install <language>")
+        return
+    print("install now? name the languages, or press Enter to skip")
+    try:
+        answer = input("languages: ").split()
+    except EOFError:
+        return
+    if answer:
+        cmd_lsp_install(argparse.Namespace(languages=answer, force=False,
+                                           no_warm=False))
 
 
 def _snapshot_leftovers() -> str | None:
@@ -627,6 +665,179 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("         Re-run 'familiar enable …' to rebake the paths.")
 
 
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _lsp_modules():
+    """Реестр серверов и установщик из пакета китов.
+
+    CLI обычно автономен (ср. restore_state_dir), но здесь общий код:
+    разбор реестра с тремя уровнями и подстановками. Две копии
+    разъехались бы молча, а конфиг у кита и у CLI обязан быть один.
+    """
+    if plugins_dir() not in sys.path:
+        sys.path.insert(0, plugins_dir())
+    try:
+        from modules.lsp import install, registry
+    except ImportError as exc:
+        raise SystemExit(f"familiar: broken installation, no lsp module ({exc})")
+    return registry, install
+
+
+def _human(nbytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if nbytes < 1024 or unit == "GB":
+            return f"{nbytes:.0f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.0f} GB"
+
+
+def _tree_size(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def _template(name: str) -> str:
+    # заготовка, а не рабочий блок: угадывать расширение и имя пакета
+    # по названию языка значит подсунуть правдоподобную неправду
+    return (f"server {name}\n"
+            "  extensions  .ext            # какие файлы обслуживает\n"
+            "  command     SERVER --stdio  # чем запускать (режим stdio)\n"
+            "  install     brew FORMULA    # или: npm PACKAGE\n"
+            "  roots       .git            # маркеры корня проекта\n")
+
+
+def cmd_lsp_status(args: argparse.Namespace) -> None:
+    registry, install = _lsp_modules()
+    project = os.getcwd()
+    blocks = registry.load(project)
+
+    if args.language and args.language not in blocks:
+        print(f"{args.language} is not in the registry — add it to "
+              f"{registry.user_path()}:\n")
+        print(_template(args.language))
+        return
+
+    print(f"registry:   {registry.builtin_path()}")
+    for label, path in (("user", registry.user_path()),
+                        ("project", registry.project_path(project))):
+        mark = "" if os.path.exists(path) else "  (not present)"
+        print(f"{label + ':':11} {path}{mark}")
+    print()
+
+    receipts = install.read_receipts()
+    for lang in sorted(blocks):
+        spec = registry.spec_for(lang, project, project)
+        if spec is None or not spec.argv:
+            continue
+        found = install.find_binary(spec.argv[0])
+        note = found or f"not installed — familiar lsp install {lang}"
+        via = receipts.get(lang, {}).get("package", "")
+        # имя сервера бывает длиннее колонки
+        # (haskell-language-server-wrapper)
+        server = spec.argv[0]
+        pad = " " * max(1, 32 - len(server))
+        print(f"  {lang:<12} {server}{pad}{note}" + (f"  [{via}]" if via else ""))
+
+    servers, indexes = registry.server_home(), registry.index_home()
+    if os.path.isdir(servers):
+        print(f"\nservers:    {servers} ({_human(_tree_size(servers))})")
+    if os.path.isdir(indexes):
+        print(f"indexes:    {indexes} ({_human(_tree_size(indexes))})")
+    print("\nnot listed? familiar lsp status LANG prints a block to copy")
+
+
+def cmd_lsp_install(args: argparse.Namespace) -> None:
+    registry, install = _lsp_modules()
+    project = os.getcwd()
+    for lang in args.languages:
+        spec = registry.spec_for(lang, project, project)
+        if spec is None or not spec.argv:
+            print(f"{lang}: not in the registry (familiar lsp status {lang})")
+            continue
+        if install.find_binary(spec.argv[0]) and not args.force:
+            print(f"{lang}: already installed")
+            continue
+        ok, message = install.install(spec)
+        print(message)
+        if ok and not args.no_warm:
+            _warm(registry, lang, project)
+
+
+def cmd_lsp_warm(args: argparse.Namespace) -> None:
+    registry, _install = _lsp_modules()
+    project = os.path.abspath(args.path)
+    for lang in args.languages:
+        _warm(registry, lang, project)
+
+
+def _warm(registry, lang: str, project: str) -> None:
+    """Прогреть индекс, показывая, что работа идёт."""
+    if plugins_dir() not in sys.path:
+        sys.path.insert(0, plugins_dir())
+    from modules.lsp.rpc import RpcError
+    from modules.lsp.session import NoServer, warm_up
+
+    live = sys.stdout.isatty()
+    state = {"n": 0}
+
+    def report(progress) -> None:
+        state["n"] += 1
+        detail = (f"{progress.percent}%" if progress.percent >= 0
+                  else progress.message or _human(progress.cache))
+        line = (f"{lang}  {SPINNER[state['n'] % len(SPINNER)]}  "
+                f"{int(progress.elapsed)}s · {detail}")
+        if live:
+            print(f"\r\033[K{line}", end="", flush=True)
+        elif state["n"] % 25 == 1:      # в лог — редкими отметками
+            print(line, flush=True)
+
+    def say(message: str) -> None:
+        print(f"\r\033[K{message}" if live else message)
+
+    started = time.monotonic()
+    try:
+        final = warm_up(project, lang, report)
+    except NoServer as exc:
+        say(f"{lang}: {exc}")
+        return
+    except RpcError as exc:
+        say(f"{lang}: {exc}")
+        return
+    except KeyboardInterrupt:
+        say(f"{lang}: cancelled")
+        return
+    elapsed = int(time.monotonic() - started)
+    # упавший сервер возвращается из warm_up штатно, и «indexed» на
+    # это было бы неправдой
+    if final.state == "failed":
+        say(f"{lang}: server exited before indexing finished")
+        return
+    size = f" · cache {_human(final.cache)}" if final.cache else ""
+    say(f"{lang}: indexed in {elapsed}s{size}")
+
+
+def cmd_lsp_clean(args: argparse.Namespace) -> None:
+    # сносим индексы, но не сами серверы: их ставили отдельной
+    # командой, и переустанавливать их никто не просил
+    registry, _install = _lsp_modules()
+    indexes = registry.index_home()
+    if not os.path.isdir(indexes):
+        print("nothing to clean")
+        return
+    if not args.yes and not _confirm(
+            f"remove indexes in {indexes} ({_human(_tree_size(indexes))})?"):
+        raise SystemExit("cancelled")
+    shutil.rmtree(indexes, ignore_errors=True)
+    print(f"removed {indexes}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="familiar",
@@ -655,6 +866,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "terminal palette when --terminal/--all is used")
     enable.add_argument("-y", "--yes", action="store_true",
                         help="skip the terminal-config confirmation")
+    enable.add_argument("--no-lsp", action="store_true",
+                        help="do not offer to install language servers")
     enable.set_defaults(func=cmd_enable)
 
     disable = sub.add_parser("disable", help="remove the familiar block from kitty.conf")
@@ -664,7 +877,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="show what is enabled")
     status.set_defaults(func=cmd_status)
+
+    _add_lsp_parser(sub)
     return parser
+
+
+def _add_lsp_parser(sub) -> None:
+    lsp = sub.add_parser("lsp", help="language servers for go-to-definition")
+    lsp_sub = lsp.add_subparsers(dest="lsp_command", required=True)
+
+    status = lsp_sub.add_parser("status", help="what is configured and found")
+    status.add_argument("language", nargs="?",
+                        help="print a registry block for this language")
+    status.set_defaults(func=cmd_lsp_status)
+
+    install = lsp_sub.add_parser("install", help="install servers")
+    install.add_argument("languages", nargs="+", metavar="LANG")
+    install.add_argument("--force", action="store_true",
+                         help="reinstall even if already present")
+    install.add_argument("--no-warm", action="store_true",
+                         help="skip indexing the current project afterwards")
+    install.set_defaults(func=cmd_lsp_install)
+
+    warm = lsp_sub.add_parser(
+        "warm", help="index a project now, so the first jump is fast")
+    warm.add_argument("languages", nargs="+", metavar="LANG")
+    warm.add_argument("--path", default=".", help="project root (default: cwd)")
+    warm.set_defaults(func=cmd_lsp_warm)
+
+    clean = lsp_sub.add_parser("clean", help="drop cached indexes")
+    clean.add_argument("-y", "--yes", action="store_true")
+    clean.set_defaults(func=cmd_lsp_clean)
 
 
 def main(argv: list[str] | None = None) -> None:

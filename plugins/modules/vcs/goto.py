@@ -2,19 +2,40 @@
 пикер при нескольких кандидатах, стек возврата (⌃o) и read-only показ
 файла, которого нет среди изменений.
 
-Миксин к DiffTreeView. Где искать определение, решает источник:
-в рабочем дереве — по диску, в коммите — по его снимку (`source.rev`),
-поэтому прыжок ведёт к тому же коду, что показан в диффе.
+Миксин к DiffTreeView. Определение ищет language server
+(`modules/lsp`), поднятый на корне проекта: grep не знает ни про
+наследование, ни про vendor, а сервер знает.
+
+Резолв идёт по цепочке, каждый шаг — когда предыдущий пуст:
+`textDocument/definition` по точной позиции → `workspace/symbol` по
+имени → тот же идентификатор в новой версии файла. Второй шаг нужен
+удалённым строкам: они принадлежат старой версии, документа с ней у
+сервера нет и быть не может.
 """
 
 import os
+import time
+from typing import NamedTuple
 
 from kittens.tui.operations import styled
 
-from ..text import short_path, truncate
+from ..lsp.position import (
+    DECL_KINDS,
+    Target,
+    collapse_overloads,
+    encode_character,
+    location_target,
+    locations,
+    prefer_sources,
+    rank_symbols,
+    raw_index,
+)
+from ..lsp.rpc import RpcError
+from ..lsp.session import NoServer, SessionPool
+from ..text import elide_path, short_path, truncate
 from .diff import DiffSource, group_key
-from .git import last_error
-from .navdef import Target, resolve_definition, symbol_at, word_span
+from .git import read_text
+from .symbols import find_identifier, symbol_at, word_span
 
 
 # бит Alt/Option в mouse-событии. kitty кодирует модификаторы мыши
@@ -22,6 +43,39 @@ from .navdef import Target, resolve_definition, symbol_at, word_span
 # (где alt=8): проверено эмпирически — ⌥+click даёт mods=2. ⌘/Super
 # мышью не приходит, поэтому go-to-definition — на ⌥+click.
 ALT_MOD = 0b10
+
+# первый ⌥-клик может прийти, пока сервер ещё индексирует: лучше
+# подождать его, чем ответить «определения нет»
+READY_WAIT = 30.0
+
+# прогрев не по клику, а как только видно файл; задержка гасит
+# прокрутку дерева стрелками — иначе сервер поднимался бы на каждый шаг
+WARM_DELAY = 0.5
+
+# gopls на большом модуле шлёт прогресс десятки раз в секунду —
+# кадр на каждое событие утопил бы цикл
+BADGE_INTERVAL = 0.25
+
+# повторный старт по тёплому кэшу укладывается в доли секунды: мигать
+# индикатором на такой работе незачем, он нужен для долгой
+BADGE_DELAY = 1.0
+
+
+class DiffRef(NamedTuple):
+    """Куда ткнули: всё, что нужно для запроса, снятое в главном
+    потоке (фоновому трогать состояние вьюера нельзя).
+
+    side говорит, каким путём резолвить: 'after' — точная позиция в
+    рабочем дереве; 'before' — удалённая строка, документа с ней нет;
+    'symbol' — просмотр коммита, где подменять документ нельзя вовсе.
+    """
+    rel: str
+    side: str
+    line: int
+    col: int           # индекс в исходной строке, в код-поинтах
+    word: str
+    raw: str           # сама строка без развёрнутых табов
+    text: str          # содержимое файла, каким его видит пользователь
 
 
 class GotoDefinitionMixin:
@@ -31,50 +85,197 @@ class GotoDefinitionMixin:
         # путь показанного read-only внешнего файла (None — обычный
         # дифф), стек «назад», активный пикер кандидатов
         self._external: 'str | None' = None
-        self._navstack: list[dict] = []
+        self._navstack: 'list[dict]' = []
         self._cand: 'list[Target] | None' = None
         self._cand_sym = ''
         self._goto_busy = False
+        self._lsp: 'SessionPool | None' = None
+        self._warm_timer = None
+        self._badge_timer = None
+        self._badge_at = 0.0
+
+    # --- сессии ---
+
+    def _lsp_pool(self) -> SessionPool:
+        if self._lsp is None:
+            self._lsp = SessionPool(self.root or os.getcwd(), self._lsp_progress)
+        return self._lsp
+
+    def load_diff(self) -> None:
+        super().load_diff()
+        self._lsp_warm()
+
+    def _lsp_warm(self) -> None:
+        """Поднять сервер заранее: индексация большого проекта идёт
+        десятки секунд, и пусть она идёт, пока читают дифф.
+        """
+        if not self.root:
+            return
+        loop = getattr(self, 'asyncio_loop', None)
+        if loop is None:
+            return
+        if self._warm_timer is not None:
+            self._warm_timer.cancel()
+        self._warm_timer = loop.call_later(WARM_DELAY, self._lsp_warm_now)
+
+    def _lsp_warm_now(self) -> None:
+        self._warm_timer = None
+        rel = self._external or (self.current_item() or {}).get('path')
+        if not rel:
+            return
+        pool = self._lsp_pool()
+
+        first_line = self.diff_after.split('\n', 1)[0]
+
+        def work():
+            try:
+                pool.session_for(rel, first_line)
+            except (NoServer, RpcError):
+                pass       # молча: язык без сервера не повод для шума
+            return None
+
+        self.run_background(work, lambda _: None)
+
+    def _lsp_progress(self) -> None:
+        """Колбэк сессии: зовётся из её потока, поэтому в луп."""
+        loop = getattr(self, 'asyncio_loop', None)
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(self._lsp_tick)
+        except RuntimeError:
+            pass           # кит уже закрыт — показывать прогресс некому
+
+    def _lsp_tick(self) -> None:
+        now = time.monotonic()
+        left = BADGE_INTERVAL - (now - self._badge_at)
+        if left > 0:
+            # событие не выбрасываем, а откладываем: последнее из
+            # пачки — как раз конец индексации, без него бейдж
+            # застыл бы на «97%» до случайного перерисова
+            self._badge_later(left)
+            return
+        self._badge_at = now
+        self.draw_screen()
+
+    def _badge_later(self, delay: float) -> None:
+        if self._badge_timer is not None:
+            return         # ждём уже запланированного кадра
+        loop = getattr(self, 'asyncio_loop', None)
+        if loop is not None:
+            self._badge_timer = loop.call_later(delay, self._badge_flush)
+
+    def _badge_flush(self) -> None:
+        self._badge_timer = None
+        self._badge_at = time.monotonic()
+        self.draw_screen()
+
+    def _lsp_badge(self) -> str:
+        """Что показывать, пока сервер не готов: проценты, если он их
+        сообщает, иначе время и рост кэша — молчание означает, что всё
+        готово.
+
+        Рисуется отдельно от футера и своим цветом: в общем сером
+        хвосте подсказок индикатор терялся.
+        """
+        if self._lsp is None:
+            return ''
+        for session in self._lsp.active():
+            state = session.status()
+            if state.state in ('ready', 'failed') or state.elapsed < BADGE_DELAY:
+                continue
+            lang = session.spec.lang
+            if state.percent >= 0:
+                return f' ⟳ {lang} {state.percent}% '
+            if state.message:
+                return f' ⟳ {lang} {state.message} '
+            return f' ⟳ {lang} {_mmss(state.elapsed)}{_size(state.cache)} '
+        return ''
+
+    def finalize(self) -> None:
+        super().finalize()
+        for timer in (self._warm_timer, self._badge_timer):
+            if timer is not None:
+                timer.cancel()
+        self._warm_timer = self._badge_timer = None
+        if self._lsp is not None:
+            self._lsp.stop_all()
+
+    # --- что под курсором ---
+
+    def _doc_ref(self, di: int, col: int) -> 'DiffRef | None':
+        """Ячейка диффа → позиция в документе. None — по этой ячейке
+        вопроса не задать: гэп, плейсхолдер, гуттер или не слово.
+        """
+        if not (0 <= di < len(self.diff_plain)) or self._gap_at(di) is not None:
+            return None
+        gutter = self._gutter_cols()
+        if col < gutter + 2:
+            return None
+        plain = self.diff_plain[di]
+        word = symbol_at(plain, col)
+        rel = self._external or (self.current_item() or {}).get('path')
+        if not word or not rel:
+            return None
+        line = self.diff_lineno[di] if di < len(self.diff_lineno) else 0
+        sign = plain[gutter:gutter + 2]
+        if self.source.rev:
+            # просмотр коммита: показанный текст не совпадает с диском,
+            # а подсунуть его серверу значило бы испортить ему индекс.
+            # Номер строки несём — по нему найдём то же место в рабочей
+            # версии файла
+            return DiffRef(rel, 'symbol', line, 0, word, '', self.diff_after)
+        if self.view_mode != 'final' and sign.startswith('-'):
+            # строка старой версии: её документа у сервера нет
+            return DiffRef(rel, 'before', 0, 0, word, '', self.diff_after)
+        raw = _line_at(self.diff_after, line)
+        if not line or raw is None:
+            return None
+        return DiffRef(rel, 'after', line,
+                       raw_index(raw, col - (gutter + 2)), word, raw,
+                       self.diff_after)
 
     # --- поиск определения ---
 
-    def _word_at(self, ev) -> 'tuple[str, bool, bool, str | None] | None':
-        di = self._diff_row_at(ev)
-        if di is None or not (0 <= di < len(self.diff_plain)):
-            return None
-        return symbol_at(self.diff_plain[di], self._diff_col_at(ev))
+    def goto_definition(self, ref: 'DiffRef | None') -> None:
+        """Найти определение и перейти к нему.
 
-    def goto_definition(self, symbol: 'str | None', is_attr: bool = False,
-                        is_call: bool = False, qualifier: 'str | None' = None) -> None:
-        """Найти определение символа и перейти к нему.
-
-        Поиск — repo-wide git grep, на монорепозитории это секунды:
-        в колбэке ждать нельзя (замёрзли бы кадр и ⌃c), поэтому работа
-        уходит в фоновый поток.
+        Запрос уходит в фоновый поток: ждать в колбэке нельзя —
+        замёрзли бы кадр и ⌃c, а первый запрос ещё и ждёт индексации.
         """
-        if not symbol or not self.root:
+        if ref is None or not self.root or self._goto_busy:
             return
-        if self._goto_busy:
-            return                       # предыдущий поиск ещё идёт
-        cur_rel = self._external or (self.current_item() or {}).get('path')
-        ext, source = self.diff_ext, self.diff_after
-        rev = self.source.rev
         self._goto_busy = True
-        self.flash = f"searching for '{symbol}'…"
+        self.flash = f"searching for '{ref.word}'…"
         self.draw_screen()
+        pool = self._lsp_pool()
+        root = self.root
 
         def work():
-            targets = resolve_definition(
-                self.root, cur_rel, ext, symbol, is_attr=is_attr,
-                is_call=is_call, qualifier=qualifier, cur_source=source, rev=rev)
-            return targets, last_error()
+            try:
+                return _resolve(pool, ref, root), ''
+            except NoServer as e:
+                return [], str(e)
+            except RpcError as e:
+                return [], f'language server: {e}'
+            except Exception as e:            # noqa: BLE001
+                # граница фонового потока: любая неожиданная ошибка
+                # иначе унесла бы с собой и поток, и _goto_busy —
+                # кит молча перестал бы отвечать на ⌥-клик вообще
+                return [], f'{type(e).__name__}: {e}'
 
-        self.run_background(work, lambda res: self._goto_done(symbol, *res))
+        self.run_background(work, lambda res: self._goto_done(ref.word, *res))
 
     def _goto_done(self, symbol: str, targets: list, err: str) -> None:
         self._goto_busy = False
+        if len(targets) == 1 and self._is_here(targets[0]):
+            # клик по самому объявлению: сервер отвечает этой же
+            # строкой, и прыжок «в себя» только засорил бы стек ⌃o
+            self.flash = f"already at the definition of '{symbol}'"
+            self.draw_screen()
+            return
         if not targets:
-            # таймаут/сбой git иначе выглядел бы уверенным «нет
+            # сбой сервера иначе выглядел бы уверенным «нет
             # определения» — молча неверный ответ
             self.flash = err or f"no definition for '{symbol}'"
             self.draw_screen()
@@ -85,6 +286,14 @@ class GotoDefinitionMixin:
             self._cand, self._cand_sym = targets, symbol
             self.draw_screen()
 
+    def _is_here(self, target: Target) -> bool:
+        rel = self._external or (self.current_item() or {}).get('path')
+        if target.path != rel:
+            return False
+        shown = (self.diff_lineno[self.diff_cur]
+                 if 0 <= self.diff_cur < len(self.diff_lineno) else 0)
+        return target.line == shown
+
     def goto_from_selection(self) -> None:
         sel = self.diff_char_sel
         if not sel:
@@ -92,15 +301,12 @@ class GotoDefinitionMixin:
             self.draw_screen()
             return
         row, cs, _ = sel
-        if 0 <= row < len(self.diff_plain):
-            ref = symbol_at(self.diff_plain[row], cs)
-            if ref:
-                self.goto_definition(*ref)
+        self.goto_definition(self._doc_ref(row, cs))
 
     def goto_click(self, ev) -> None:
-        ref = self._word_at(ev)
-        if ref:
-            self.goto_definition(*ref)
+        di = self._diff_row_at(ev)
+        if di is not None:
+            self.goto_definition(self._doc_ref(di, self._diff_col_at(ev)))
 
     def goto_hover(self, di: int, col: int, mods: int) -> bool:
         """⌥ над идентификатором — строка кликабельна."""
@@ -191,7 +397,7 @@ class GotoDefinitionMixin:
         self.draw_screen()
 
     def _show_file(self, rel: str, line: int) -> None:
-        text = self.source.read(rel)
+        text = self._read_target(rel)
         self._external = rel
         self.diff_before = self.diff_after = text
         self.diff_ext = os.path.splitext(rel)[1].lower()
@@ -203,6 +409,20 @@ class GotoDefinitionMixin:
         self.build_diff_rows()
         self.focus = 'diff'
         self._center_on_line(line)
+
+    def _read_target(self, rel: str) -> str:
+        """Содержимое файла, в который прыгнули.
+
+        Вне репозитория (stdlib) путь абсолютный — source про такой
+        файл не знает. Внутри репозитория берём версию источника, но
+        при просмотре коммита её может не быть вовсе: `vendor/` и
+        прочее из `.gitignore` в снимок не попадает, и вместо файла
+        показалось бы «(empty file)».
+        """
+        if os.path.isabs(rel):
+            return read_text(rel)
+        text = self.source.read(rel)
+        return text or read_text(os.path.join(self.root, rel))
 
     def nav_back(self) -> None:
         if not self._navstack:
@@ -222,20 +442,141 @@ class GotoDefinitionMixin:
                           fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
         for i, t in enumerate(self._cand[:9]):
-            mark = '▎' if t.kind == 'def' else ' '
-            loc = f'{short_path(t.path)}:{t.line}'
+            mark = '▎' if t.kind in DECL_KINDS else ' '
+            # путь ужимаем, чтобы строку определения не вытеснило за
+            # край: у стабов и vendor он длиннее самого кода
+            loc = f'{elide_path(short_path(t.path), cols // 3)}:{t.line}'
             self.print(truncate(f' {i + 1} {mark} {loc}   {t.preview}', cols))
         self.print('')
         self.print(styled(truncate(' 1-9 open · Esc cancel', cols), fg='gray'), end='')
 
     def _pick(self, n: int) -> None:
         targets = self._cand
+        if not targets or not 0 <= n < min(9, len(targets)):
+            return         # промах цифрой не стоит всего списка
         self._cand, self._cand_sym = None, ''
-        if targets and 0 <= n < min(9, len(targets)):
-            self._navigate(targets[n])
-        else:
-            self.draw_screen()
+        self._navigate(targets[n])
 
     def _close_picker(self) -> None:
         self._cand, self._cand_sym = None, ''
         self.draw_screen()
+
+
+# ───────────────────── резолв в фоновом потоке ─────────────────────
+
+def _resolve(pool: SessionPool, ref: DiffRef, root: str) -> 'list[Target]':
+    session = pool.session_for(ref.rel, ref.text.split('\n', 1)[0])
+    session.wait_ready(READY_WAIT)
+    preview = _previewer(root)
+    targets = (_by_position(session, ref, root, preview)
+               or _by_worktree(session, ref, root, preview))
+    if targets:
+        return targets
+    found = rank_symbols(session.symbols(ref.word), ref.word, ref.rel, root, preview)
+    return found or _by_twin(session, ref, root, preview)
+
+
+def _by_position(session, ref: DiffRef, root: str, preview) -> 'list[Target]':
+    """Точный вопрос: та самая позиция в рабочем дереве."""
+    if ref.side != 'after' or not ref.line:
+        return []
+    path = os.path.join(root, ref.rel)
+    session.open_doc(path, ref.text)
+    character = encode_character(ref.raw, ref.col, session.encoding)
+    result = session.definition(path, ref.line, character)
+    return _targets(result, root, preview)
+
+
+def _by_worktree(session, ref: DiffRef, root: str, preview) -> 'list[Target]':
+    """Просмотр коммита: снимок на экране серверу не показать, зато
+    рабочая версия файла у него уже проиндексирована — если тот же
+    идентификатор есть и в ней, ответ будет точным, а не списком
+    одноимённых символов со всего проекта.
+    """
+    if ref.side != 'symbol':
+        return []
+    path = os.path.join(root, ref.rel)
+    text = read_text(path)
+    found = _locate(text, ref) if text else None
+    if found is None:
+        return []
+    line, col = found
+    return _ask_at(session, path, text, line, col, root, preview)
+
+
+def _locate(text: str, ref: DiffRef) -> 'tuple[int, int] | None':
+    """Где искать символ в рабочей версии файла.
+
+    Рабочее дерево ушло вперёд относительно коммита, поэтому строка с
+    тем же номером — только первое предположение; дальше берём
+    ближайшее к ней вхождение. Простое «первое вхождение в файле»
+    почти всегда попадало бы в строку импорта, а не в место вызова.
+    """
+    lines = text.splitlines()
+    hits = [i for i, line in enumerate(lines, start=1)
+            if find_identifier(line, ref.word) is not None]
+    if not hits:
+        return None
+    best = min(hits, key=lambda i: abs(i - ref.line)) if ref.line else hits[0]
+    found = find_identifier(lines[best - 1], ref.word)
+    return (best, found[1]) if found else None
+
+
+def _by_twin(session, ref: DiffRef, root: str, preview) -> 'list[Target]':
+    """Последняя попытка для удалённой строки: тот же идентификатор
+    почти всегда есть и в новой версии файла — спрашиваем по нему.
+    """
+    if ref.side != 'before':
+        return []
+    found = find_identifier(ref.text, ref.word)
+    if found is None:
+        return []
+    line, col = found
+    return _ask_at(session, os.path.join(root, ref.rel), ref.text, line, col,
+                   root, preview)
+
+
+def _ask_at(session, path: str, text: str, line: int, col: int, root: str,
+            preview) -> 'list[Target]':
+    session.open_doc(path, text)
+    raw = _line_at(text, line) or ''
+    result = session.definition(path, line,
+                                encode_character(raw, col, session.encoding))
+    return _targets(result, root, preview)
+
+
+def _targets(result: object, root: str, preview) -> 'list[Target]':
+    found = [location_target(loc, root, preview) for loc in locations(result)]
+    return prefer_sources(collapse_overloads([t for t in found if t is not None]))
+
+
+def _previewer(root: str):
+    """Строка файла-цели для пикера. Кэш на один запрос: кандидаты
+    часто лежат в одном файле.
+    """
+    cache: 'dict[str, list[str]]' = {}
+
+    def preview(rel: str, line: int) -> str:
+        lines = cache.get(rel)
+        if lines is None:
+            path = rel if os.path.isabs(rel) else os.path.join(root, rel)
+            lines = read_text(path).splitlines()
+            cache[rel] = lines
+        return lines[line - 1].strip() if 0 < line <= len(lines) else ''
+
+    return preview
+
+
+def _line_at(text: str, line: int) -> 'str | None':
+    if line < 1:
+        return None
+    lines = text.splitlines()
+    return lines[line - 1] if line <= len(lines) else None
+
+
+def _mmss(seconds: float) -> str:
+    return f'{int(seconds) // 60}:{int(seconds) % 60:02d}'
+
+
+def _size(nbytes: int) -> str:
+    return f' · {nbytes // (1024 * 1024)} MB' if nbytes >= 1024 * 1024 else ''

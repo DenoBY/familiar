@@ -18,6 +18,26 @@ def short_path(path: str) -> str:
     return path
 
 
+def elide_path(path: str, width: int) -> str:
+    """Длинный путь с выеденной серединой: `/opt/…/stdlib/builtins.pyi`.
+
+    У целей в чужих деревьях (стабы сервера, vendor) осмысленны первые
+    и последние сегменты, а десяток промежуточных только вытесняет с
+    экрана то, ради чего строку и читают.
+    """
+    if len(path) <= width or width <= 0:
+        return path
+    parts = [p for p in path.split('/') if p]
+    root = '/' if path.startswith('/') else ''
+    tail: 'list[str]' = []
+    for part in reversed(parts):
+        candidate = '/'.join([part, *tail])
+        if len(f'{root}…/{candidate}') > width and tail:
+            break
+        tail.insert(0, part)
+    return f'{root}…/' + '/'.join(tail)
+
+
 def plural(n: int, noun: str, many: 'str | None' = None) -> str:
     """«1 line» / «2 lines» — счётчик с англ. множественным числом;
     неправильную форму (match → matches) задаёт many.

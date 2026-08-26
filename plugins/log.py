@@ -645,10 +645,7 @@ class CommitLogHandler(ReviewScreen):
         self.draw_screen()
 
     def on_eot(self) -> None:
-        if self.screen == 'commits':
-            self.quit_loop(0)
-            return
-        super().on_eot()   # в ревью ⌃d — полстраницы вниз
+        super().on_eot()   # ⌃d не закрывает кит ни на одном экране
 
 
 def main(args: list[str]) -> dict:

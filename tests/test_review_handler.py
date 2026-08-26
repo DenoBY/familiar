@@ -1146,11 +1146,13 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.on_key(kittymock.KeyEvent('u', ctrl=True))
         self.assertEqual((self.h.input_buffer, scrolls), ('', []))
 
-    def test_ctrl_u_scrolls_diff_outside_input(self):
+    def test_ctrl_u_does_nothing_outside_input(self):
+        # прокрутка живёт на стрелках и PgUp/PgDn; ⌃u вне ввода — не
+        # вторая клавиша для того же, а просто ничто
         scrolls = []
         self.h.diff_scroll = lambda d: scrolls.append(d)
         self.h.on_key(kittymock.KeyEvent('u', ctrl=True))
-        self.assertEqual(len(scrolls), 1)
+        self.assertEqual(scrolls, [])
 
     def test_ctrl_w_erases_word_and_does_not_leak_to_hotkeys(self):
         self._start_comment()
@@ -1168,11 +1170,19 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.on_text('\x17')
         self.assertEqual(self.h.input_buffer, 'раз ')
 
-    def test_russian_ctrl_u_as_c0_scrolls_outside_input(self):
+    def test_russian_ctrl_u_as_c0_does_nothing_outside_input(self):
         scrolls = []
         self.h.diff_scroll = lambda d: scrolls.append(d)
         self.h.on_text('\x15')
-        self.assertEqual(len(scrolls), 1)
+        self.assertEqual(scrolls, [])
+
+    def test_ctrl_d_neither_scrolls_nor_closes(self):
+        # в терминале ⌃d — «конец ввода»: без перехвата он закрыл бы
+        # оверлей вместе с ненаписанными замечаниями
+        scrolls = []
+        self.h.diff_scroll = lambda d: scrolls.append(d)
+        self.h.on_eot()
+        self.assertEqual((scrolls, self.h.quits), ([], []))
 
     def test_multiline_comment_exported_with_indent(self):
         self._start_comment()

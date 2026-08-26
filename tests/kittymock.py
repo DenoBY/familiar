@@ -252,6 +252,11 @@ def wire(handler, rows=40, cols=120):
     handler.quits = []
     handler.quit_loop = lambda code=0: handler.quits.append(code)
     handler.asyncio_loop = ImmediateLoop()
+    # прогрев поднял бы настоящий language server, если он стоит в
+    # системе: тесты кита должны быть герметичны, а сам прогрев
+    # проверяется отдельно
+    if hasattr(handler, '_lsp_warm'):
+        handler._lsp_warm = lambda: None
     return handler
 
 

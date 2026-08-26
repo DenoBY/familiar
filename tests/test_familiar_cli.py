@@ -4,6 +4,7 @@ import importlib.util
 import io
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -510,3 +511,121 @@ class EndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LspTests(unittest.TestCase):
+    """`familiar lsp`: CLI и кит обязаны видеть один и тот же реестр."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="famlsp_")
+        self._backup = {k: os.environ.get(k)
+                        for k in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME")}
+        os.environ["XDG_CONFIG_HOME"] = os.path.join(self.dir, "config")
+        os.environ["XDG_CACHE_HOME"] = os.path.join(self.dir, "cache")
+        registry, _install = familiar._lsp_modules()
+        registry.reset_cache()
+        self.registry = registry
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+        for key, value in self._backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.registry.reset_cache()
+
+    def test_status_lists_registry_languages(self):
+        out = _run(["lsp", "status"])
+        self.assertIn("php", out)
+        self.assertIn("intelephense", out)
+
+    def test_status_survives_without_any_server(self):
+        out = _run(["lsp", "status"])
+        self.assertIn("familiar lsp install", out)
+
+    def test_status_prints_template_for_unknown_language(self):
+        out = _run(["lsp", "status", "cobol"])
+        self.assertIn("server cobol", out)
+        self.assertIn("extensions", out)
+
+    def test_status_shows_config_paths(self):
+        out = _run(["lsp", "status"])
+        self.assertIn(self.registry.builtin_path(), out)
+        self.assertIn("not present", out)      # пользовательского ещё нет
+
+    def test_cli_and_kitten_share_one_registry(self):
+        # конфиг разбирает общий модуль: две копии разошлись бы молча
+        conf = self.registry.user_path()
+        os.makedirs(os.path.dirname(conf), exist_ok=True)
+        with open(conf, "w") as f:
+            f.write("server cobol\n  extensions .cbl\n  command cobol-ls\n")
+        self.registry.reset_cache()
+        self.assertIn("cobol", _run(["lsp", "status"]))
+        self.assertEqual(self.registry.for_path("x.cbl"), "cobol")
+
+    def test_install_reports_unknown_language(self):
+        self.assertIn("not in the registry", _run(["lsp", "install", "cobol"]))
+
+    def test_install_survives_a_block_without_command(self):
+        # блок в пользовательском конфиге бывает неполным: ставить
+        # нечего, но и падать на пустом argv команда не должна
+        conf = self.registry.user_path()
+        os.makedirs(os.path.dirname(conf), exist_ok=True)
+        with open(conf, "w") as f:
+            f.write("server cobol\n  extensions .cbl\n  install npm cobol-ls\n")
+        self.registry.reset_cache()
+        self.assertIn("not in the registry", _run(["lsp", "install", "cobol"]))
+
+    def test_warm_does_not_call_a_dead_server_indexed(self):
+        # сервер, упавший на старте, возвращает штатный Progress с
+        # 'failed' — «indexed in 0s» на это было бы прямой неправдой
+        from modules.lsp import session as lsp_session
+        original = lsp_session.warm_up
+        lsp_session.warm_up = lambda *a, **kw: lsp_session.Progress(
+            'failed', -1, '', 0.0, 0)
+        try:
+            out = _run(["lsp", "warm", "php"])
+        finally:
+            lsp_session.warm_up = original
+        self.assertNotIn("indexed", out)
+        self.assertIn("php", out)
+
+    def test_clean_without_cache_says_so(self):
+        self.assertIn("nothing to clean", _run(["lsp", "clean", "-y"]))
+
+    def test_clean_removes_indexes(self):
+        indexes = self.registry.index_home()
+        os.makedirs(indexes, exist_ok=True)
+        with open(os.path.join(indexes, "junk.bin"), "wb") as f:
+            f.write(b"x" * 10)
+        _run(["lsp", "clean", "-y"])
+        self.assertFalse(os.path.isdir(indexes))
+
+    def test_clean_keeps_installed_servers(self):
+        # индексы наживаются заново, а серверы ставили отдельной
+        # командой — сносить их никто не просил
+        servers = self.registry.server_home()
+        os.makedirs(os.path.join(servers, "bin"), exist_ok=True)
+        os.makedirs(self.registry.index_home(), exist_ok=True)
+        _run(["lsp", "clean", "-y"])
+        self.assertTrue(os.path.isdir(servers))
+
+    def test_enable_offers_servers_without_asking_when_not_a_tty(self):
+        # без tty вопрос повесил бы и brew test, и CI
+        with tempfile.TemporaryDirectory() as conf:
+            with mock.patch.dict(os.environ, {"KITTY_CONFIG_DIRECTORY": conf}):
+                out = _run(["enable", "review"])
+        self.assertIn("familiar lsp install", out)
+
+    def test_enable_can_skip_the_offer(self):
+        with tempfile.TemporaryDirectory() as conf:
+            with mock.patch.dict(os.environ, {"KITTY_CONFIG_DIRECTORY": conf}):
+                out = _run(["enable", "review", "--no-lsp"])
+        self.assertNotIn("go-to-definition", out)
+
+    def test_session_kitten_alone_gets_no_offer(self):
+        with tempfile.TemporaryDirectory() as conf:
+            with mock.patch.dict(os.environ, {"KITTY_CONFIG_DIRECTORY": conf}):
+                out = _run(["enable", "session"])
+        self.assertNotIn("go-to-definition", out)

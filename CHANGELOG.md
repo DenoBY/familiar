@@ -5,7 +5,71 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.33.0] — 2026-08-27
+
+### Changed
+
+- review, log: go-to-definition now asks a language server instead of grepping
+  the repository. `git grep` only ever saw files git tracks, so a method defined
+  in `vendor/` or `node_modules/` — everything a `.gitignore` hides — simply did
+  not exist for it. It also could not follow inheritance: `$this->belongsTo(...)`
+  is declared in a trait several classes up, and `->withTrashed()` after it needs
+  the return type of the previous call. A language server knows both.
+- review, log: a definition outside the repository (a framework class in
+  `vendor/`, a module in the standard library) now opens read-only by its
+  absolute path; `⌃o` comes back as before.
+- log: browsing a commit resolves against the working-tree version of the file,
+  matching what the server has indexed — the snapshot on screen is never fed to
+  it, since that would poison its cache. The working tree has usually moved on,
+  so the search starts at the line you clicked and takes the nearest occurrence
+  from there, rather than the first one in the file (which is almost always an
+  import). If the file is gone from the working tree, a project-wide symbol
+  search takes over.
+- log: jumping into a file that the commit does not contain — anything under
+  `vendor/` or otherwise ignored by git — now shows it from disk instead of an
+  empty pane.
+- review, log: `⌃u` / `⌃d` no longer scroll the diff by half a page, and `⌃d`
+  no longer quits log from the commit list. `⌃d` is "end of input" in a terminal,
+  so a stray press cost a screenful of comments that were never written; outside
+  the input line both keys are now inert, and inside it `⌃u` still erases the
+  text. Scrolling is `PgUp` / `PgDn` and the arrows.
+
+### Added
+
+- `familiar lsp` — `status` (what is configured and found, plus a registry block
+  to copy for a language that is missing), `install LANG`, `warm LANG` (index a
+  project up front, with live progress) and `clean` (drop cached indexes,
+  keeping the servers).
+- A language registry in `config/lsp.conf`, covering 27 languages out of the
+  box. It merges three levels — built-in, `~/.config/familiar/lsp.conf` and
+  `<repo>/.familiar/lsp.conf` — so a language is added, replaced or switched off
+  by editing a block, without touching any Python. Files with no extension (`bin/familiar`,
+  git hooks) are recognised by their shebang.
+- The footer shows indexing progress while a server is still working: a
+  percentage when the server reports one, otherwise elapsed time and the growing
+  index cache. It sits at the start of the line and in its own colour — in the
+  grey run of key hints it went unnoticed — and stays hidden for the first
+  second, so a warm start does not make it blink.
+- The picker no longer lists inexact name matches when exact ones exist. A click
+  on a class used to offer the class itself plus whatever the server's own stubs
+  fuzzy-matched; now the single real definition opens straight away. Overloads
+  declared next to each other (six `@overload` for `getattr` in typeshed) count
+  as one target, a stub (`.pyi`, `.d.ts`) is dropped when the module's real
+  source is among the answers, and long paths are elided in the middle so the
+  line of code stays on screen. A digit that names no candidate leaves the list
+  alone — only a click outside it, or `Esc`, closes it.
+- `familiar enable review` (or `log`) offers to install the servers you are
+  missing; `--no-lsp` skips the offer.
+- Servers are started with a `PATH` that includes the usual Homebrew and
+  toolchain locations. kitty launched from the Dock inherits the bare system
+  `PATH`, and npm-based servers are `#!/usr/bin/env node` scripts — without this
+  they die before saying a word.
+
+### Removed
+
+- The grep-based resolver. Languages that have no server configured no longer
+  get the rough keyword search they used to fall back on — `familiar lsp status
+  LANG` prints a block to add one.
 
 ### Fixed
 

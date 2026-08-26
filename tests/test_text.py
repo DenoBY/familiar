@@ -101,3 +101,25 @@ class TestWrapWords(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestElidePath(unittest.TestCase):
+    def test_short_path_untouched(self):
+        self.assertEqual(T.elide_path('/a/b.py', 40), '/a/b.py')
+
+    def test_middle_is_eaten(self):
+        long = ('/opt/homebrew/Cellar/pyright/1.1.413/libexec/lib/node_modules/'
+                'pyright/dist/typeshed-fallback/stdlib/builtins.pyi')
+        got = T.elide_path(long, 34)
+        self.assertTrue(got.startswith('/…/'), got)
+        self.assertTrue(got.endswith('builtins.pyi'), got)
+        self.assertLessEqual(len(got), 34)
+
+    def test_last_segment_survives_even_if_too_long(self):
+        got = T.elide_path('/very/deep/tree/with_a_really_long_file_name.py', 10)
+        self.assertTrue(got.endswith('with_a_really_long_file_name.py'))
+
+    def test_relative_path_keeps_no_leading_slash(self):
+        got = T.elide_path('a/b/c/d/e/f/g/file.py', 12)
+        self.assertFalse(got.startswith('/'))
+        self.assertTrue(got.endswith('file.py'))

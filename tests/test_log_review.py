@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import unittest
 
+from lspmock import FakePool, FakeSession, loc, sym
+
 import kittymock  # noqa: F401
 import log as L
 from kittymock import run_threads_inline, wire
@@ -128,10 +130,87 @@ class CommitReviewTest(unittest.TestCase):
         self.open_head('app.py')
         di = next(i for i, p in enumerate(self.h.diff_plain) if 'helper()' in p)
         self.h.diff_cur = di
-        self.h.goto_definition('helper', is_call=True)
+        col = self.h.diff_plain[di].index('helper')
+        session = FakeSession(syms={'helper': [sym('helper',
+                                                   os.path.join(self.repo, 'lib.py'),
+                                                   0)]})
+        self.h._lsp = FakePool(session)
+        self.h.goto_definition(self.h._doc_ref(di, col))
         cur = self.h.current_item()
         self.assertEqual((cur or {}).get('path') or self.h._external, 'lib.py')
+        # показанное содержимое — из коммита, а не из рабочего дерева
         self.assertIn('return 2', self.h.diff_after)
+
+    def test_commit_view_feeds_the_working_tree_not_the_snapshot(self):
+        # текст из истории не совпадает с индексом сервера: подсунуть
+        # его — испортить кэш. Зато рабочая версия файла у сервера уже
+        # разобрана, и по ней можно спросить точно
+        run_threads_inline(self)
+        self.open_head('app.py')
+        di = next(i for i, p in enumerate(self.h.diff_plain) if 'helper()' in p)
+        col = self.h.diff_plain[di].index('helper')
+        session = FakeSession(defs={('app.py', 5): [loc(
+            os.path.join(self.repo, 'lib.py'), 0)]})
+        self.h._lsp = FakePool(session)
+        self.assertEqual(self.h._doc_ref(di, col).side, 'symbol')
+        self.h.goto_definition(self.h._doc_ref(di, col))
+        self.assertEqual(session.opened[0][0], 'app.py')
+        with open(os.path.join(self.repo, 'app.py')) as f:
+            self.assertEqual(session.opened[0][1], f.read())
+        shown = self.h._external or self.h.current_item()['path']
+        self.assertEqual(shown, 'lib.py')
+
+    def test_locate_prefers_the_occurrence_near_the_shown_line(self):
+        # рабочее дерево ушло вперёд: строка сдвинулась, но искать
+        # надо рядом с ней, а не в первой попавшейся строке импорта
+        from modules.vcs.goto import DiffRef, _locate
+        text = ('from lib import helper\n'      # 1 — импорт
+                'x = 1\n'
+                'y = helper()\n'                # 3
+                'z = 2\n'
+                'w = helper()\n')               # 5
+        ref = DiffRef('app.py', 'symbol', 5, 0, 'helper', '', text)
+        self.assertEqual(_locate(text, ref)[0], 5)
+        self.assertEqual(_locate(text, ref._replace(line=3))[0], 3)
+        self.assertEqual(_locate(text, ref._replace(line=99))[0], 5)
+
+    def test_jump_into_a_gitignored_file_shows_it_from_disk(self):
+        # vendor/ в снимок коммита не попадает: без чтения с диска
+        # вместо кода показалось бы «(empty file)»
+        run_threads_inline(self)
+        os.makedirs(os.path.join(self.repo, 'vendor'), exist_ok=True)
+        self.write('vendor/stub.py', 'class Stringable:\n    pass\n')
+        self.write('.gitignore', 'vendor/\n')
+        self.open_head('app.py')
+        di = next(i for i, p in enumerate(self.h.diff_plain) if 'helper()' in p)
+        col = self.h.diff_plain[di].index('helper')
+        session = FakeSession(syms={'helper': [sym('helper', os.path.join(
+            self.repo, 'vendor/stub.py'), 0)]})
+        self.h._lsp = FakePool(session)
+        self.h.goto_definition(self.h._doc_ref(di, col))
+        self.assertEqual(self.h._external, 'vendor/stub.py')
+        self.assertIn('class Stringable', self.h.diff_after)
+
+    def test_commit_view_falls_back_to_symbols_for_a_vanished_file(self):
+        # файла в рабочем дереве больше нет — спрашивать по позиции
+        # не о чем, остаётся поиск по имени
+        run_threads_inline(self)
+        self.open_head('app.py')
+        di = next(i for i, p in enumerate(self.h.diff_plain) if 'helper()' in p)
+        col = self.h.diff_plain[di].index('helper')
+        os.remove(os.path.join(self.repo, 'app.py'))
+        session = FakeSession(syms={'helper': [sym('helper', os.path.join(
+            self.repo, 'lib.py'), 0)]})
+        self.h._lsp = FakePool(session)
+        self.h.goto_definition(self.h._doc_ref(di, col))
+        self.assertEqual(session.asked, [], 'по позиции спрашивать было нечего')
+        shown = self.h._external or self.h.current_item()['path']
+        self.assertEqual(shown, 'lib.py')
+
+    def test_ctrl_d_does_not_close_the_commit_list(self):
+        # раньше на списке коммитов ⌃d работал как EOF и закрывал кит
+        self.h.on_eot()
+        self.assertEqual(self.h.quits, [])
 
     def test_find_in_files_searches_the_commit(self):
         self.h.sel = 0

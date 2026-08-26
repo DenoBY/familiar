@@ -25,8 +25,8 @@ from .editor import editor_command
 from .find import FIND_MIN, FindInFilesMixin
 from .git import last_error
 from .goto import ALT_MOD, GotoDefinitionMixin
-from .navdef import word_span
 from .source import Source
+from .symbols import word_span
 from .view import SHIFT_MOD, DiffTreeView
 
 
@@ -255,8 +255,12 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         self._draw_input_line()
         danger = self._pending_active()
         foot_fg = 'red' if danger else ('green' if self.flash else 'gray')
-        self.print(styled(truncate(self._footer(), cols), fg=foot_fg, bold=danger),
-                   end='')
+        # индикатор индексации — слева и своим цветом: в сером хвосте
+        # подсказок его не замечали
+        badge = self._lsp_badge()
+        foot = truncate(self._footer(), cols - len(badge))
+        self.print(styled(badge, fg='yellow', bold=True)
+                   + styled(foot, fg=foot_fg, bold=danger), end='')
         self.flash = ''
 
     def _footer(self) -> str:
@@ -376,7 +380,7 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
             if not getattr(key_event, 'text', ''):
                 self._cancel_pending()
             return
-        for letter in ('c', 'w', 'u', 'o', 'd'):
+        for letter in ('c', 'w', 'u', 'o', 'd'):   # 'u' и 'w' — правка ввода
             if chord(key_event, 'ctrl', letter):
                 if self._ctrl_key(letter):
                     return
@@ -456,10 +460,9 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
                 self.nav_back()
             return True
         if letter == 'd':
-            self.diff_scroll(self.visible_rows() // 2)
-            return True
-        if letter == 'u':
-            self.diff_scroll(-(self.visible_rows() // 2))
+            # ⌃d глотаем: в терминале это «конец ввода», и без
+            # перехвата случайное нажатие закрыло бы оверлей вместе с
+            # ненаписанными замечаниями. Скроллят стрелки и PgUp/PgDn
             return True
         return False
 
@@ -541,10 +544,15 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
     def _on_mouse(self, ev) -> None:
         press = getattr(ev, 'type', None) == MouseEventType.PRESS
         left = bool(ev.buttons & MouseButton.LEFT)
-        # пикер открыт — клик выбирает кандидата (строки списка с 2-й)
+        # пикер открыт — клик по строке списка (он идёт со 2-й) выбирает
+        # кандидата, клик мимо закрывает
         if self._cand is not None:
             if press and left:
-                self._pick(ev.cell_y - 2)
+                n = ev.cell_y - 2
+                if 0 <= n < min(9, len(self._cand)):
+                    self._pick(n)
+                else:
+                    self._close_picker()
             return
         # ⇧/⌥+ЛКМ по дереву — метка файла; ⌥ в диффе — go-to-definition,
         # ⇧ в диффе падает в базовый drag-select. press глотаем при
@@ -569,9 +577,9 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         self.quit_loop(0)
 
     def on_eot(self) -> None:
-        # Ctrl+D — скролл диффа на полстраницы вниз, а НЕ закрытие
-        # оверлея.
-        self.diff_scroll(self.visible_rows() // 2)
+        """⌃d гасим: в терминале это «конец ввода», и закрывать им
+        оверлей нельзя — ненаписанные замечания дороже.
+        """
 
 
 def run_screen(handler) -> dict:

@@ -63,10 +63,13 @@ class OverlayHandler(ConfirmQuit, AtomicDraw, InputLine, DragSelect,
         """
         def runner() -> None:
             result = work()
+            loop = getattr(self, 'asyncio_loop', None)
+            if loop is None:
+                return     # цикла уже нет — показывать результат некому
             try:
-                self.asyncio_loop.call_soon_threadsafe(done, result)
+                loop.call_soon_threadsafe(done, result)
             except RuntimeError:
-                pass   # кит уже закрыт — показывать результат некому
+                pass       # кит уже закрыт
 
         threading.Thread(target=runner, daemon=True).start()
 
