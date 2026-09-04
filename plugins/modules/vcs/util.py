@@ -43,6 +43,14 @@ def is_noise(rel: str) -> bool:
     return any(part in NOISE_DIRS for part in rel.split('/'))
 
 
+def is_noise_dir(name: str) -> bool:
+    """Имя папки-артефакта. В отличие от is_noise принимает имя, а не
+    путь, поэтому и корневые артефакты (vendor, dist) считает шумом:
+    у скана подпапок пути ещё нет, а спускаться в них незачем.
+    """
+    return name in NOISE_DIRS or name in NOISE_ROOTS
+
+
 def compose(segments: list[tuple[str, dict]], width: int) -> str:
     """Собрать строку из цветных сегментов ровно шириной width."""
     out, used = '', 0

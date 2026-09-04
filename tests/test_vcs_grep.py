@@ -3,7 +3,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import kittymock  # noqa: F401
 from modules.vcs import grep as G
@@ -105,8 +104,7 @@ class SearchFilesTest(unittest.TestCase):
 
     def test_truncated_at_cap(self):
         self.write('many.txt', 'beta\n' * 10)
-        with patch.object(G, 'MAX_MATCHES', 3):
-            items, truncated = G.search_files(self.repo, 'beta')
+        items, truncated = G.search_files(self.repo, 'beta', limit=3)
         self.assertTrue(truncated)
         self.assertEqual(sum(len(it['lines']) for it in items), 3)
 

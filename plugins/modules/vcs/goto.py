@@ -33,7 +33,7 @@ from ..lsp.position import (
 from ..lsp.rpc import RpcError
 from ..lsp.session import NoServer, SessionPool
 from ..text import elide_path, short_path, truncate
-from .diff import DiffSource, group_key
+from .diff import DiffSource, group_key, repo_key
 from .git import read_text
 from .symbols import find_identifier, symbol_at, word_span
 
@@ -89,7 +89,9 @@ class GotoDefinitionMixin:
         self._cand: 'list[Target] | None' = None
         self._cand_sym = ''
         self._goto_busy = False
-        self._lsp: 'SessionPool | None' = None
+        # пул на репозиторий: у независимых репозиториев свои корни,
+        # и один сервер индексировал бы чужой проект
+        self._lsp_pools: 'dict[str, SessionPool]' = {}
         self._warm_timer = None
         self._badge_timer = None
         self._badge_at = 0.0
@@ -97,9 +99,14 @@ class GotoDefinitionMixin:
     # --- сессии ---
 
     def _lsp_pool(self) -> SessionPool:
-        if self._lsp is None:
-            self._lsp = SessionPool(self.root or os.getcwd(), self._lsp_progress)
-        return self._lsp
+        """Пул для показанного сейчас репозитория; поднимается лениво —
+        открыли файлы в двух репозиториях, работают два, а не все.
+        """
+        root = self.root or os.getcwd()
+        pool = self._lsp_pools.get(root)
+        if pool is None:
+            pool = self._lsp_pools[root] = SessionPool(root, self._lsp_progress)
+        return pool
 
     def load_diff(self) -> None:
         super().load_diff()
@@ -178,9 +185,7 @@ class GotoDefinitionMixin:
         Рисуется отдельно от футера и своим цветом: в общем сером
         хвосте подсказок индикатор терялся.
         """
-        if self._lsp is None:
-            return ''
-        for session in self._lsp.active():
+        for session in [s for pool in self._lsp_pools.values() for s in pool.active()]:
             state = session.status()
             if state.state in ('ready', 'failed') or state.elapsed < BADGE_DELAY:
                 continue
@@ -198,8 +203,9 @@ class GotoDefinitionMixin:
             if timer is not None:
                 timer.cancel()
         self._warm_timer = self._badge_timer = None
-        if self._lsp is not None:
-            self._lsp.stop_all()
+        for pool in self._lsp_pools.values():
+            pool.stop_all()
+        self._lsp_pools = {}
 
     # --- что под курсором ---
 
@@ -319,11 +325,11 @@ class GotoDefinitionMixin:
         """Куда вернуться после прыжка к определению (⌃o) или выхода
         из поиска по проекту.
         """
-        return {'external': self._external, 'tsel': self.tsel,
-                'diff_offset': self.diff_offset, 'diff_cur': self.diff_cur,
-                'view_mode': self.view_mode, 'hscroll': self.hscroll,
-                'left_offset': self.left_offset, 'focus': self.focus,
-                'collapsed': set(self.collapsed)}
+        return {'external': self._external, 'repo': self.view_repo,
+                'tsel': self.tsel, 'diff_offset': self.diff_offset,
+                'diff_cur': self.diff_cur, 'view_mode': self.view_mode,
+                'hscroll': self.hscroll, 'left_offset': self.left_offset,
+                'focus': self.focus, 'collapsed': set(self.collapsed)}
 
     def _restore_view(self, s: dict) -> None:
         """Обратная к _capture_view; дерево перестраивает сама.
@@ -337,7 +343,7 @@ class GotoDefinitionMixin:
         self.view_mode = s.get('view_mode', 'diff')
         self.rebuild_tree()
         if s.get('external'):
-            self._show_file(s['external'], 0)
+            self._show_file(s['external'], 0, s.get('repo'))
         else:
             self._external = None
             self.set_tsel(s.get('tsel', 0))
@@ -352,12 +358,13 @@ class GotoDefinitionMixin:
 
     # --- переход ---
 
-    def _reveal_file(self, rel: str) -> None:
+    def _reveal_file(self, rel: str, repo: 'str | None') -> None:
         # раскрыть свёрнутых предков, чтобы файл появился строкой дерева
-        it = next((x for x in self.filtered if x['path'] == rel), None)
+        it = self._item_at(rel, repo)
         if it is None:
             return
-        prefix = group_key(it['group']) if it.get('group') else ''
+        base = repo_key(repo) if repo else ''
+        prefix = group_key(it['group'], base) if it.get('group') else base
         if prefix:
             self.collapsed.discard(prefix)
         key = prefix
@@ -366,19 +373,32 @@ class GotoDefinitionMixin:
             self.collapsed.discard(key)
         self.rebuild_tree()
 
-    def _tree_row_for(self, rel: str) -> 'int | None':
+    def _item_at(self, rel: str, repo: 'str | None') -> 'dict | None':
+        """Файл в дереве: в мультирепо одноимённый есть и у соседа,
+        а цель пришла от сервера, поднятого на своём репозитории.
+        """
+        return next((x for x in self.filtered
+                     if x['path'] == rel and x.get('repo') == repo), None)
+
+    def _tree_row_for(self, rel: str, repo: 'str | None') -> 'int | None':
         for i, r in enumerate(self.rows):
-            if r['type'] == 'file' and self.filtered[r['idx']]['path'] == rel:
+            it = self.filtered[r['idx']] if r['type'] == 'file' else None
+            if it is not None and it['path'] == rel and it.get('repo') == repo:
                 return i
         return None
 
-    def _navigate(self, target: Target) -> None:
+    def _navigate(self, target: Target, repo: 'str | None' = None) -> None:
+        """Открыть цель во вьюере. repo — её репозиторий; по умолчанию
+        тот же, что у показанного файла (определение живёт в своём
+        проекте, а Find in Files ведёт и к соседу).
+        """
         self._navstack.append(self._capture_view())
-        in_view = any(x['path'] == target.path for x in self.filtered)
+        if repo is None:
+            repo = self.view_repo
         row = None
-        if in_view:
-            self._reveal_file(target.path)
-            row = self._tree_row_for(target.path)
+        if self._item_at(target.path, repo) is not None:
+            self._reveal_file(target.path, repo)
+            row = self._tree_row_for(target.path, repo)
         if row is not None:
             self._external = None
             self.set_tsel(row)
@@ -392,13 +412,16 @@ class GotoDefinitionMixin:
                 self.build_diff_rows()
             self._center_on_line(target.line)
         else:
-            self._show_file(target.path, target.line)
+            self._show_file(target.path, target.line, repo)
         self.flash = f'{short_path(target.path)}:{target.line}'
         self.draw_screen()
 
-    def _show_file(self, rel: str, line: int) -> None:
-        text = self._read_target(rel)
+    def _show_file(self, rel: str, line: int, repo: 'str | None' = None) -> None:
+        text = self._read_target(rel, repo)
         self._external = rel
+        # правая панель ушла в чужой репозиторий: редактор и language
+        # server должны идти туда же, а элемента дерева тут нет
+        self.view_repo = repo
         self.diff_before = self.diff_after = text
         self.diff_ext = os.path.splitext(rel)[1].lower()
         self.diff_src = DiffSource(text, text)
@@ -410,7 +433,7 @@ class GotoDefinitionMixin:
         self.focus = 'diff'
         self._center_on_line(line)
 
-    def _read_target(self, rel: str) -> str:
+    def _read_target(self, rel: str, repo: 'str | None' = None) -> str:
         """Содержимое файла, в который прыгнули.
 
         Вне репозитория (stdlib) путь абсолютный — source про такой
@@ -421,8 +444,9 @@ class GotoDefinitionMixin:
         """
         if os.path.isabs(rel):
             return read_text(rel)
-        text = self.source.read(rel)
-        return text or read_text(os.path.join(self.root, rel))
+        text = self.source.read(rel, repo)
+        root = repo or self.root
+        return text or (read_text(os.path.join(root, rel)) if root else '')
 
     def nav_back(self) -> None:
         if not self._navstack:

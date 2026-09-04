@@ -11,6 +11,7 @@ import unittest
 import kittymock  # noqa: F401
 import review as R
 from kittymock import wire
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -55,7 +56,7 @@ class StickyGeometryTest(unittest.TestCase):
             edited[idx] = '    CHANGED\n'
         self.write('a.py', ''.join(edited))
 
-        self.h = R.ReviewHandler([], self.repo, self.repo)
+        self.h = R.ReviewHandler([], Workspace.single(self.repo))
         wire(self.h, rows=20, cols=120)
         self.h.load_source()
 

@@ -9,6 +9,7 @@ blob'ов и парсеры `git diff --name-status`/`--numstat`,
 
 import os
 import subprocess
+import threading
 from typing import Iterator
 
 
@@ -18,43 +19,45 @@ from typing import Iterator
 # создавали index.lock и не дрались за него с IDE в том же репозитории.
 GIT_ENV = {**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
 
-_last_error = ''
+# Ошибка своя у каждого потока: веер по репозиториям и фоновые
+# fetch/push идут параллельно с вызовами главного потока, и один
+# общий канал они бы затирали друг другу.
+_state = threading.local()
 
 
 def last_error() -> str:
-    """stderr последнего неудачного вызова git; иначе пусто.
+    """stderr последнего неудачного вызова git в этом потоке; иначе
+    пусто.
 
     Для хендлеров: «список пуст из-за ошибки git» (index.lock,
     битый репозиторий) иначе неотличим от честного «изменений нет».
     """
-    return _last_error
+    return getattr(_state, 'err', '')
 
 
 def set_error(msg: str) -> None:
     """Сообщить об ошибке не от git (например, os.remove) через тот
     же канал, что и сбои git.
     """
-    global _last_error
-    _last_error = msg
+    _state.err = msg
 
 
 def run_git(root: str, *args: str, binary: bool = False,
             timeout: int = 8) -> 'str | bytes | None':
-    global _last_error
     try:
         out = subprocess.run(['git', '-C', root, *args], capture_output=True,
                              timeout=timeout, stdin=subprocess.DEVNULL, env=GIT_ENV)
     except (OSError, subprocess.SubprocessError) as e:
-        _last_error = str(e)
+        _state.err = str(e)
         return None
     if out.returncode != 0:
         err = out.stderr.decode('utf-8', 'replace').strip()
         # тихие пробы (--verify -q) падают без stderr —
         # прежнюю ошибку не затираем
         if err:
-            _last_error = err.splitlines()[0]
+            _state.err = err.splitlines()[0]
         return None
-    _last_error = ''
+    _state.err = ''
     return out.stdout if binary else out.stdout.decode('utf-8', 'replace')
 
 
@@ -87,13 +90,12 @@ def git_lines(root: str, *args: str) -> 'Iterator[str]':
     прочитать, решает потребитель, и на обрыве git убивается.
     Ошибку кладёт в last_error(), как run_git.
     """
-    global _last_error
     try:
         proc = subprocess.Popen(['git', '-C', root, *args], stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                                 env=GIT_ENV)
     except OSError as e:
-        _last_error = str(e)
+        _state.err = str(e)
         return
     done = False
     try:
@@ -112,7 +114,7 @@ def git_lines(root: str, *args: str) -> 'Iterator[str]':
             proc.kill()
         # убитый нами git не ошибка: ненулевой код у него от SIGKILL
         if done and err and proc.returncode != 0:
-            _last_error = err.splitlines()[0]
+            _state.err = err.splitlines()[0]
 
 
 def git_root(cwd: str) -> 'str | None':
@@ -122,6 +124,17 @@ def git_root(cwd: str) -> 'str | None':
 
 def has_head(root: str) -> bool:
     return run_git(root, 'rev-parse', '--verify', '-q', 'HEAD', timeout=5) is not None
+
+
+def current_branch(root: str) -> str:
+    """Имя ветки; при detached HEAD — короткий sha (как показывает
+    сам git в приглашении).
+    """
+    out = run_git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD', timeout=5)
+    if out and out.strip():
+        return out.strip()
+    out = run_git(root, 'rev-parse', '--short', 'HEAD', timeout=5)
+    return out.strip() if out else ''
 
 
 # Пустое дерево git — родитель корневого коммита (у которого нет `^`)

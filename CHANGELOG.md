@@ -5,6 +5,63 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.34.0] — 2026-09-04
+
+### Added
+
+- review, log: a folder that holds several independent repositories is no longer
+  a dead end. Opening either kitten from `~/Projects/yr` used to say
+  `not a git repository`, because both asked git for the root of the current
+  directory and got nothing. They now scan the folder two levels deep and work
+  with everything they find.
+- review: repositories become the top level of the tree — each with its branch,
+  its file count and its own `+N −M`. Staging, reverting, diffs, comments and
+  marks all address the repository the file belongs to, so two files with the
+  same relative path in different repositories never get confused for one
+  another. Copied `@path` mentions carry the repository prefix
+  (`@api/src/main.go`), which is what Claude Code needs to open them from the
+  folder the kitten was launched in.
+- log: commits of every repository merge into one feed ordered by time, with the
+  repository name and the age of the commit in their own columns. Scrolling down
+  only ever appends: a repository loaded up to some date cannot inject older
+  commits into what you have already read. `f` fetches every repository at once
+  and names the ones that failed; `p` still pushes a single repository — the one
+  the selected commit belongs to.
+- review: `b` compares the working tree with the branch you diverged from, so a
+  branch's whole work — what is already committed and what is not — reads as one
+  diff. The base is `origin/HEAD`, otherwise `main`/`master`/`develop`; on the
+  base branch itself the kitten says there is nothing to compare with. In a
+  folder of repositories every repository uses its own base, and the ones
+  sitting on it keep showing their working tree. Staging and reverting are held
+  back while comparing — `b` returns to the working tree.
+- review, log: `R` focuses a single repository — the tree collapses to it, the
+  feed narrows to its commits and the branch graph comes back (across
+  repositories there is no shared history to draw). `Esc` releases the focus,
+  `0` in the menu returns to all of them. In an ordinary repository `R` still
+  means refresh.
+- review: Find in Files searches every repository in view, with its own match
+  budget for each so that one noisy repository cannot use up the whole cap.
+  Go-to-definition starts a language server per repository, lazily — only for
+  the ones whose files you actually open.
+
+### Fixed
+
+- review, log: `<?php` is no longer greyed out like a comment. Pygments files the
+  tag under its `Comment` branch (so do `#include` and `#define` in C), and the
+  comment colour read as "this line does nothing" — such lines are now coloured as
+  the code they are.
+- log: the details panel no longer pushes the header off the screen. A merge
+  commit made with conflicts carries tabs in its message body (`# Conflicts:`),
+  and a tab is one character to count but eight columns to draw — the panel line
+  overflowed, the frame grew taller than the window and scrolled the header away,
+  leaving the tail of the wrapped line behind. Tabs now become four spaces, as
+  they already do in the diff.
+- git errors are now kept per thread. A background `fetch` could overwrite the
+  error of a command running in the foreground, and the wrong reason would be
+  shown for an empty list. Each per-repository scan now carries its own error out
+  of its thread, so a folder of clean repositories says "no changes" instead of
+  the stale `not a git repository` left behind by the probe of the folder itself.
+
 ## [0.33.0] — 2026-08-27
 
 ### Changed

@@ -12,6 +12,7 @@ from kittymock import EventType, MouseButton, MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key, is_code_row
 from modules.vcs.editor import editor_command
 from modules.vcs.source import UNVERSIONED
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -19,6 +20,16 @@ _ENV = {
     'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@e',
     'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull,
 }
+
+
+def _marked(h) -> set:
+    """Пути помеченных файлов: сами метки хранятся ключами
+    (репозиторий, путь)."""
+    return {rel for _repo, rel in h.marked}
+
+
+def _selected(h) -> list:
+    return [it['path'] for it in h._selected_items()]
 
 
 class ReviewHandlerTest(unittest.TestCase):
@@ -38,7 +49,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('dir/sub.txt', 'sub edited\n')
         self.write('new.txt', 'brand new\n')
 
-        self.h = R.ReviewHandler([], self.repo, self.repo)
+        self.h = R.ReviewHandler([], Workspace.single(self.repo))
         wire(self.h, rows=40, cols=120)
         self.h.load_source()
 
@@ -128,7 +139,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('dir/second.txt', 'правка\n')
         self.h.refresh()
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
-        self.assertEqual(sorted(self.h._selected_paths()),
+        self.assertEqual(sorted(_selected(self.h)),
                          ['dir/second.txt', 'dir/sub.txt'])
         self.h.stage_selected()
         st = self._status()
@@ -138,7 +149,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('another.txt', 'ещё\n')
         self.h.refresh()
         self._select_row(lambda r: r.get('group_root'))
-        self.assertEqual(sorted(self.h._selected_paths()), ['another.txt', 'new.txt'])
+        self.assertEqual(sorted(_selected(self.h)), ['another.txt', 'new.txt'])
         self.h.stage_selected()
         st = self._status()
         self.assertEqual((st['new.txt'], st['another.txt']), ('A ', 'A '))
@@ -147,13 +158,13 @@ class ReviewHandlerTest(unittest.TestCase):
         self.write('node_modules/junk.js', 'x\n')
         self.h.refresh()
         self._select_row(lambda r: r.get('group_root'))
-        self.assertNotIn('node_modules/junk.js', self.h._selected_paths())
+        self.assertNotIn('node_modules/junk.js', _selected(self.h))
 
     def test_already_staged_file_offers_nothing(self):
         self._select_file('new.txt')
         self.h.stage_selected()
         self._select_file('new.txt')
-        self.assertEqual(self.h._selected_paths(), [])
+        self.assertEqual(_selected(self.h), [])
         self.h.out = []
         self.h.draw_screen()
         self.assertNotIn('+ stage', draw_text(self.h))
@@ -166,10 +177,10 @@ class ReviewHandlerTest(unittest.TestCase):
 
     def test_folder_offers_stage_only_while_it_holds_unstaged_files(self):
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
-        self.assertEqual(self.h._selected_paths(), ['dir/sub.txt'])
+        self.assertEqual(_selected(self.h), ['dir/sub.txt'])
         self.h.stage_selected()
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
-        self.assertEqual(self.h._selected_paths(), [])
+        self.assertEqual(_selected(self.h), [])
 
     def test_folder_inside_group_does_not_grab_namesake_outside(self):
         self.write('dir/fresh.txt', 'новый в отслеживаемой папке\n')
@@ -179,7 +190,7 @@ class ReviewHandlerTest(unittest.TestCase):
                   if r['type'] == 'dir' and r['name'] == 'dir' and r.get('group')]
         self.assertEqual(len(inside), 1)
         self.h.tsel = self.h.rows.index(inside[0])
-        self.assertEqual(self.h._selected_paths(), ['dir/fresh.txt'])
+        self.assertEqual(_selected(self.h), ['dir/fresh.txt'])
 
     # --- метки / множественный выбор файлов ---
 
@@ -218,9 +229,9 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tsel = big
         self.h.load_diff()
         self._alt_click(sub)
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'dir/sub.txt'})
         self._alt_click(big)
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
 
     def test_alt_click_adds_to_active_selection_without_moving_cursor(self):
         # ⌥+клик по другому файлу даёт ДВА выделения: активный файл
@@ -230,7 +241,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.load_diff()
         sub = self._file_row('sub.txt')
         self._alt_click(sub)
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'dir/sub.txt'})
         self.assertEqual(self.h.tsel, big)
         self.assertTrue(self.h._row_highlight(big))
         self.assertTrue(self.h._row_highlight(sub))
@@ -241,7 +252,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.load_diff()
         self._alt_click(self._file_row('sub.txt'))
         self._alt_click(big)   # снять активный файл из выборки
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
         self.assertFalse(self.h._row_highlight(big))
 
     def test_alt_click_on_last_mark_is_a_noop(self):
@@ -252,7 +263,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self._alt_click(sub)
         self._alt_click(big)   # осталась одна метка — sub
         self._alt_click(sub)   # последнюю метку клик не снимает
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
         self.assertEqual(self.h.tsel, big)
         self.assertTrue(self.h._row_highlight(sub))
 
@@ -261,7 +272,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'dir/sub.txt'})
         self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
 
     def test_second_shift_click_chains_the_range(self):
@@ -270,50 +281,50 @@ class ReviewHandlerTest(unittest.TestCase):
         self._shift_click(self._file_row('big.txt'))
         self._expand_unversioned()
         self._shift_click(self._file_row('new.txt'))
-        self.assertEqual(self.h.marked_paths,
+        self.assertEqual(_marked(self.h),
                          {'dir/sub.txt', 'big.txt', 'new.txt'})
 
     def test_alt_click_on_folder_marks_all_its_files(self):
         di = next(i for i, r in enumerate(self.h.rows)
                   if r['type'] == 'dir' and r['name'] == 'dir')
         self._alt_click(di)
-        self.assertIn('dir/sub.txt', self.h.marked_paths)
+        self.assertIn('dir/sub.txt', _marked(self.h))
 
     def test_shift_click_back_toward_anchor_drops_the_tail(self):
         self._expand_unversioned()
         self.h.tsel = self._file_row('sub.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('new.txt'))
-        self.assertEqual(self.h.marked_paths,
+        self.assertEqual(_marked(self.h),
                          {'dir/sub.txt', 'big.txt', 'new.txt'})
         self._shift_click(self._file_row('big.txt'))   # ближе к якорю
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt', 'big.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt', 'big.txt'})
         self._shift_click(self._file_row('sub.txt'))   # в сам якорь
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
 
     def test_shift_click_below_after_ranging_up_drops_the_upper_range(self):
         self._expand_unversioned()
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))   # вверх от якоря
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'dir/sub.txt'})
         self._shift_click(self._file_row('new.txt'))   # вниз через якорь
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'new.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'new.txt'})
 
     def test_shift_up_after_shift_down_unmarks_the_left_row(self):
         self.h.tsel = self._file_row('sub.txt')
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt', 'big.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt', 'big.txt'})
         self.h.on_key(kittymock.KeyEvent('UP', shift=True))
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
 
     def test_shift_down_paints_a_range_of_two_files(self):
         self.h.tsel = self.h._first_file()
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
-        self.assertEqual(len(self.h.marked_paths), 2)
-        self.assertIn(self.h.current_item()['path'], self.h.marked_paths)
+        self.assertEqual(len(_marked(self.h)), 2)
+        self.assertIn(self.h.current_item()['path'], _marked(self.h))
 
     def test_shift_up_skips_the_expanded_dir_and_stops_at_the_edge(self):
         # выше sub только развёрнутая папка — шаг вверх упирается в
@@ -323,7 +334,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('UP', shift=True))
         self.assertEqual(self.h.tsel, sub)
-        self.assertEqual(self.h.marked_paths, set())
+        self.assertEqual(_marked(self.h), set())
 
     def test_cursor_on_dir_row_is_highlighted_without_marks(self):
         d = next(i for i, r in enumerate(self.h.rows)
@@ -337,7 +348,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'new.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'new.txt'})
         self.assertEqual(self.h.rows[self.h.tsel]['name'], 'new.txt')
 
     def test_shift_range_over_collapsed_group_marks_its_files(self):
@@ -346,39 +357,39 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self.h.on_key(kittymock.KeyEvent('DOWN', shift=True))
-        self.assertIn('new.txt', self.h.marked_paths)
+        self.assertIn('new.txt', _marked(self.h))
 
     def test_shift_click_on_marked_file_keeps_marks(self):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))   # помечены оба
         self._shift_click(self._file_row('sub.txt'))   # ⇧ не снимает
-        self.assertEqual(self.h.marked_paths, {'big.txt', 'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'big.txt', 'dir/sub.txt'})
 
     def test_alt_click_unmarks_from_afar_without_moving_cursor(self):
         self.h.tsel = self._file_row('big.txt')
         self.h.load_diff()
         self._shift_click(self._file_row('sub.txt'))   # курсор на sub
         self._alt_click(self._file_row('big.txt'))     # снять big издалека
-        self.assertEqual(self.h.marked_paths, {'dir/sub.txt'})
+        self.assertEqual(_marked(self.h), {'dir/sub.txt'})
         self.assertEqual(self.h.tsel, self._file_row('sub.txt'))
 
     def test_plain_click_clears_marks(self):
         self._alt_click(self._file_row('big.txt'))
-        self.assertTrue(self.h.marked_paths)
+        self.assertTrue(_marked(self.h))
         self._plain_click(self._file_row('sub.txt'))   # без ⌥ — навигация
-        self.assertEqual(self.h.marked_paths, set())
+        self.assertEqual(_marked(self.h), set())
 
     def test_plain_arrow_navigation_clears_marks(self):
         self._alt_click(self._file_row('big.txt'))
-        self.assertTrue(self.h.marked_paths)
+        self.assertTrue(_marked(self.h))
         self.h.on_key(kittymock.KeyEvent('DOWN'))   # без Shift — навигация
-        self.assertEqual(self.h.marked_paths, set())
+        self.assertEqual(_marked(self.h), set())
 
     def test_escape_clears_marks_before_offering_to_quit(self):
         self._alt_click(self._file_row('big.txt'))
         self.h.on_key(kittymock.KeyEvent('ESCAPE'))
-        self.assertEqual(self.h.marked_paths, set())
+        self.assertEqual(_marked(self.h), set())
 
     def test_copy_without_marks_falls_back_to_single_path(self):
         self._select_file('big.txt')
@@ -443,8 +454,7 @@ class ReviewHandlerTest(unittest.TestCase):
 
     def test_revert_of_folder_takes_all_its_files(self):
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
-        tracked, untracked = self.h._revert_targets()
-        self.assertEqual((tracked, untracked), (['dir/sub.txt'], []))
+        self.assertEqual(self.h._revert_targets(), {self.repo: (['dir/sub.txt'], [])})
 
     # --- навигация ---
 
@@ -816,7 +826,7 @@ class ReviewHandlerTest(unittest.TestCase):
     def test_git_error_shown_when_scan_fails(self):
         d = tempfile.mkdtemp(prefix='ccrev_notrepo_')
         try:
-            self.h.root = d
+            self.h.ws = self.h.source.ws = Workspace(d, [])
             self.h.load_source()
             self.assertEqual(self.h.items, [])
             self.assertIn('not a git repository', self.h.status)
@@ -962,8 +972,8 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.set_focus('diff')
         self.h.diff_cur = 15                                 # строка «line CHANGED»
         self.h.start_comment()
-        self.assertEqual(self.h.comment_target[1], 16)       # номер строки нового файла
-        self.assertEqual(self.h.comment_target[2], 'line CHANGED')
+        self.assertEqual(self.h.comment_target[2], 16)       # номер строки нового файла
+        self.assertEqual(self.h.comment_target[3], 'line CHANGED')
 
     def test_expand_is_noop_in_final_view(self):
         self._select_file('big.txt')
@@ -1020,7 +1030,7 @@ class ReviewHandlerTest(unittest.TestCase):
         self.h.input_buffer = 'нужен рефактор'
         self.h.commit_input()
         self.assertEqual(len(self.h.annots), 1)
-        (rel, line), v = next(iter(self.h.annots.items()))
+        (_repo, rel, line), v = next(iter(self.h.annots.items()))
         self.assertEqual(v['text'], 'нужен рефактор')
 
         self.h.out = []
@@ -1257,7 +1267,7 @@ class YankTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self.h = R.ReviewHandler([], '/repo', '/repo')
+        self.h = R.ReviewHandler([], Workspace.single('/repo'))
         wire(self.h, rows=40, cols=120)
         # минимально имитируем выбранный файл a/b.py и загруженный дифф
         self.h.filtered = [{'path': 'a/b.py', 'kind': 'modified',

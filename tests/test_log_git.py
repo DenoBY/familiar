@@ -67,6 +67,17 @@ class LogGitTest(unittest.TestCase):
 
     # --- load_commits ---
 
+    def test_body_and_subject_come_without_tabs(self):
+        # тело merge-коммита с конфликтами содержит табы: в терминале
+        # таб — восемь колонок, а длину строки код считает в символах
+        self._git('commit', '--allow-empty', '-m',
+                  "Merge branch 'x'\n\n# Conflicts:\n\tsrc/app/Basket.php\n")
+        c = G.load_commits(self.repo, limit=1)[0]
+        d = G.commit_detail(self.repo, c['sha'])
+        self.assertNotIn('\t', d['body'])
+        self.assertIn('    src/app/Basket.php', d['body'])
+        self.assertNotIn('\t', c['subject'])
+
     def test_load_commits_current_branch(self):
         cs = G.load_commits(self.repo)
         subjects = [c['subject'] for c in cs]

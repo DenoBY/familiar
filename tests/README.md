@@ -49,6 +49,11 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_sessions_transcript.py` | `modules.session.transcript`: tool labels, `⎿` output, edit diffs, plans, folding, widths |
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |
+| `test_review_base.py` | comparing with the base branch on a **real temporary repository**: finding the base (`origin/HEAD`, on the base branch itself), `scan_range` (committed + uncommitted + untracked), the `b` toggle, diff against the divergence point, staging and reverting held back |
+| `test_vcs_workspace.py` | the workspace layer on **real temporary repositories**: discovery two levels deep (noise, hidden folders, nested repos, depth, limit, symlink loops), single vs multi, `rel_prefix`, `map_repos` (order, a failing worker), `by_repo`. Also holds the shared `MultiRepoCase` fixture |
+| `test_review_multirepo.py` | review over a folder of repositories: repository nodes (branch, counts, totals), Unversioned inside a repository, identical paths in two repositories (marks, `@path`, diffs), stage/revert per repository, `R` focus, Find in Files across repositories, comment prefixes |
+| `test_log_multi.py` | merging commit feeds `modules.log.multi`: order by time, the cutoff rule (an unfinished feed holds back older commits), growth only appends, `page_size`, `relative_age` |
+| `test_log_multirepo.py` | log over a folder of repositories: one feed ordered by time, graph off (and back under focus), repository column, filter by repository name, `f` fetching every repository, `p` targeting the selected commit's repository |
 | `test_vcs_grep.py` | the Find in Files `git grep` layer against a **real temporary repository**: smart-case, regex mode and its errors, untracked/ignored/binary files, the match cap |
 | `test_review_find.py` | review's Find in Files mode: enter/exit with state restore, live query with debounce, tree with match counts, match navigation, regex toggle, read-only guards, open in editor |
 | `test_result_handlers.py` | `handle_result` of the kittens — building the remote-control command (the kitty-process side) |

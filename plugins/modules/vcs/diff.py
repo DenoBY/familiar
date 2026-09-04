@@ -567,10 +567,51 @@ def _new_node() -> dict:
     return {'dirs': {}, 'files': [], 'count': 0}
 
 
-def build_tree(items: list[dict], collapsed: set) -> list[dict]:
+def build_tree(items: list[dict], collapsed: set, repos: 'list | None' = None,
+               branches: 'dict[str, str] | None' = None) -> list[dict]:
     """items (с полем 'path') → плоский список строк дерева
     (dir/file) со сворачиванием; элементы с полем 'group' — под
     одноимённый узел в конце дерева.
+
+    repos (список Repo) добавляет сверху уровень репозиториев:
+    каждый со своей секцией. Без него — одно дерево, как при
+    единственном репозитории.
+    """
+    if repos is None:
+        return _build_section(items, list(range(len(items))), collapsed, 0, '', None)
+    rows = []
+    for repo in repos:
+        idxs = [i for i, it in enumerate(items) if it.get('repo') == repo.root]
+        if not idxs:
+            continue    # репозиторий без видимых изменений узла не занимает
+        key = repo_key(repo.root)
+        is_collapsed = key in collapsed
+        rows.append({'type': 'dir', 'depth': 0, 'name': repo.name, 'key': key,
+                     'dir': None, 'count': len(idxs), 'collapsed': is_collapsed,
+                     'group': None, 'repo': repo.root, 'repo_root': True,
+                     'branch': (branches or {}).get(repo.root, ''),
+                     'stat': _sum_stat(items, idxs)})
+        if not is_collapsed:
+            rows += _build_section(items, idxs, collapsed, 1, key, repo.root)
+    return rows
+
+
+def _sum_stat(items: list[dict], idxs: list[int]) -> tuple[int, int]:
+    """+N/−M по репозиторию. Считаем по тем же видимым элементам, из
+    которых собрано дерево, — иначе цифра разошлась бы с фильтром.
+    """
+    added = deleted = 0
+    for i in idxs:
+        stat = items[i].get('stat') or (0, 0)
+        added += stat[0] or 0
+        deleted += stat[1] or 0
+    return added, deleted
+
+
+def _build_section(items: list[dict], idxs: list[int], collapsed: set, depth: int,
+                   keybase: str, repo: 'str | None') -> list[dict]:
+    """Секция дерева: папки и файлы одного репозитория (или всё
+    сразу, когда репозиторий один).
 
     У строки-папки 'key' (ключ сворачивания) и 'dir' (путь на
     диске) расходятся: у узла группы пути нет, а ключи её подпапок
@@ -580,7 +621,8 @@ def build_tree(items: list[dict], collapsed: set) -> list[dict]:
     """
     plain = _new_node()
     groups: dict[str, dict] = {}
-    for idx, it in enumerate(items):
+    for idx in idxs:
+        it = items[idx]
         group = it.get('group')
         node = plain if group is None else groups.setdefault(group, _new_node())
         parts = it['path'].split('/')
@@ -599,29 +641,43 @@ def build_tree(items: list[dict], collapsed: set) -> list[dict]:
             is_collapsed = key in collapsed
             rows.append({'type': 'dir', 'depth': depth, 'name': name,
                          'key': key, 'dir': path, 'count': child['count'],
-                         'collapsed': is_collapsed, 'group': group})
+                         'collapsed': is_collapsed, 'group': group, 'repo': repo})
             if not is_collapsed:
                 walk(child, depth + 1, key, path, group)
         for fname, idx in sorted(node['files']):
             rows.append({'type': 'file', 'depth': depth, 'name': fname,
                          'idx': idx, 'kind': items[idx]['kind'],
                          'stat': items[idx].get('stat'),
-                         'matches': items[idx].get('matches')})
+                         'matches': items[idx].get('matches'), 'repo': repo})
 
-    walk(plain, 0, '', '', None)
+    walk(plain, depth, keybase, '', None)
     for name in sorted(groups):
-        key = group_key(name)
+        key = group_key(name, keybase)
         is_collapsed = key in collapsed
-        rows.append({'type': 'dir', 'depth': 0, 'name': name, 'key': key,
+        rows.append({'type': 'dir', 'depth': depth, 'name': name, 'key': key,
                      'dir': None, 'count': groups[name]['count'],
-                     'collapsed': is_collapsed, 'group': name, 'group_root': True})
+                     'collapsed': is_collapsed, 'group': name, 'repo': repo,
+                     'group_root': True})
         if not is_collapsed:
-            walk(groups[name], 1, key, '', name)
+            walk(groups[name], depth + 1, key, '', name)
     return rows
 
 
-def group_key(name: str) -> str:
-    """Ключ сворачивания узла-группы. Слэш в начале не может
-    встретиться у ключа реальной папки (rel-пути относительные).
+def repo_key(root: str) -> str:
+    """Ключ сворачивания узла репозитория. Двойной слэш в начале не
+    встречается у ключа папки: пути относительные.
     """
-    return f'/{name}'
+    return f'//{root}'
+
+
+def group_key(name: str, parent: str = '') -> str:
+    """Ключ сворачивания узла-группы; parent — ключ узла репозитория,
+    если группа внутри него.
+
+    Двойной слэш именно перед именем: у ключа реальной папки пустых
+    компонент нет, а одного слэша хватало только вне секции
+    репозитория — внутри неё ключ папки строится так же, из ключа
+    предка и имени, и папка «Unversioned Files» схлопывалась бы
+    вместе с группой.
+    """
+    return f'{parent}//{name}'

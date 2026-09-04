@@ -23,6 +23,7 @@ from modules.lsp.rpc import RpcError
 from modules.lsp.session import NoServer, Progress
 from modules.vcs.diff import gutter_width
 from modules.vcs.goto import ALT_MOD
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -69,7 +70,7 @@ class GotoDefinitionTest(unittest.TestCase):
         self.write('dupa.py', 'def dup_def():\n    return 30\n')
         self.write('far.py', '\n'.join(far[:-1] + ['b19 = 999']) + '\n')
 
-        self.h = R.ReviewHandler([], self.repo, self.repo)
+        self.h = R.ReviewHandler([], Workspace.single(self.repo))
         wire(self.h, rows=40, cols=120)
         self.h.load_source()
 
@@ -105,8 +106,15 @@ class GotoDefinitionTest(unittest.TestCase):
 
     def lsp(self, **kw):
         session = FakeSession(**kw)
-        self.h._lsp = FakePool(session)
+        self.use_pool(FakePool(session))
         return session
+
+    def use_pool(self, pool):
+        """Пул поднимается по репозиторию показанного файла — подменяем
+        его для текущего."""
+        self.pool = pool
+        self.h._lsp_pools = {self.h.root or os.getcwd(): pool}
+        return pool
 
     def row_with(self, text, sign=None):
         gut = self.h._gutter_cols()
@@ -233,8 +241,8 @@ class GotoDefinitionTest(unittest.TestCase):
 
     def test_missing_server_names_the_command(self):
         self._select('changed.py')
-        self.h._lsp = FakePool(raises=NoServer('x not installed — run: '
-                                               'familiar lsp install python'))
+        self.use_pool(FakePool(raises=NoServer('x not installed — run: '
+                                               'familiar lsp install python')))
         self.goto('unique_def', sign='+')
         self.assertIn('familiar lsp install python', draw_text(self.h))
 
@@ -403,7 +411,7 @@ class GotoDefinitionTest(unittest.TestCase):
         self._select('tool')
         session = self.lsp()
         self.goto('helper')
-        self.assertEqual(self.h._lsp.asked_for[1], '#!/usr/bin/env python3')
+        self.assertEqual(self.pool.asked_for[1], '#!/usr/bin/env python3')
         self.assertEqual(session.opened[0][0], 'tool')
 
     def test_load_diff_warms_the_server(self):
@@ -417,14 +425,14 @@ class GotoDefinitionTest(unittest.TestCase):
     def test_warm_failure_is_silent(self):
         # язык без сервера — обычное дело, шуметь об этом не нужно
         del self.h._lsp_warm
-        self.h._lsp = FakePool(raises=NoServer('nope'))
+        self.use_pool(FakePool(raises=NoServer('nope')))
         self._select('changed.py')
         self.assertNotIn('nope', draw_text(self.h))
 
     def test_finalize_stops_servers(self):
         self.lsp()
         self.h.finalize()
-        self.assertTrue(self.h._lsp.stopped)
+        self.assertTrue(self.pool.stopped)
 
     # --- мышь ---
 

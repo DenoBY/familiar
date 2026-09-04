@@ -7,6 +7,7 @@ import unittest
 import kittymock  # noqa: F401
 import review as R
 from kittymock import KeyEvent, draw_text, wire
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -34,7 +35,7 @@ class ReviewFindModeTest(unittest.TestCase):
         self.write('docs/readme.md', 'needle in docs\nedited\n')
         self.write('notes.txt', 'needle untracked\n')
 
-        self.h = R.ReviewHandler([], self.repo, self.repo)
+        self.h = R.ReviewHandler([], Workspace.single(self.repo))
         wire(self.h, rows=40, cols=120)
         self.h.load_source()
 
@@ -272,6 +273,18 @@ class ReviewFindModeTest(unittest.TestCase):
         self.assertEqual(self.h.diff_lineno[self.h.diff_cur], 5)
         self.h.nav_back()                # ⌃o — назад в ревью
         self.assertIsNone(self.h._external)
+
+    def test_base_toggle_blocked_over_a_read_only_file(self):
+        # вид read-only, а b пересобрал бы дерево и дифф под ним
+        self.enter_find('needle')
+        self.h.input_key('ENTER')
+        self._select_file('app.py')      # в ревью не изменён
+        self.h.set_focus('diff')
+        self.h.on_key(KeyEvent(key='ENTER'))
+        self.assertEqual(self.h._external, 'app.py')
+        self.h.on_text('b')
+        self.assertFalse(self.h.source.vs_base)
+        self.assertIn('read-only (external file)', draw_text(self.h))
 
     def test_open_editor_terminal_at_match_line(self):
         os.environ['EDITOR'] = 'vim'

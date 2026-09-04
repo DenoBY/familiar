@@ -86,6 +86,11 @@ C_ERROR = _P['error']
 # достаточно перечислить только те роли, что отличаются от родителя.
 _TOKEN_COLOR = {
     'Token.Comment': C_COMMENT,
+    # <?php, #include, #define: у Pygments это ветка Comment, но код
+    # это исполняемый, и серый цвет комментария на нём читается как
+    # «строка ничего не делает»
+    'Token.Comment.Preproc': C_KEYWORD,
+    'Token.Comment.PreprocFile': C_STRING,
     'Token.Literal.String': C_STRING,
     'Token.Literal.String.Doc': C_DOC,
     'Token.Literal.String.Escape': C_KWCONST,

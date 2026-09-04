@@ -20,6 +20,7 @@ log — kitten для kitty.
 
 import os
 import sys
+import time
 
 from kittens.tui.handler import Handler, result_handler
 from kittens.tui.loop import MouseButton
@@ -35,18 +36,18 @@ from modules.log.git import (
     commit_detail,
     display_refs,
     fetch,
-    load_commits,
     push,
     push_target,
     unpushed_shas,
 )
 from modules.log.graph import NODE, build_graph
+from modules.log.multi import extend_feeds, load_feeds, merge_feeds, page_size, relative_age
 from modules.overlay import mark_overlay, restore_layout
 from modules.text import pad, plural, short_path, truncate, wrap_text
-from modules.vcs.git import git_root, last_error
 from modules.vcs.screen import ReviewScreen, apply_result, run_screen
 from modules.vcs.source import CommitSource, EmptySource
 from modules.vcs.util import compose
+from modules.vcs.workspace import Workspace, map_repos, open_workspace
 
 
 BATCH = 300   # сколько коммитов тянем за раз (докрутка подгружает следующую пачку)
@@ -70,40 +71,71 @@ _UNPUSHED_COLOR = 77
 
 _AUTHOR_W = 12   # фикс-колонка автора (справа) — чтобы строки выравнивались
 _DATE_W = 15     # фикс-колонка даты (справа)
+_REPO_W = 14     # потолок колонки имени репозитория в общей ленте
+_AGE_W = 4       # возраст коммита там же (2h, 4d, 3mo)
+_MERGE_W = 2     # колонка значка мержа — своя, иначе съезжает хеш
+
+
+def _fetch_report(results: list) -> str:
+    """Итог веера fetch. Неудачные репозитории называем поимённо:
+    молчаливое «fetched» на упавшей удалёнке хуже списка того, что не
+    вышло.
+    """
+    failed = [repo.name or 'repository' for repo, err, exc in results if err or exc]
+    done = len(results) - len(failed)
+    if failed and not done:
+        return 'fetch failed'
+    if failed:
+        return f'fetched {done}, failed: {", ".join(failed)}'
+    return 'fetched' if len(results) == 1 else f'fetched {done} repositories'
+
+
+def _commit_root(c: dict, ws: Workspace) -> str:
+    return c.get('repo') or ws.single_root or ws.base
+
+
+def _commit_key(c: dict) -> tuple:
+    """Коммит как ключ: в мультирепо один sha ничего не значит без
+    репозитория."""
+    return c.get('repo'), c['sha']
 
 
 class CommitLogHandler(ReviewScreen):
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close log?'
 
-    def __init__(self, args: list[str], root: 'str | None') -> None:
-        super().__init__(root, EmptySource(root))
+    def __init__(self, args: list[str], ws: Workspace) -> None:
+        super().__init__(ws, EmptySource(ws))
         self.cli_args = args
         self.screen = 'commits'          # 'commits' → список; 'diff' → ревью коммита
         self.all_branches = False        # режим: HEAD (текущая ветка) ↔ все ветки (--all)
         self.all_commits: list[dict] = []
         self.commits: list[dict] = []
         self.graph: list[dict] = []      # раскладка лейнов графа для self.commits
-        self.unpushed: set[str] = set()
+        self.unpushed: dict[str, set[str]] = {}   # незапушенные sha по репозиторию
+        self.feeds: list = []                     # ленты коммитов по репозиториям
+        self._cols_cache: 'tuple[int, int] | None' = None
         self.show_graph = True           # рисовать граф веток слева (тумблер g)
         self.show_detail = True          # панель подробностей коммита справа (тумблер i)
-        self._detail_cache: dict[str, dict] = {}   # ленивая подгрузка commit_detail
+        # ленивая подгрузка commit_detail, ключ (репозиторий, sha)
+        self._detail_cache: dict[tuple, dict] = {}
         self._detail_later = None        # таймер отложенной подгрузки
         self._fetching = False
         self._pushing = False
-        # (ветка, upstream|None, коммитов), ждёт «y»
-        self.pending_push: 'tuple[str, str | None, int] | None' = None
+        # (репозиторий, ветка, upstream|None, коммитов), ждёт «y»
+        self.pending_push: 'tuple[str, str, str | None, int] | None' = None
         self.exhausted = False
         self.sel = 0
         self.offset = 0
         self.commit: 'dict | None' = None
         self.commit_filter = ''          # фильтр списка коммитов (не дерева файлов)
-        self._annots_sha = ''            # к какому коммиту относятся комментарии
+        self._annots_sha = ()            # к какому коммиту относятся комментарии
 
     # --- жизненный цикл ---
 
     def load_state(self) -> None:
         self.reload_commits()
+        self.note_truncation()
 
     # --- хуки экрана ревью ---
 
@@ -116,7 +148,7 @@ class CommitLogHandler(ReviewScreen):
         if self._external:
             header += f'   ▸ {self._external} (read-only)'
         elif cur:
-            header += f'   ▸ {cur["path"]}'
+            header += f'   ▸ {self._copy_rel(cur["path"], cur.get("repo"))}'
         return header
 
     def _annot_title(self) -> str:
@@ -139,17 +171,19 @@ class CommitLogHandler(ReviewScreen):
         return self.pending_push is not None
 
     def _pending_prompt(self) -> str:
-        branch, up, n = self.pending_push
+        root, branch, up, n = self.pending_push
         dest = up or f'origin/{branch} (new branch)'
-        return f' push {plural(n, "commit")} to {dest}?   y — yes   any other key — no'
+        whose = f' from {self.ws.name_of(root)}' if self.ws.multi else ''
+        return (f' push {plural(n, "commit")}{whose} to {dest}?'
+                f'   y — yes   any other key — no')
 
     def _confirm_pending(self) -> None:
-        branch, up, _ = self.pending_push
+        root, branch, up, _ = self.pending_push
         self.pending_push = None
         self._pushing = True
         self.draw_screen()
         # сеть — как и fetch, уводим в фоновый поток, иначе UI замёрзнет
-        self.run_background(lambda: push(self.root, branch, up is not None), self._push_done)
+        self.run_background(lambda: push(root, branch, up is not None), self._push_done)
 
     def _cancel_pending(self) -> None:
         if self.pending_push is None:
@@ -161,42 +195,77 @@ class CommitLogHandler(ReviewScreen):
     # --- список коммитов ---
 
     def reload_commits(self) -> None:
-        if not self.root:
+        repos = self.active_repos()
+        if not repos:
             self.status = 'not a git repository'
             self.all_commits = self.commits = []
-            self.unpushed = set()
+            self.unpushed = {}
             return
-        self.unpushed = unpushed_shas(self.root)
-        self.all_commits = load_commits(self.root, self.all_branches, BATCH)
-        self.exhausted = len(self.all_commits) < BATCH
+        # счётчики соседей не трогаем: в фокусе загружен один
+        # репозиторий, а меню показывает ↑N по всем
+        for r, shas, _err in map_repos(repos, lambda r: unpushed_shas(r.root)):
+            self.unpushed[r.root] = shas or set()
+        self.feeds, error = load_feeds(repos, self.all_branches, self._page())
+        self._merge_feeds()
         # пустая история из-за ошибки git — показать её, а не
         # «no commits»
-        self.status = '' if self.all_commits else (last_error() or 'no commits')
+        self.status = '' if self.all_commits else (error or 'no commits')
         self.rebuild_commits()
+
+    def _page(self) -> int:
+        return page_size(len(self.active_repos()), BATCH)
+
+    def _merge_feeds(self) -> None:
+        self.all_commits, self.exhausted = merge_feeds(self.feeds)
+        self._cols_cache = None
 
     def load_more(self) -> None:
         if self.exhausted or self.commit_filter:
             return
-        more = load_commits(self.root, self.all_branches, BATCH, len(self.all_commits))
-        if len(more) < BATCH:
-            self.exhausted = True
-        if more:
-            self.all_commits.extend(more)
+        before = len(self.all_commits)
+        self.feeds = extend_feeds(self.feeds, self.all_branches, self._page())
+        self._merge_feeds()
+        if len(self.all_commits) != before:
             self.rebuild_commits()
 
     def rebuild_commits(self) -> None:
         q = self.commit_filter.lower()
         if q:
-            self.commits = [c for c in self.all_commits
-                            if q in c['subject'].lower() or q in c['short'].lower()
-                            or q in c['author'].lower()]
+            self.commits = [c for c in self.all_commits if self._commit_matches(c, q)]
         else:
             self.commits = list(self.all_commits)
-        self.graph = build_graph(self.commits)
+        # граф лейнов строится по одной истории: поверх нескольких
+        # репозиториев общего DAG нет
+        self.graph = build_graph(self.commits) if self._graph_ready() else []
         self.sel = min(self.sel, max(0, len(self.commits) - 1))
         self._schedule_detail()
 
+    def _commit_matches(self, c: dict, q: str) -> bool:
+        return (q in c['subject'].lower() or q in c['short'].lower()
+                or q in c['author'].lower() or q in c.get('repo_name', '').lower())
+
+    def _is_unpushed(self, c: dict) -> bool:
+        return c['sha'] in self.unpushed.get(_commit_root(c, self.ws), ())
+
+    @property
+    def merged_feed(self) -> bool:
+        """Показана ли общая лента нескольких репозиториев: у неё своя
+        строка (имя репозитория и возраст) и нет графа — общего DAG
+        поверх независимых историй не существует.
+
+        Фильтр списка сюда не входит: он оставляет от истории
+        произвольный кусок, и лейны по нему легли бы мимо.
+        """
+        return self.ws.multi and not self.repo_focus
+
+    def _graph_ready(self) -> bool:
+        return not self.merged_feed
+
     def toggle_graph(self) -> None:
+        if not self._graph_ready():
+            self.flash = 'graph needs a single repo (R)'
+            self.draw_screen()
+            return
         self.show_graph = not self.show_graph
         self.draw_screen()
 
@@ -205,8 +274,7 @@ class CommitLogHandler(ReviewScreen):
         пробелами до ширины gw.
         """
         cells = self.graph[i]['cells'] if i < len(self.graph) else []
-        unpushed = (i < len(self.commits)
-                    and self.commits[i]['sha'] in self.unpushed)
+        unpushed = i < len(self.commits) and self._is_unpushed(self.commits[i])
         out = ''
         for glyph, color in cells:
             if glyph == ' ':
@@ -231,34 +299,45 @@ class CommitLogHandler(ReviewScreen):
         Ctrl+C замёрзнут), поэтому работа уходит в фоновый поток, а
         результат возвращается в event loop.
         """
-        if not self.root or self._fetching:
+        repos = self.active_repos()
+        if not repos or self._fetching:
             return
         self._fetching = True
         self.draw_screen()
-        self.run_background(lambda: fetch(self.root), self._fetch_done)
+        self.run_background(lambda: map_repos(repos, lambda r: fetch(r.root)),
+                            self._fetch_done)
 
-    def _fetch_done(self, err: 'str | None') -> None:
+    def _fetch_done(self, results: list) -> None:
         self._fetching = False
         self._detail_cache = {}          # ветки/содержимое могли измениться
         self.sel = 0
         self.offset = 0
         self.reload_commits()
-        self.flash = 'fetched' if err is None else 'fetch failed'
+        self.flash = _fetch_report(results)
         self.draw_screen()
 
     def start_push(self) -> None:
         """Спросить подтверждение: push публикует коммиты в удалёнку,
         промах по клавише не должен этого делать.
         """
-        if not self.root or self._pushing or self._fetching:
+        root = self._selected_root()
+        if not root or self._pushing or self._fetching:
             return
-        target = push_target(self.root)
+        target = push_target(root)
         if target is None:
             self.flash = 'nothing to push'
             self.draw_screen()
             return
-        self.pending_push = target
+        self.pending_push = (root, *target)
         self.draw_screen()
+
+    def _selected_root(self) -> 'str | None':
+        """Репозиторий выбранного коммита: push публикует историю, и
+        гадать, чью именно, нельзя.
+        """
+        if self.commits and 0 <= self.sel < len(self.commits):
+            return _commit_root(self.commits[self.sel], self.ws)
+        return self.root
 
     def _push_done(self, err: 'str | None') -> None:
         self._pushing = False
@@ -289,18 +368,43 @@ class CommitLogHandler(ReviewScreen):
         c = self.commits[self.sel]
         # комментарии принадлежат разобранному коммиту: перенести их на
         # чужие строки было бы хуже, чем честно сказать, что их нет
-        if self.annots and self._annots_sha != c['sha']:
+        if self.annots and self._annots_sha != _commit_key(c):
             self.annots = {}
             self.flash = 'comments cleared (another commit)'
-        self._annots_sha = c['sha']
+        self._annots_sha = _commit_key(c)
         self.commit = c
         self.screen = 'diff'
-        self.set_source(CommitSource(self.root, c['sha']))
+        # у коммита всегда один репозиторий — экран ревью про
+        # мультирепо ничего не знает; база рабочей области прежняя,
+        # иначе @-ссылки потеряли бы имя репозитория в пути
+        self.set_source(CommitSource(self.ws.sub(_commit_root(c, self.ws)), c['sha']))
         self.draw_screen()
+
+    def _repo_focus_changed(self) -> None:
+        if self.screen != 'commits':
+            super()._repo_focus_changed()
+            return
+        self.sel = 0
+        self.offset = 0
+        self.reload_commits()
+        self.draw_screen()
+
+    def _repo_summary(self, repo) -> str:
+        unpushed = len(self.unpushed.get(repo.root, ()))
+        mark = f'↑{unpushed}' if unpushed else ''
+        if self.repo_focus and repo.root != self.repo_focus:
+            # история соседей сейчас не загружена: «0 commits» сказало
+            # бы не то, что есть на самом деле
+            return mark
+        n = sum(1 for c in self.all_commits if c.get('repo') == repo.root)
+        return f'{plural(n, "commit")}' + (f'   {mark}' if mark else '')
 
     def back_to_commits(self) -> None:
         self.screen = 'commits'
         self.commit = None
+        # источник коммита держал один репозиторий: оставь его — и
+        # список коммитов считал бы себя однорепозиторным (R, футер)
+        self.set_source(EmptySource(self.ws))
         self.draw_screen()
 
     # --- отрисовка ---
@@ -310,6 +414,9 @@ class CommitLogHandler(ReviewScreen):
             super()._draw_frame()
             return
         if self.draw_quit_confirm():
+            return
+        if self._repo_menu is not None:
+            self.draw_repo_menu()
             return
         self.cmd.clear_screen()
         self._draw_commits()
@@ -322,11 +429,11 @@ class CommitLogHandler(ReviewScreen):
 
     def _draw_commits(self) -> None:
         cols = self.screen_size.cols
-        mode = 'all branches' if self.all_branches else 'current branch'
+        mode = self._commits_mode()
         # «+» — загружена лишь пачка (BATCH), докрутка подтянет ещё:
         # иначе счётчик читается как «в ветке всего столько коммитов»
         more = '' if self.exhausted else '+'
-        header = f' {short_path(self.root or os.getcwd())} · {mode} ({len(self.commits)}'
+        header = f' {self._commits_scope()} · {mode} ({len(self.commits)}'
         header += (f'/{len(self.all_commits)}{more})' if self.commit_filter
                    else f'{more})')
         self.print(styled(truncate(header, cols), fg='green', bold=True))
@@ -365,6 +472,19 @@ class CommitLogHandler(ReviewScreen):
             else:
                 self.print(left)
 
+    def _commits_mode(self) -> str:
+        if self.all_branches:
+            return 'all branches'
+        return 'current branches' if len(self.active_repos()) > 1 else 'current branch'
+
+    def _commits_scope(self) -> str:
+        base = short_path(self.ws.base)
+        if self.repo_focus:
+            return f'{base} › {self.focus_name()}'
+        if self.ws.multi:
+            return f'{base} · {plural(len(self.ws.repos), "repo")}'
+        return base
+
     def _schedule_detail(self) -> None:
         """Подтянуть подробности выбранного коммита, когда прокрутка
         утихнет.
@@ -380,14 +500,15 @@ class CommitLogHandler(ReviewScreen):
             self._detail_later = None
         if not self.commits or not (0 <= self.sel < len(self.commits)):
             return
-        sha = self.commits[self.sel]['sha']
-        if sha not in self._detail_cache:
+        c = self.commits[self.sel]
+        if _commit_key(c) not in self._detail_cache:
             self._detail_later = self.asyncio_loop.call_later(
-                DETAIL_DELAY, self._load_detail, sha)
+                DETAIL_DELAY, self._load_detail, c)
 
-    def _load_detail(self, sha: str) -> None:
+    def _load_detail(self, c: dict) -> None:
         self._detail_later = None
-        self._detail_cache[sha] = commit_detail(self.root, sha)
+        self._detail_cache[_commit_key(c)] = commit_detail(_commit_root(c, self.ws),
+                                                           c['sha'])
         self.draw_screen()
 
     def _detail_lines_brief(self, c: dict, width: int) -> list[str]:
@@ -409,7 +530,7 @@ class CommitLogHandler(ReviewScreen):
         if not self.commits or not (0 <= self.sel < len(self.commits)):
             return []
         c = self.commits[self.sel]
-        d = self._detail_cache.get(c['sha'])
+        d = self._detail_cache.get(_commit_key(c))
         if d is None:
             return self._detail_lines_brief(c, width)
         out = []
@@ -433,7 +554,51 @@ class CommitLogHandler(ReviewScreen):
                 out.append(styled(truncate('  ' + b, width), fg='gray'))
         return out
 
+    def _multi_commit_row(self, c: dict, width: int, selected: bool) -> str:
+        """Строка ленты нескольких репозиториев: слева имя репозитория
+        и возраст — абсолютная дата в фикс-колонке съела бы место, а
+        сравнивают здесь именно свежесть.
+
+        Все колонки фиксированной ширины, значок мержа — своя: припиши
+        его к хешу, и на строках мержа съехала бы вся таблица.
+        """
+        repo_w, sha_w = self._columns()
+        name = f'{truncate(c.get("repo_name", ""), repo_w):<{repo_w}}'
+        badge = f'{"⑂" if c.get("merge") else "":<{_MERGE_W}}'
+        sha = f'{c["short"]:<{sha_w}}'
+        age = f'{truncate(relative_age(c["ts"], time.time()), _AGE_W):>{_AGE_W}}'
+        head = f'{name}  {badge}{sha}  {age}  '
+        subject = truncate(c['subject'], max(1, width - len(head)))
+        if selected:
+            return styled(pad(head + subject, width), reverse=True)
+        segs = [(f'{name}  ', self._repo_style(c)), (badge, {'fg': 'magenta'}),
+                (f'{sha}  ', {'fg': 'cyan'}), (f'{age}  ', {'fg': 'gray'}),
+                (subject, {})]
+        return compose(segs, width)
+
+    def _columns(self) -> tuple[int, int]:
+        """Ширина колонок имени репозитория и хеша: git отдаёт хеш
+        минимальной уникальной длины, и она гуляет от репозитория к
+        репозиторию.
+        """
+        if self._cols_cache is None:
+            names = [r.name for r in self.ws.repos] or ['']
+            shas = [c['short'] for c in self.all_commits] or ['']
+            self._cols_cache = (min(_REPO_W, max(len(n) for n in names)),
+                                max(len(x) for x in shas))
+        return self._cols_cache
+
+    def _repo_style(self, c: dict) -> dict:
+        """Цвет имени репозитория — стабильный по его месту в списке:
+        лейнов графа в этом режиме нет, палитра свободна.
+        """
+        names = [r.name for r in self.ws.repos]
+        i = names.index(c['repo_name']) if c.get('repo_name') in names else 0
+        return {'fg': _GRAPH_COLORS[i % len(_GRAPH_COLORS)]}
+
     def _commit_row(self, c: dict, width: int, selected: bool) -> str:
+        if self.merged_feed:
+            return self._multi_commit_row(c, width, selected)
         badge = '⑂ ' if c.get('merge') else ''
         refs = display_refs(c.get('refs') or [])
         refs_plain = '  '.join(name for name, _ in refs)
@@ -476,9 +641,13 @@ class CommitLogHandler(ReviewScreen):
         mode = 'a current branch' if self.all_branches else 'a all branches'
         graph = 'g graph off' if self.show_graph else 'g graph on'
         info = 'i info off' if self.show_detail else 'i info on'
-        push_hint = ' · p push' if self.unpushed else ''
-        return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash · f fetch{push_hint} · {mode}'
-                f' · {graph} · {info} · / filter · q quit')
+        push_hint = ' · p push' if any(self.unpushed.values()) else ''
+        fetch_hint = 'f fetch all' if len(self.active_repos()) > 1 else 'f fetch'
+        repo_hint = self._repo_hint()
+        graph = '' if not self._graph_ready() else f' · {graph}'
+        return (f' [log]  ↑↓ commit · Enter/→ open · ⌘c hash{repo_hint}'
+                f' · {fetch_hint}{push_hint} · {mode}{graph} · {info}'
+                f' · / filter · q quit')
 
     # --- фильтр списка коммитов (у дерева файлов свой) ---
 
@@ -514,6 +683,10 @@ class CommitLogHandler(ReviewScreen):
             return
         if chord(key_event, 'ctrl', 'c'):
             self.quit_loop(0)
+            return
+        if self._repo_menu is not None:
+            if key_event.key == 'ESCAPE':
+                self.close_repo_menu()
             return
         if self.pending_push:
             # печатаемое (в т.ч. сам «y») разбирает on_text; здесь
@@ -561,9 +734,12 @@ class CommitLogHandler(ReviewScreen):
         elif k in ('ENTER', 'RIGHT'):
             self.open_commit()
         elif k == 'ESCAPE':
+            # каскад: фильтр → фокус репозитория → дно
             if self.commit_filter:
                 self._input_cancelled('commits')
                 self.draw_screen()
+            elif self.clear_repo_focus():
+                pass
             else:
                 # дно каскада: вместо тихого выхода — подтверждение
                 self.start_quit_confirm()
@@ -580,6 +756,8 @@ class CommitLogHandler(ReviewScreen):
             else:
                 self._cancel_pending()
             return
+        if self.repo_menu_text(text[:1]):
+            return
         if self.input_text(text):
             return
         for ch in text:
@@ -591,6 +769,8 @@ class CommitLogHandler(ReviewScreen):
                 self.start_commit_filter()
             elif c in ('a', 'A'):
                 self.toggle_mode()
+            elif c == 'R' and self.ws.multi:
+                self.open_repo_menu()
             elif c in ('g', 'G'):
                 self.toggle_graph()
             elif c in ('i', 'I'):
@@ -650,7 +830,7 @@ class CommitLogHandler(ReviewScreen):
 
 def main(args: list[str]) -> dict:
     mark_overlay('log')
-    return run_screen(CommitLogHandler(args, git_root(os.getcwd())))
+    return run_screen(CommitLogHandler(args, open_workspace(os.getcwd())))
 
 
 @result_handler()

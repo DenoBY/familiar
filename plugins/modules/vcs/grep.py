@@ -14,8 +14,8 @@ from .git import git_lines, grep_scope, set_error, strip_rev
 MAX_MATCHES = 2000
 
 
-def search_files(root: str, query: str, regex: bool = False,
-                 rev: str = '') -> tuple[list[dict], bool]:
+def search_files(root: str, query: str, regex: bool = False, rev: str = '',
+                 limit: int = MAX_MATCHES) -> tuple[list[dict], bool]:
     """item'ы DiffTreeView по совпадениям запроса и флаг обрезки.
 
     Регистр — smart-case: запрос без заглавных ищется без учёта
@@ -37,7 +37,7 @@ def search_files(root: str, query: str, regex: bool = False,
     # время event loop на строки, которые всё равно за MAX_MATCHES.
     # с -z и путь, и номер строки завершаются NUL: path\0lineno\0text
     for line in git_lines(root, *args, '-e', query, *grep_scope(rev), '--'):
-        if total >= MAX_MATCHES:
+        if total >= limit:
             truncated = True
             break
         path, _, rest = line.partition('\0')

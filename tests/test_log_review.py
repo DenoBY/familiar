@@ -14,6 +14,7 @@ import kittymock  # noqa: F401
 import log as L
 from kittymock import run_threads_inline, wire
 from modules.vcs.source import CommitSource
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -42,7 +43,7 @@ class CommitReviewTest(unittest.TestCase):
         # рабочее дерево уезжает вперёд: ревью коммита его игнорирует
         self.write('lib.py', 'def helper():\n    return 999\n')
 
-        self.h = L.CommitLogHandler([], self.repo)
+        self.h = L.CommitLogHandler([], Workspace.single(self.repo))
         wire(self.h, rows=30, cols=140)
         self.h.load_state()
 
@@ -71,6 +72,11 @@ class CommitReviewTest(unittest.TestCase):
                            if r['type'] == 'file' and self.h.filtered[r['idx']]['path'] == rel)
         self.h.load_diff()
         self.h.set_focus('diff')
+
+    def use_pool(self, pool):
+        """Пул поднимается по репозиторию показанного файла."""
+        self.h._lsp_pools = {self.h.root: pool}
+        return pool
 
     # --- источник ---
 
@@ -134,7 +140,7 @@ class CommitReviewTest(unittest.TestCase):
         session = FakeSession(syms={'helper': [sym('helper',
                                                    os.path.join(self.repo, 'lib.py'),
                                                    0)]})
-        self.h._lsp = FakePool(session)
+        self.use_pool(FakePool(session))
         self.h.goto_definition(self.h._doc_ref(di, col))
         cur = self.h.current_item()
         self.assertEqual((cur or {}).get('path') or self.h._external, 'lib.py')
@@ -151,7 +157,7 @@ class CommitReviewTest(unittest.TestCase):
         col = self.h.diff_plain[di].index('helper')
         session = FakeSession(defs={('app.py', 5): [loc(
             os.path.join(self.repo, 'lib.py'), 0)]})
-        self.h._lsp = FakePool(session)
+        self.use_pool(FakePool(session))
         self.assertEqual(self.h._doc_ref(di, col).side, 'symbol')
         self.h.goto_definition(self.h._doc_ref(di, col))
         self.assertEqual(session.opened[0][0], 'app.py')
@@ -186,7 +192,7 @@ class CommitReviewTest(unittest.TestCase):
         col = self.h.diff_plain[di].index('helper')
         session = FakeSession(syms={'helper': [sym('helper', os.path.join(
             self.repo, 'vendor/stub.py'), 0)]})
-        self.h._lsp = FakePool(session)
+        self.use_pool(FakePool(session))
         self.h.goto_definition(self.h._doc_ref(di, col))
         self.assertEqual(self.h._external, 'vendor/stub.py')
         self.assertIn('class Stringable', self.h.diff_after)
@@ -201,7 +207,7 @@ class CommitReviewTest(unittest.TestCase):
         os.remove(os.path.join(self.repo, 'app.py'))
         session = FakeSession(syms={'helper': [sym('helper', os.path.join(
             self.repo, 'lib.py'), 0)]})
-        self.h._lsp = FakePool(session)
+        self.use_pool(FakePool(session))
         self.h.goto_definition(self.h._doc_ref(di, col))
         self.assertEqual(session.asked, [], 'по позиции спрашивать было нечего')
         shown = self.h._external or self.h.current_item()['path']

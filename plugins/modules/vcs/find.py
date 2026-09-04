@@ -14,8 +14,8 @@
 from ..keylayout import to_latin
 from ..lsp.position import Target
 from ..text import plural
-from .git import last_error
 from .grep import MAX_MATCHES, search_files
+from .workspace import map_repos
 
 
 # Короче — не ищем (живой запрос из одной буквы в большом репозитории
@@ -23,6 +23,12 @@ from .grep import MAX_MATCHES, search_files
 # тот же порядок, что у отложенной загрузки диффа при прокрутке дерева.
 FIND_MIN = 2
 FIND_DELAY = 0.2
+
+# Потолок совпадений на репозиторий, а не на всю выдачу: общий лимит
+# один шумный репозиторий выбрал бы целиком, и соседние выглядели бы
+# пустыми. Пол берём такой, чтобы даже полная папка репозиториев не
+# унесла выдачу далеко за MAX_MATCHES — за ним встаёт event loop.
+MIN_BUDGET = 100
 
 
 class FindInFilesMixin:
@@ -36,6 +42,7 @@ class FindInFilesMixin:
         self._find_later = None
         # (query, regex) последнего выполненного поиска
         self._find_done: 'tuple[str, bool] | None' = None
+        self._find_error = ''
         # состояние обычного вьюера на время поиска
         self._before_find: 'dict | None' = None
 
@@ -52,7 +59,7 @@ class FindInFilesMixin:
             self.start_input('find', self.find_query)
 
     def _enter_find(self) -> None:
-        if not self.root:
+        if not self.ws.repos:
             self.flash = 'not a git repository'
             self.draw_screen()
             return
@@ -118,16 +125,38 @@ class FindInFilesMixin:
             self.items, self.find_truncated = [], False
             self.status = ''
         else:
-            self.items, self.find_truncated = search_files(
-                self.root, self.find_query, self.find_regex, self.source.rev)
+            self.items, self.find_truncated = self._search()
             # пусто из-за ошибки git (кривой regex, index.lock) —
             # показать её, а не «no matches»
-            self.status = '' if self.items else last_error()
+            self.status = '' if self.items else self._find_error
         self._find_done = (self.find_query, self.find_regex)
         self.rebuild_tree()
         self.tsel = self._first_file()
         self.left_offset = 0
         self.load_diff()
+
+    def _search(self) -> 'tuple[list[dict], bool]':
+        """Совпадения по репозиториям показанного источника: у ревью
+        коммита он один, и соседей искать незачем.
+        """
+        repos = self.shown_repos()
+        multi = self.source_ws().multi
+        budget = max(MIN_BUDGET, MAX_MATCHES // max(1, len(repos)))
+        query, regex, rev = self.find_query, self.find_regex, self.source.rev
+
+        def work(repo):
+            return search_files(repo.root, query, regex, rev, budget)
+
+        items, truncated, self._find_error = [], False, ''
+        for repo, res, err in map_repos(repos, work):
+            found, cut = res if res else ([], False)
+            for it in found:
+                if multi:
+                    it['repo'] = repo.root
+            items += found
+            truncated = truncated or cut
+            self._find_error = self._find_error or err
+        return items, truncated
 
     def toggle_find_regex(self) -> None:
         self.find_regex = not self.find_regex
@@ -206,9 +235,11 @@ class FindInFilesMixin:
         line = 0
         if 0 <= self.diff_cur < len(self.diff_lineno):
             line = self.diff_lineno[self.diff_cur]
-        rel = it['path']
+        # репозиторий совпадения несём с собой: выход из поиска
+        # вернёт правую панель в тот, что был открыт до него
+        rel, repo = it['path'], it.get('repo')
         self._exit_find()
-        self._navigate(Target(rel, max(1, line), 'def', ''))
+        self._navigate(Target(rel, max(1, line), 'def', ''), repo)
 
     # --- шапка и футер режима ---
 
@@ -221,7 +252,9 @@ class FindInFilesMixin:
             header += (f' — {plural(total, "match", "matches")}'
                        f' in {plural(self.n_files, "file")}')
             if self.find_truncated:
-                header += f' (first {MAX_MATCHES})'
+                # сколько именно показано, уже сказано выше: потолок
+                # теперь на репозиторий, и одним числом его не назвать
+                header += ' (truncated)'
         cur = self.current_item()
         if cur:
             header += f'   ▸ {cur["path"]}'

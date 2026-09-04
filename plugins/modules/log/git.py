@@ -10,10 +10,22 @@ from ..vcs.git import run_git, run_git_err
 
 # US (\x1f) между полями, \n между записями. %P — хеши
 # родителей (для пометки merge), %D — ref-names (ветки/теги/HEAD).
-# %ad — дата автора (абсолютная, формат ниже).
-_LOG_FMT = '%H%x1f%h%x1f%an%x1f%ad%x1f%P%x1f%D%x1f%s'
+# %ad — дата автора (абсолютная, формат ниже) для показа; %ct — дата
+# коммита меткой времени: строкой даты ленты нескольких репозиториев
+# не слить, а по дате АВТОРА нельзя — git пагинирует историю по дате
+# коммита, и после rebase лента приняла бы коммит выше своей отсечки.
+_LOG_FMT = '%H%x1f%h%x1f%an%x1f%ad%x1f%ct%x1f%P%x1f%D%x1f%s'
 _DATE_FMT = '--date=format:%d.%m.%y, %H:%M'   # 30.06.26, 22:58 — как в IDE
-_LOG_FIELDS = ('sha', 'short', 'author', 'date', 'parents', 'refs', 'subject')
+_LOG_FIELDS = ('sha', 'short', 'author', 'date', 'ts', 'parents', 'refs', 'subject')
+
+
+def _untab(text: str) -> str:
+    """Табы — четырьмя пробелами, как в диффе: терминал рисует таб на
+    восемь колонок, а длину строки код считает в символах, и такая
+    строка вылезала бы за край кадра. У git табы приходят в теле
+    merge-коммита с конфликтами (# Conflicts:).
+    """
+    return text.replace('\t', '    ')
 
 
 def parse_refs(s: str) -> list[tuple[str, str]]:
@@ -106,6 +118,8 @@ def load_commits(root: str, all_branches: bool = False,
         if len(parts) != len(_LOG_FIELDS):
             continue
         c = dict(zip(_LOG_FIELDS, parts))
+        c['subject'] = _untab(c['subject'])
+        c['ts'] = int(c['ts']) if c['ts'].isdigit() else 0
         c['parents'] = c['parents'].split()          # хеши родителей (для графа лейнов)
         c['merge'] = len(c['parents']) > 1
         c['refs'] = parse_refs(c.pop('refs'))
@@ -195,5 +209,5 @@ def commit_detail(root: str, sha: str) -> dict:
         if name.startswith('remotes/'):
             name = name[len('remotes/'):]
         branches.append(name)
-    return {'body': body.strip(), 'author_email': a_email, 'committer': committer,
+    return {'body': _untab(body.strip()), 'author_email': a_email, 'committer': committer,
             'committer_email': c_email, 'branches': branches}

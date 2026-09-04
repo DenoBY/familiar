@@ -10,6 +10,8 @@ import os
 from .git import (
     classify_status,
     count_lines,
+    current_branch,
+    diff_name_status,
     git_numstat,
     has_head,
     run_git,
@@ -29,6 +31,11 @@ def _too_big(path: str) -> bool:
         return os.path.getsize(path) > MAX_COUNT_BYTES
     except OSError:
         return True    # нет доступа/файла — считать нечего
+
+
+# Ветки, от которых обычно ведут работу. Порядок — приоритет: то, на
+# что указывает origin/HEAD, важнее угадывания по имени.
+BASE_CANDIDATES = ('main', 'master', 'develop')
 
 
 def scan_changes(root: str) -> list[dict]:
@@ -59,6 +66,35 @@ def scan_changes(root: str) -> list[dict]:
                       'untracked': '?' in xy})
         i += 1
     stats = git_numstat(root, 'HEAD') if has_head(root) else {}
+    _fill_stats(root, items, stats)
+    items.sort(key=lambda it: it['path'])
+    return items
+
+
+def scan_range(root: str, base: str) -> list[dict]:
+    """Изменения рабочего дерева относительно base: и закоммиченные в
+    ветке, и ещё не закоммиченные, плюс untracked — вся работа ветки
+    одним списком.
+    """
+    items = diff_name_status(root, base)
+    items += _untracked(root)
+    _fill_stats(root, items, git_numstat(root, base))
+    items.sort(key=lambda it: it['path'])
+    return items
+
+
+def _untracked(root: str) -> list[dict]:
+    raw = run_git(root, 'status', '--porcelain=v1', '-z', '-uall')
+    out = []
+    for tok in (raw or '').split('\0'):
+        if tok.startswith('?? '):
+            out.append({'kind': 'untracked', 'path': tok[3:], 'orig': None,
+                        'xy': '??', 'untracked': True})
+    return out
+
+
+def _fill_stats(root: str, items: list[dict],
+                stats: 'dict[str, tuple[int | None, int | None]]') -> None:
     for it in items:
         if it['untracked']:
             # noise-каталоги (venv, node_modules…) не читаем: их
@@ -71,8 +107,36 @@ def scan_changes(root: str) -> list[dict]:
             it['stat'] = None if skip else (count_lines(absp), 0)
         else:
             it['stat'] = stats.get(it['path'])
-    items.sort(key=lambda it: it['path'])
-    return items
+
+
+def base_ref(root: str) -> 'tuple[str, str] | None':
+    """(имя базовой ветки, sha точки расхождения) — относительно чего
+    смотреть работу ветки целиком. None — базы нет или мы на ней
+    самой, и сравнивать не с чем.
+    """
+    cur = current_branch(root)
+    for name in _base_names(root):
+        if name.rsplit('/', 1)[-1] == cur:
+            return None
+        out = run_git(root, 'merge-base', name, 'HEAD')
+        if out and out.strip():
+            return name, out.strip()
+    return None
+
+
+def _base_names(root: str) -> list[str]:
+    out = run_git(root, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+    names = [out.strip()] if out and out.strip() else []
+    for name in BASE_CANDIDATES:
+        names += [name, f'origin/{name}']
+    seen, exists = set(), []
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        if run_git(root, 'rev-parse', '--verify', '-q', name, timeout=5) is not None:
+            exists.append(name)
+    return exists
 
 
 def stage_paths(root: str, paths: list[str]) -> bool:

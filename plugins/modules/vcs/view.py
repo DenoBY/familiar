@@ -12,6 +12,7 @@ log — изменения коммита.
 - `_tree_visible` — доп. фильтр дерева (по умолчанию всё видно);
 - `_focus_landing` — куда встаёт курсор при входе в дифф;
 - `_diff_annotated` — маркер аннотации на строке (review);
+- `tree_repos` — уровень репозиториев над файлами (мультирепо);
 - `_diff_line_clicked` — клик по строке диффа
   (review — двойной = коммент);
 - `_empty_pane_msg` — сообщение, когда файлов нет.
@@ -44,6 +45,7 @@ from .diff import (
     unified_rows,
 )
 from .util import STATUS_STYLE, compose, is_noise
+from .workspace import Workspace
 
 
 THUMB_FG = 244   # ползунки обеих панелей: заметнее серого текста, тише белого
@@ -77,18 +79,29 @@ def _row_counters(row: dict) -> 'list[tuple[str, dict]]':
     return segs
 
 
+def item_key(it: dict) -> 'tuple[str | None, str]':
+    """Чем элемент отличается от всех прочих: в мультирепо один и тот
+    же относительный путь есть в нескольких репозиториях, и один
+    'path' склеил бы их метки и комментарии.
+    """
+    return it.get('repo'), it['path']
+
+
 class DiffTreeView(OverlayHandler):
 
-    def __init__(self, root: 'str | None') -> None:
-        self.root = root
+    def __init__(self, ws: Workspace) -> None:
+        self.ws = ws
+        # репозиторий того, что показано в правой панели: в мультирепо
+        # он свой у каждого файла
+        self.view_repo: 'str | None' = None
         self.items: list[dict] = []
         self.filtered: list[dict] = []
         self.rows: list[dict] = []
         self.n_files = 0
         self.collapsed: set[str] = set()
-        # пути помеченных файлов (множественный выбор в дереве)
+        # ключи помеченных файлов (множественный выбор в дереве)
         # и якорь ⇧-диапазона — строка фокуса при входе в мультивыбор
-        self.marked_paths: set[str] = set()
+        self.marked: 'set[tuple[str | None, str]]' = set()
         self.mark_anchor: 'int | None' = None
         self.show_noise = False
         self.tsel = 0
@@ -228,10 +241,11 @@ class DiffTreeView(OverlayHandler):
         self.filtered = [it for it in self.items
                          if (self.show_noise or not is_noise(it['path']))
                          and self._tree_visible(it)]
-        self.rows = build_tree(self.filtered, self.collapsed)
+        self.rows = build_tree(self.filtered, self.collapsed, self.tree_repos(),
+                               getattr(self.source, 'branches', None))
         # метки исчезнувших файлов (застейджили/откатили) не копим;
         # якорь — индекс строки, после перестройки он недействителен
-        self.marked_paths &= {it['path'] for it in self.items}
+        self.marked &= {item_key(it) for it in self.items}
         self.mark_anchor = None
         # файлы, а не строки: свёрнутая папка не занижает счётчик
         self.n_files = len(self.filtered)
@@ -247,6 +261,20 @@ class DiffTreeView(OverlayHandler):
                     self.tsel = i
                     break
         self.ensure_left_visible()
+
+    def source_ws(self) -> Workspace:
+        """Рабочая область показанных файлов. У экрана она бывает шире:
+        log открыт над папкой репозиториев, но коммит принадлежит
+        одному, и его файлы уровня репозиториев не знают.
+        """
+        return self.ws
+
+    def tree_repos(self) -> 'list | None':
+        """Репозитории отдельным уровнем дерева — или None, когда
+        показывать нечего сверх файлов (репозиторий один).
+        """
+        ws = self.source_ws()
+        return ws.repos if ws.multi else None
 
     def _first_file(self) -> int:
         for i, r in enumerate(self.rows):
@@ -327,7 +355,7 @@ class DiffTreeView(OverlayHandler):
         self.draw_screen()
 
     def _drop_marks(self) -> None:
-        self.marked_paths.clear()
+        self.marked.clear()
         self.mark_anchor = None
 
     def _items_under_cursor(self, keep: Callable[[dict], bool],
@@ -347,17 +375,23 @@ class DiffTreeView(OverlayHandler):
         if row['type'] == 'file':
             it = self.filtered[row['idx']]
             return [it] if keep(it) else []
+        if row.get('repo_root'):
+            # под узлом репозитория лежат обе группы (tracked и
+            # Unversioned), поэтому по группе тут не отбираем
+            return [it for it in self.filtered
+                    if it.get('repo') == row.get('repo') and keep(it)]
         prefix = row['dir'] + '/' if row.get('dir') else ''
         return [it for it in self.filtered
-                if it.get('group') == row.get('group') and it['path'].startswith(prefix)
-                and keep(it)]
+                if it.get('repo') == row.get('repo')
+                and it.get('group') == row.get('group')
+                and it['path'].startswith(prefix) and keep(it)]
 
     # --- множественный выбор файлов (метки → ⌘c копирует все) ---
 
-    def _paths_at(self, li: int) -> list[str]:
-        return [it['path'] for it in self._items_under_cursor(lambda it: True, li)]
+    def _keys_at(self, li: int) -> 'list[tuple[str | None, str]]':
+        return [item_key(it) for it in self._items_under_cursor(lambda it: True, li)]
 
-    def _range_paths(self, li: int) -> list[str]:
+    def _range_keys(self, li: int) -> 'list[tuple[str | None, str]]':
         """Вклад строки дерева в диапазонное выделение: файл — он сам;
         свёрнутая папка — все её файлы (видимы только этой строкой);
         развёрнутая — ничего: её файлы идут своими строками, и метки
@@ -367,8 +401,8 @@ class DiffTreeView(OverlayHandler):
             return []
         row = self.rows[li]
         if row['type'] == 'file':
-            return [self.filtered[row['idx']]['path']]
-        return self._paths_at(li) if row.get('collapsed') else []
+            return [item_key(self.filtered[row['idx']])]
+        return self._keys_at(li) if row.get('collapsed') else []
 
     def _dir_marked(self, row: dict) -> bool:
         """Свёрнутая папка подсвечивается, когда помечены все её
@@ -376,8 +410,8 @@ class DiffTreeView(OverlayHandler):
         """
         if not row.get('collapsed'):
             return False
-        paths = [it['path'] for it in self._row_items(row, lambda it: True)]
-        return bool(paths) and all(p in self.marked_paths for p in paths)
+        keys = [item_key(it) for it in self._row_items(row, lambda it: True)]
+        return bool(keys) and all(k in self.marked for k in keys)
 
     def _toggle_mark_at(self, li: int) -> None:
         """⌥+клик: пометить/снять файл, папку — все её файлы разом.
@@ -385,22 +419,22 @@ class DiffTreeView(OverlayHandler):
         сбивать текущий файл. Последнюю метку клик не снимает:
         выделение не пустеет, снимает его навигация или Esc.
         """
-        paths = self._paths_at(li)
-        if not paths:
+        keys = self._keys_at(li)
+        if not keys:
             self.flash = 'nothing to mark here'
             return
-        if not self.marked_paths:
+        if not self.marked:
             # вход в мультивыбор: активное одиночное выделение — тоже
             # метка; ⌥+клик добавляет к нему, а не переносит выделение
-            self.marked_paths.update(self._range_paths(self.tsel))
-        if all(p in self.marked_paths for p in paths):
-            if not self.marked_paths - set(paths):
+            self.marked.update(self._range_keys(self.tsel))
+        if all(k in self.marked for k in keys):
+            if not self.marked - set(keys):
                 self.flash = 'last mark kept'
                 return
-            self.marked_paths.difference_update(paths)
+            self.marked.difference_update(keys)
         else:
-            self.marked_paths.update(paths)
-        self.flash = f'{plural(len(self.marked_paths), "file")} marked'
+            self.marked.update(keys)
+        self.flash = f'{plural(len(self.marked), "file")} marked'
 
     def clear_marks(self) -> None:
         self._drop_marks()
@@ -416,10 +450,10 @@ class DiffTreeView(OverlayHandler):
             self.mark_anchor = self.tsel
         a, prev = self.mark_anchor, self.tsel
         for i in range(min(a, prev), max(a, prev) + 1):
-            self.marked_paths.difference_update(self._range_paths(i))
+            self.marked.difference_update(self._range_keys(i))
         self.set_tsel(li)
         for i in range(min(a, self.tsel), max(a, self.tsel) + 1):
-            self.marked_paths.update(self._range_paths(i))
+            self.marked.update(self._range_keys(i))
         if self.tsel != prev:
             self._schedule_load_diff()
 
@@ -431,7 +465,7 @@ class DiffTreeView(OverlayHandler):
         if not self.rows:
             return
         li = self.tsel + delta
-        while 0 <= li < len(self.rows) and not self._range_paths(li):
+        while 0 <= li < len(self.rows) and not self._range_keys(li):
             li += delta
         if not 0 <= li < len(self.rows):
             return
@@ -455,7 +489,7 @@ class DiffTreeView(OverlayHandler):
         if getattr(ev, 'mods', 0) & SHIFT_MOD:
             self.focus = 'tree'
             self._paint_range(li)
-            n = len(self.marked_paths)
+            n = len(self.marked)
             self.flash = (f'{plural(n, "file")} marked' if n
                           else 'nothing to mark here')
         else:
@@ -463,14 +497,40 @@ class DiffTreeView(OverlayHandler):
         self.draw_screen()
         return True
 
+    def _dir_cell(self, row: dict, width: int, indent: str, highlight: bool) -> str:
+        chev = '▾' if not row['collapsed'] else '▸'
+        n = row['count']
+        whole = row.get('group_root') or row.get('repo_root')
+        count = plural(n, 'file') if whole else str(n)
+        note = row.get('branch') or self._group_repo(row)
+        plain = f'{indent}{chev} {row["name"]}  '
+        plain += f'{note}  {count}' if note else count
+        if highlight:
+            return styled(pad(plain, width), reverse=True)
+        segs = [(f'{indent}{chev} ', {'fg': 'gray'}),
+                (row['name'], {'bold': True})]
+        if note:
+            segs.append((f'  {note}', {'fg': 'cyan'}))
+        segs.append((f'  {count}', {'fg': 'gray'}))
+        segs += [(f'  {text}', style) for text, style in _row_counters(row)]
+        return compose(segs, width)
+
+    def _group_repo(self, row: dict) -> str:
+        """Репозиторий у узла группы: группа стоит в конце секции, и
+        заголовок её репозитория к этому месту уже уехал за край.
+        """
+        if not row.get('group_root') or not self.source_ws().multi:
+            return ''
+        return self.ws.name_of(row.get('repo'))
+
     def _row_highlight(self, li: int) -> bool:
         """Выделение строки дерева: при активном мультивыборе — только
         метки, иначе — строка под курсором."""
         row = self.rows[li]
-        cursor = li == self.tsel and not self.marked_paths
+        cursor = li == self.tsel and not self.marked
         if row['type'] == 'dir':
             return self._dir_marked(row) or cursor
-        return self.filtered[row['idx']]['path'] in self.marked_paths or cursor
+        return item_key(self.filtered[row['idx']]) in self.marked or cursor
 
     def _left_cell(self, row: 'dict | None', width: int, li: int) -> str:
         if row is None:
@@ -478,16 +538,7 @@ class DiffTreeView(OverlayHandler):
         indent = '  ' * row['depth']
         highlight = self._row_highlight(li)
         if row['type'] == 'dir':
-            chev = '▾' if not row['collapsed'] else '▸'
-            n = row['count']
-            count = plural(n, 'file') if row.get('group_root') else str(n)
-            if highlight:
-                return styled(pad(f'{indent}{chev} {row["name"]}  {count}', width),
-                              reverse=True)
-            segs = [(f'{indent}{chev} ', {'fg': 'gray'}),
-                    (row['name'], {'bold': True}),
-                    (f'  {count}', {'fg': 'gray'})]
-            return compose(segs, width)
+            return self._dir_cell(row, width, indent, highlight)
         # статус (M/A/D/…) не пишем — его несёт цвет имени;
         # префикс-пробелы держат выравнивание имён под
         # колонкой шеврона папок
@@ -541,6 +592,7 @@ class DiffTreeView(OverlayHandler):
         self.expanded = {}
         self.diff_src = None
         it = self.current_item()
+        self.view_repo = it.get('repo') if it else None
         if not it:
             self.diff_before = self.diff_after = self.diff_ext = ''
             self._set_placeholder('  select a file to see its diff')
@@ -897,6 +949,14 @@ class DiffTreeView(OverlayHandler):
             return None
         return row['dir'] + '/'
 
+    def _current_repo(self) -> 'str | None':
+        it = self.current_item()
+        if it:
+            return it.get('repo')
+        if self.rows and 0 <= self.tsel < len(self.rows):
+            return self.rows[self.tsel].get('repo')
+        return None
+
     def copy_location(self) -> None:
         res = self._yank_code(*self._sel_range())
         rel = self._current_rel()
@@ -904,20 +964,32 @@ class DiffTreeView(OverlayHandler):
             self.flash = 'hover a diff line'
         else:
             _, a, b = res
-            ref = f'@{rel}#L{a}' + (f'-{b}' if b > a else '')
+            loc = self._copy_rel(rel, self._current_repo())
+            ref = f'@{loc}#L{a}' + (f'-{b}' if b > a else '')
             self._copy_clipboard(ref)
             self.flash = f'copied {ref}'
         self.draw_screen()
 
-    def _marked_paths(self) -> list[str]:
+    def _marked_items(self) -> list[dict]:
         """Помеченные файлы в порядке дерева; отфильтрованные скрытием
         сюда не попадают — копируем ровно то, что видно."""
-        return [it['path'] for it in self.filtered if it['path'] in self.marked_paths]
+        return [it for it in self.filtered if item_key(it) in self.marked]
+
+    def _copy_rel(self, rel: str, repo: 'str | None') -> str:
+        """Путь для @-ссылки: от папки, из которой открыт кит. Кит
+        наследует cwd окна, и путь внутри репозитория Claude Code из
+        папки над несколькими репозиториями не нашёл бы.
+
+        Префикс спрашиваем у рабочей области показанного: у ревью
+        коммита она своя, но базу и имя репозитория сохраняет.
+        """
+        return self.source_ws().rel_prefix(repo) + rel
 
     def copy_path(self) -> None:
-        marked = self._marked_paths()
+        marked = self._marked_items()
         if marked:
-            self._copy_clipboard('\n'.join(f'@{r}' for r in marked))
+            refs = [self._copy_rel(it['path'], it.get('repo')) for it in marked]
+            self._copy_clipboard('\n'.join(f'@{r}' for r in refs))
             self.flash = f'copied {plural(len(marked), "path")}'
             self.draw_screen()
             return
@@ -925,8 +997,9 @@ class DiffTreeView(OverlayHandler):
         if rel is None:
             self.flash = 'select a file or dir'
         else:
-            self._copy_clipboard(f'@{rel}')
-            self.flash = f'copied @{rel}'
+            ref = self._copy_rel(rel, self._current_repo())
+            self._copy_clipboard(f'@{ref}')
+            self.flash = f'copied @{ref}'
         self.draw_screen()
 
     def smart_copy(self) -> None:

@@ -105,6 +105,18 @@ class TestTextColors(unittest.TestCase):
         cols = H.text_colors(code, '.php')
         self.assertTrue(all(c == H.C_COMMENT for c in cols[1]))
 
+    def test_open_tag_is_not_a_comment(self):
+        # у Pygments <?php живёт в ветке Comment, но серый цвет
+        # комментария читается как «строка ничего не делает»
+        cols = H.text_colors('<?php\nclass Foo {}', '.php')
+        self.assertTrue(all(c == H.C_KEYWORD for c in cols[0]), cols[0])
+
+    def test_c_preprocessor_is_not_a_comment(self):
+        code = '#include <stdio.h>'
+        cols = H.text_colors(code, '.c')
+        self.assertTrue(all(c != H.C_COMMENT for c in cols[0]), cols[0])
+        self.assertEqual(cols[0][code.index('<')], H.C_STRING)
+
     def test_php_file_with_open_tag_highlights_as_php(self):
         code = "<?php\nclass Foo {}"
         self.assertEqual(dict(roles(code, '.php', line=1))['class'], H.C_KEYWORD)

@@ -23,35 +23,38 @@ from ..text import short_path, truncate
 from .annotate import AnnotationsMixin
 from .editor import editor_command
 from .find import FIND_MIN, FindInFilesMixin
-from .git import last_error
 from .goto import ALT_MOD, GotoDefinitionMixin
+from .repofocus import RepoFocusMixin
 from .source import Source
 from .symbols import word_span
 from .view import SHIFT_MOD, DiffTreeView
+from .workspace import Workspace
 
 
 class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
-                   DiffTreeView):
+                   RepoFocusMixin, DiffTreeView):
 
     multiline_modes: ClassVar[tuple[str, ...]] = ('comment',)
 
-    def __init__(self, root: 'str | None', source: Source) -> None:
-        self.source = source     # до super(): корень экрана живёт в источнике
-        super().__init__(root)
+    def __init__(self, ws: Workspace, source: Source) -> None:
+        self.source = source
+        super().__init__(ws)
         # что сделать после выхода (open in editor / send to claude)
         self.action: 'dict | None' = None
         self.filter_query = ''
 
     @property
     def root(self) -> 'str | None':
-        """Корень репозитория — один на экран и его источник:
-        разъехавшись, они читали бы разные репозитории.
-        """
-        return self.source.root
+        """Корень репозитория того, что под курсором: в мультирепо
+        он свой у каждого файла, вне его — один на весь экран.
 
-    @root.setter
-    def root(self, value: 'str | None') -> None:
-        self.source.root = value
+        Спрашиваем элемент дерева, а не view_repo: тот обновляется
+        отложенной загрузкой диффа и на шаг курсора отстаёт — редактор
+        и language server успели бы уйти в соседний репозиторий.
+        """
+        if self._external:
+            return self.view_repo or self.source.root
+        return self.source.root_of(self.current_item())
 
     # --- хуки хоста ---
 
@@ -108,19 +111,19 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
 
     def _contents(self, it: dict) -> tuple[str, str]:
         if self.find_mode:
-            text = self.source.read(it['path'])
+            text = self.source.read(it['path'], it.get('repo'))
             return text, text   # результат поиска — файл как есть, без диффа
         return self.source.contents(it)
 
     def _reload_items(self) -> None:
-        if not self.root:
+        if not self.ws.repos:
             self.items = []
             self.status = 'not a git repository'
             return
         self.items = self.source.files()
         # пустой список из-за ошибки git — показать её, а не
         # «no changes»
-        self.status = '' if self.items else last_error()
+        self.status = '' if self.items else self.source.error
 
     def load_source(self) -> None:
         self._reload_items()
@@ -132,6 +135,7 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
 
     def load_state(self) -> None:
         self.load_source()
+        self.note_truncation()
 
     def refresh(self) -> None:
         """Пересканировать изменения, сохранив фильтр, сворачивание,
@@ -150,9 +154,21 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
 
     # --- хуки DiffTreeView ---
 
+    def source_ws(self) -> Workspace:
+        return self.source.ws
+
     def _tree_visible(self, it: dict) -> bool:
+        if self.repo_focus and self.source_ws().multi and it.get('repo') != self.repo_focus:
+            return False
         q = self.filter_query.lower()
         return not q or q in os.path.basename(it['path']).lower()
+
+    def _repo_focus_changed(self) -> None:
+        self.rebuild_tree()
+        self.tsel = self._first_file()
+        self.left_offset = 0
+        self.load_diff()
+        self.draw_screen()
 
     def _empty_pane_msg(self) -> str:
         if self.find_mode:
@@ -242,12 +258,15 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         if self._cand is not None:
             self._draw_picker()
             return
+        if self._repo_menu is not None:
+            self.draw_repo_menu()
+            return
         self.cmd.clear_screen()
         self._draw_review()
 
     def _draw_review(self) -> None:
         cols = self.screen_size.cols
-        header = self.find_header(short_path(self.root or os.getcwd())) \
+        header = self.find_header(short_path(self.ws.base)) \
             if self.find_mode else self._header()
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
@@ -295,16 +314,21 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
                         f' · e edit{back}{self._back_hint()}')
         else:
             u = 'u show-ignored' if not self.show_noise else 'u hide-ignored'
-            n_marked = len(self._marked_paths())
+            n_marked = len(self._marked_items())
             copy = f'⌘c copy {n_marked}' if n_marked else '⌘c @path'
-            base = (f' [tree]  ↑↓ file · ⇧↑↓/⇧click mark · Enter fold · →/Tab diff'
+            base = (f' [tree]  ↑↓ file · ⇧↑/↓ or ⇧click mark · Enter fold · →/Tab diff'
                     f' · {copy} · {modes}{self._tree_actions()} · e edit · r refresh'
-                    f' · ⌘f search · ⌘⇧f find · f filter · {u} · q'
+                    f'{self._repo_hint()} · ⌘f search · ⌘⇧f find · f filter · {u} · q'
                     f'{self._back_hint()}')
         if self.annots:
             base += (f'   ·   ✎ {len(self.annots)}'
                      ' ({} nav · w copy+clear · s send · x clear)')
         return base
+
+    def _repo_hint(self) -> str:
+        if not self.source_ws().multi:
+            return ''
+        return f' · R {self.focus_name()} ✕' if self.repo_focus else ' · R repo'
 
     # --- строка ввода: фильтр, поиск, запрос find, комментарий ---
 
@@ -373,6 +397,10 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
             if key_event.key == 'ESCAPE':
                 self._close_picker()
             return   # пока пикер открыт — глотаем прочие клавиши
+        if self._repo_menu is not None:
+            if key_event.key == 'ESCAPE':
+                self.close_repo_menu()
+            return
         if self._pending_active():
             # печатаемое (в т.ч. сам «y») разбирает on_text; здесь
             # гасим только Enter/стрелки/Esc: необратимое не должно
@@ -429,9 +457,12 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         elif self._host_key(k):
             return
         elif k == 'ESCAPE':
-            # каскад: метки → фильтр → дно (выход либо прошлый экран)
-            if self.marked_paths:
+            # каскад: метки → фокус репозитория → фильтр → дно
+            # (выход либо прошлый экран)
+            if self.marked:
                 self.clear_marks()
+            elif self.clear_repo_focus():
+                pass
             elif self.filter_query:
                 self._input_cancelled('filter')
                 self.draw_screen()
@@ -480,6 +511,8 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
             if ch.isdigit() and ch != '0':
                 self._pick(int(ch) - 1)
             return
+        if self.repo_menu_text(text[:1]):
+            return
         ctrl = ctrl_letter(text, in_bracketed_paste)
         if ctrl is not None and self._ctrl_key(ctrl):
             return
@@ -511,6 +544,8 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
             return True
         if c in ('f', 'F'):
             self.start_filter()
+        elif c == 'R' and self.source_ws().multi:
+            self.open_repo_menu()
         elif c in ('r', 'R'):
             self.refresh()
         elif c in ('c', 'C'):

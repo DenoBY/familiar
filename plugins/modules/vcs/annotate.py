@@ -14,10 +14,11 @@ class AnnotationsMixin:
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # (rel, line) → {'code', 'text'}
-        self.annots: dict[tuple[str, int], dict[str, str]] = {}
-        # (rel, line, code) редактируемой аннотации
-        self.comment_target: 'tuple[str, int, str] | None' = None
+        # (репозиторий, rel, line) → {'code', 'text'}: в мультирепо
+        # одноимённые файлы соседей иначе делили бы комментарии
+        self.annots: 'dict[tuple[str | None, str, int], dict[str, str]]' = {}
+        # (репозиторий, rel, line, code) редактируемой аннотации
+        self.comment_target: 'tuple[str | None, str, int, str] | None' = None
 
     # --- хуки хоста ---
 
@@ -33,7 +34,7 @@ class AnnotationsMixin:
 
     def _diff_annotated(self, di: int, cur_rel: 'str | None') -> bool:
         line = self.diff_lineno[di] if di < len(self.diff_lineno) else 0
-        return (cur_rel is not None and (cur_rel, line) in self.annots
+        return (cur_rel is not None and (self.view_repo, cur_rel, line) in self.annots
                 and self._commentable(di))
 
     def jump_annot(self, direction: int) -> None:
@@ -43,9 +44,10 @@ class AnnotationsMixin:
         cur = self.current_item()
         if not cur or not self.annots:
             return
-        rel = cur['path']
+        key = (cur.get('repo'), cur['path'])
         marked = [di for di in range(len(self.diff_lineno))
-                  if self._commentable(di) and (rel, self.diff_lineno[di]) in self.annots]
+                  if self._commentable(di)
+                  and (*key, self.diff_lineno[di]) in self.annots]
         if not marked:
             return
         self.focus = 'diff'
@@ -72,14 +74,14 @@ class AnnotationsMixin:
         line = self.diff_lineno[self.diff_cur]
         after_lines = self.diff_after.splitlines()
         code = after_lines[line - 1] if 0 < line <= len(after_lines) else ''
-        self.comment_target = (cur['path'], line, code)
-        existing = self.annots.get((cur['path'], line))
+        self.comment_target = (cur.get('repo'), cur['path'], line, code)
+        existing = self.annots.get((cur.get('repo'), cur['path'], line))
         self.start_input('comment', existing['text'] if existing else '')
 
     def _save_comment(self) -> None:
-        rel, line, code = self.comment_target
+        repo, rel, line, code = self.comment_target
         text = self.input_buffer.strip()
-        key = (rel, line)
+        key = (repo, rel, line)
         if text:
             self.annots[key] = {'code': code, 'text': text}
         else:
@@ -94,8 +96,10 @@ class AnnotationsMixin:
             self.draw_screen()
             return None
         by_file = {}
-        for (rel, line), v in self.annots.items():
-            by_file.setdefault(rel, []).append((line, v))
+        for (repo, rel, line), v in self.annots.items():
+            # путь от папки, из которой открыт кит: по нему Claude Code
+            # и откроет файл
+            by_file.setdefault(self._copy_rel(rel, repo), []).append((line, v))
         out = [self._annot_title(), '']
         for rel in sorted(by_file):
             out.append(f'## {rel}')

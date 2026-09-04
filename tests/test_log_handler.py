@@ -7,6 +7,7 @@ import unittest
 import kittymock  # noqa: F401
 import log as L
 from kittymock import MouseEvent, draw_text, run_threads_inline, wire
+from modules.vcs.workspace import Workspace
 
 
 _ENV = {
@@ -30,7 +31,7 @@ class LogHandlerTest(unittest.TestCase):
         self._git('add', '-A')
         self._git('commit', '-m', 'add feature')
 
-        self.h = L.CommitLogHandler([], self.repo)
+        self.h = L.CommitLogHandler([], Workspace.single(self.repo))
         wire(self.h, rows=30, cols=120)
         self.h.reload_commits()
 
@@ -61,12 +62,27 @@ class LogHandlerTest(unittest.TestCase):
     def test_git_error_shown_when_log_fails(self):
         d = tempfile.mkdtemp(prefix='cclog_notrepo_')
         try:
-            self.h.root = d
+            self.h.ws = self.h.source.ws = Workspace(d, [])
             self.h.reload_commits()
             self.assertEqual(self.h.commits, [])
             self.assertIn('not a git repository', self.h.status)
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def test_frame_fits_the_window_when_the_body_has_tabs(self):
+        # таб рисуется восемью колонками, а длину строки код считает в
+        # символах: панель вылезала за край, кадр становился выше окна
+        # и шапка уезжала вверх вместе с разделителем
+        self._git('commit', '--allow-empty', '-m',
+                  "Merge branch 'x'\n\n# Conflicts:\n\t"
+                  + 'src/app/Services/Basket/DiscountCalculator.php\n')
+        self.h.reload_commits()
+        self.h._load_detail(self.h.commits[0])
+        self.h.out = []
+        self.h.draw_screen()
+        cols, rows = self.h.screen_size.cols, self.h.screen_size.rows
+        drawn = sum(max(1, -(-len(str(x).expandtabs(8)) // cols)) for x in self.h.out)
+        self.assertLessEqual(drawn, rows)
 
     def test_draw_commits_smoke(self):
         self.h.draw_screen()
@@ -135,7 +151,7 @@ class LogHandlerTest(unittest.TestCase):
         remote = self._push_ready()
         self.h.on_text('p')
         self.assertIsNotNone(self.h.pending_push)
-        branch, up, n = self.h.pending_push
+        root, branch, up, n = self.h.pending_push
         self.assertEqual((branch, up), ('main', None))
         self.h.out = []
         self.h.draw_screen()
@@ -164,15 +180,15 @@ class LogHandlerTest(unittest.TestCase):
         heads = subprocess.run(['git', '--git-dir', remote, 'branch'],
                                capture_output=True, text=True, env=os.environ).stdout
         self.assertIn('main', heads)
-        self.assertEqual(self.h.unpushed, set())
+        self.assertEqual(set().union(*self.h.unpushed.values()), set())
 
     def test_push_hint_only_while_something_is_unpushed(self):
-        self.h.unpushed = {'deadbeef'}
+        self.h.unpushed = {self.repo: {'deadbeef'}}
         self.h.out = []
         self.h.draw_screen()
         self.assertIn('p push', draw_text(self.h))
 
-        self.h.unpushed = set()
+        self.h.unpushed = {self.repo: set()}
         self.h.out = []
         self.h.draw_screen()
         self.assertNotIn('p push', draw_text(self.h))
