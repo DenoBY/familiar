@@ -5,6 +5,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.37.0] — 2026-09-12
+
+### Added
+
+- terminal: a split can move out into a tab of its own. `Cmd+Ctrl+T` asks where
+  the active pane should go — a new tab, a new OS window, or any tab already
+  open — so the same key also brings it back into a tab it came from. While the
+  question is up, pressing the key again does nothing instead of stacking a
+  second question on top. `Cmd+Shift+T` is taken by the restore snapshot, hence
+  `Cmd+Ctrl+T`.
+
 ## [0.36.1] — 2026-09-12
 
 ### Fixed
