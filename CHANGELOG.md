@@ -5,6 +5,18 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.38.1] — 2026-09-12
+
+### Fixed
+
+- terminal: the app icon no longer stands out as the biggest one in the Dock.
+  macOS icons draw their squircle in 824 px of a 1024 px canvas, and ours
+  filled the canvas edge to edge, so it looked a size larger than every
+  neighbour. It is now built with those margins — measured against the system
+  icons, content takes 0.805 of the canvas, same as theirs. Re-run `familiar
+  enable …` to pick it up, then restart kitty (and `killall Dock` if the old
+  one lingers).
+
 ## [0.38.0] — 2026-09-12
 
 ### Added
