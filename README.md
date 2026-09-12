@@ -11,10 +11,10 @@
 ![kitty](https://img.shields.io/badge/kitty-%E2%89%A5%200.47-blue)
 ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
 
-Claude Code writes the code in your terminal — familiar gives that terminal the
-missing IDE half. Three full-screen [kitty](https://sw.kovidgoyal.net/kitty/)
-overlays, one hotkey each: review everything the agent just changed in an
-IDE-grade diff, search any text across the project like an IDE's Find in Files,
+IDE-grade overlays for the [kitty](https://sw.kovidgoyal.net/kitty/) terminal,
+built for working with Claude Code. Three full-screen overlays, one hotkey
+each: review everything the agent just changed in a
+full-featured diff, search any text across the project like an IDE's Find in Files,
 and send line comments straight back into the chat; see all your sessions
 live — which agent is busy, which is waiting for your permission — and resume,
 fork or spin up a worktree in a keystroke; walk the git history the same way.
