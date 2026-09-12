@@ -19,7 +19,7 @@ from ..highlight import (
     word_ranges,
 )
 from ..text import pad, plural, short_path, truncate, wrap_text
-from .conversation import Entry
+from .conversation import REJECTED, Entry
 from .markdown import markdown_lines
 from .util import ASK_REJECTED, ASK_TOOL
 
@@ -76,6 +76,15 @@ _ARG_KEY = {
 }
 _PATH_KEYS = frozenset({'file_path', 'notebook_path', 'path'})
 
+# У незнакомого инструмента (MCP, плагины) смысл несёт не первая
+# попавшаяся строка input'а — ей оказывается путь к проекту или
+# уровень важности, — а один из этих ключей.
+_FALLBACK_KEYS = ('code', 'command', 'query', 'prompt', 'description', 'text', 'name')
+
+# MCP-инструмент зовётся mcp__<сервер>__<инструмент>; читателю
+# показываем «сервер - инструмент», как это делает Claude Code.
+_MCP_PREFIX = 'mcp__'
+
 # Claude Code называет правку файла Update — держим ту же терминологию.
 _DISPLAY_NAME = {'Edit': 'Update', 'ExitPlanMode': 'Updated plan',
                  ASK_TOOL: "User answered Claude's questions:",
@@ -129,6 +138,9 @@ _SUMMARIZED = frozenset(p.category for p in _SUMMARY_PHRASE)
 
 
 def display_name(name: str) -> str:
+    if name.startswith(_MCP_PREFIX):
+        server, _, tool = name[len(_MCP_PREFIX):].partition('__')
+        return f'{server} - {tool}' if tool else server
     return _DISPLAY_NAME.get(name, name or 'tool')
 
 
@@ -147,13 +159,19 @@ def tool_arg(name: str, tool_input: 'dict | None', root: str = '') -> str:
     """
     inp = tool_input or {}
     key = _ARG_KEY.get(name)
-    val = inp.get(key) if key else None
-    if not isinstance(val, str):
-        key = next((k for k, v in inp.items() if isinstance(v, str)), None)
-        val = inp[key] if key else ''
+    if not isinstance(inp.get(key), str):
+        key = _guess_key(inp)
+    val = inp.get(key, '') if key else ''
     if key in _PATH_KEYS:
         val = display_path(val, root)
     return val.strip()
+
+
+def _guess_key(inp: dict) -> 'str | None':
+    for key in _FALLBACK_KEYS:
+        if isinstance(inp.get(key), str):
+            return key
+    return next((k for k, v in inp.items() if isinstance(v, str)), None)
 
 
 def bash_category(command: str) -> str:
@@ -289,11 +307,28 @@ def _entry_block(e: Entry, i: int, width: int, root: str,
     if e.kind == 'tool':
         return _tool(e, i, width, root, is_open)
     if e.kind == 'result':
-        # отказ отвечать уже сказан заголовком вызова
-        return [] if e.name == ASK_REJECTED else _result(e, i, width, is_open)
-    if e.kind == 'attach':
+        return [] if _mute_result(e) else _result(e, i, width, is_open)
+    if e.kind == 'task':
+        return _task(e, i, width, root, is_open)
+    if e.kind in ('attach', 'notice'):
         return [Line('  ⎿  ' + truncate(e.text, width - 5), color=DIM)]
     return None
+
+
+# «Launching skill: style-review» дословно повторяет заголовок
+# вызова.
+_ECHO_RESULT = frozenset({'Skill'})
+
+
+def _mute_result(e: Entry) -> bool:
+    """Вывода нет вовсе (ToolSearch без совпадений) или он — эхо
+    заголовка: рисовать пустой «⎿» незачем.
+    """
+    if e.name == ASK_REJECTED:      # отказ отвечать сказан заголовком вызова
+        return True
+    if e.error:
+        return False
+    return e.name in _ECHO_RESULT or not (e.text or e.patch or e.summary)
 
 
 def _next_kind(entries: list[Entry], i: int) -> str:
@@ -535,9 +570,65 @@ def _result_rows(entry: Entry) -> list:
         return _write_rows(entry.tool_input)
     color = 'red' if entry.error else DIM
     body = entry.text.split('\n')
-    if entry.error:
+    # «Error:» перед отказом пользователя — неправда: вызов не упал,
+    # его не дали сделать
+    if entry.error and entry.text != REJECTED:
         body[0] = 'Error: ' + body[0]
     return [(ln, color) for ln in body]
+
+
+# Чем кончилась фоновая задача. Claude Code шлёт status отдельным
+# полем отчёта; неизвестный показываем как есть.
+_TASK_STATUS = {'completed': 'finished', 'failed': 'failed', 'stopped': 'stopped'}
+
+# Длинный аргумент (скрипт workflow, команда) в шапке отчёта не
+# нужен: он уже был у вызова.
+_TASK_ARG_CHARS = 40
+
+_PUNCT_RE = re.compile(r'[\W_]+')
+
+
+def _skeleton(text: str) -> str:
+    """Текст без пунктуации и регистра — чтобы сравнивать по смыслу
+    строки, которые различаются только оформлением.
+    """
+    return _PUNCT_RE.sub('', text).lower()
+
+
+def _task_head(entry: Entry, root: str = '') -> str:
+    """«Agent(Разведка структуры) finished» — чья задача и чем
+    кончилась. Без вызова в этой сессии (запуск был в прошлой)
+    остаётся безымянной.
+    """
+    status = _TASK_STATUS.get(entry.status, entry.status or 'finished')
+    if not entry.name:
+        return f'Background task {status}'
+    arg = tool_arg(entry.name, entry.tool_input, root).split('\n')[0]
+    who = display_name(entry.name)
+    if arg:
+        who += f'({truncate(arg, _TASK_ARG_CHARS)})'
+    return f'{who} {status}'
+
+
+def _task(entry: Entry, idx: int, width: int, root: str,
+          is_open: bool) -> list[Line]:
+    """Отчёт фоновой задачи: шапка со статусом, сводка — по ctrl+o."""
+    color = 'red' if entry.error else DIM
+    head = _task_head(entry, root)
+    # сводка агента — то же «Agent "…" finished», что и в шапке:
+    # второй раз читать нечего
+    body = [ln for ln in entry.text.split('\n')
+            if ln.strip() and _skeleton(ln) != _skeleton(head)]
+    # сводка — проза, а не вывод команды: переносим по ширине
+    rows = [(wl, color) for ln in body for wl in wrap_text(ln, width - 5)]
+    shown, hidden, foldable = _fold(rows, is_open, reserved=1)
+
+    head = truncate(head, width - 5)
+    out = [Line('  ⎿  ' + head, color=color, entry=idx if foldable else -1)]
+    out += [Line('     ' + text, color=clr) for text, clr in shown]
+    if hidden:
+        out.append(_fold_marker(hidden, idx))
+    return out
 
 
 def _result(entry: Entry, idx: int, width: int, is_open: bool) -> list[Line]:
@@ -547,11 +638,15 @@ def _result(entry: Entry, idx: int, width: int, is_open: bool) -> list[Line]:
     # а копирование берёт текст строки целиком
     rows = _result_rows(entry)
     # Claude Code прячет вывод за сводкой («Read 402 lines») —
-    # тело по запросу.
+    # тело по запросу. У картинки и запуска фонового агента тела нет
+    # вовсе: сводка — весь вывод, раскрывать нечего.
     if entry.summary and not entry.error:
-        foldable = True
         hidden = 0
-        shown = rows if is_open else [(entry.summary + EXPAND_HINT, DIM)]
+        foldable = any(text.strip() for text, _ in rows)
+        if is_open and foldable:
+            shown = rows
+        else:
+            shown = [(entry.summary + (EXPAND_HINT if foldable else ''), DIM)]
     else:
         shown, hidden, foldable = _fold(rows, is_open)
 

@@ -24,6 +24,7 @@ class Entry(NamedTuple):
     """
 
     kind: str                       # user | assistant | tool | result | attach
+                                    # | task | notice
     text: str = ''
     name: str = ''                  # имя инструмента (kind='tool' и его 'result')
     tool_input: 'dict | None' = None
@@ -32,6 +33,7 @@ class Entry(NamedTuple):
     patch_stat: tuple = ()          # (добавлено, удалено) по ВСЕМУ патчу:
                                     # patch обрезан по MAX_RESULT_LINES
     summary: str = ''               # чем заменить вывод, пока он свёрнут
+    status: str = ''                # kind='task': чем кончилась фоновая задача
 
 
 # Вывод инструмента бывает в десятки мегабайт (дампы, логи).
@@ -41,13 +43,22 @@ MAX_RESULT_LINES = 200
 MAX_RESULT_CHARS = 20_000
 
 
+def _block_text(block: dict) -> str:
+    """Текст блока вывода. ToolSearch отвечает не текстом, а ссылками
+    на найденные инструменты — без этого его вывод был бы пустым.
+    """
+    if block.get('type') == 'tool_reference':
+        return str(block.get('tool_name', ''))
+    return block.get('text', '') if block.get('type') == 'text' else ''
+
+
 def _content_text(block: dict) -> str:
     c = block.get('content')
     if isinstance(c, str):
         return c
     if isinstance(c, list):
-        return '\n'.join(x.get('text', '') for x in c
-                         if isinstance(x, dict) and x.get('type') == 'text')
+        parts = (_block_text(x) for x in c if isinstance(x, dict))
+        return '\n'.join(p for p in parts if p)
     return ''
 
 
@@ -105,10 +116,15 @@ def _duration(ms: int) -> str:
 # сводка Claude Code.
 _AGENT_TOOLS = frozenset({'Agent', 'Task'})
 
+# Фоновый агент отвечает сразу: вызов лишь запускает его, а отчёт
+# приходит отдельной записью (kind='task') много позже.
+_AGENT_STATUS = {'completed': 'Done', 'async_launched': 'Running in background'}
+
 
 def _agent_summary(tur: dict) -> str:
     status = tur.get('status')
-    head = 'Done' if status == 'completed' else str(status or 'done').capitalize()
+    head = (_AGENT_STATUS.get(status)
+            or str(status or 'done').replace('_', ' ').capitalize())
     parts = []
     if isinstance(tur.get('totalToolUseCount'), int):
         parts.append(plural(tur['totalToolUseCount'], 'tool use'))
@@ -129,6 +145,8 @@ def _result_summary(name: str, tur: 'dict | None') -> str:
         return _agent_summary(tur)
     if name != 'Read':
         return ''
+    if tur.get('type') == 'image':
+        return 'Read image'   # вывод — сама картинка, текста в нём нет
     info = tur.get('file')
     n = info.get('numLines') if isinstance(info, dict) else None
     if not isinstance(n, int):
@@ -138,12 +156,24 @@ def _result_summary(name: str, tur: 'dict | None') -> str:
 
 _TOOL_ERR_RE = re.compile(r'</?tool_use_error>')
 
+# Отказ от вызова Claude Code протоколирует абзацем инструкций для
+# модели («STOP what you are doing and wait…») — читателю в нём нет
+# ни одного слова, кроме самого факта отказа.
+_REJECT_RE = re.compile(r"^The user doesn't want to ")
+REJECTED = 'Rejected by user'
+
+# Прерывание (Esc) приходит текстом в реплике пользователя, хотя тот
+# его не писал.
+_INTERRUPT_RE = re.compile(r'^\[Request interrupted by user[^]]*\]$')
+INTERRUPTED = 'Interrupted by user'
+
 
 def _result_text(block: dict) -> str:
     raw = _TOOL_ERR_RE.sub('', _content_text(block)[:MAX_RESULT_CHARS])
     lines = _sanitize(raw).split('\n')
     del lines[MAX_RESULT_LINES:]
-    return '\n'.join(ln.rstrip() for ln in lines).strip('\n')
+    text = '\n'.join(ln.rstrip() for ln in lines).strip('\n')
+    return REJECTED if _REJECT_RE.match(text) else text
 
 
 def _answers_text(tur: object) -> str:
@@ -177,6 +207,29 @@ def _meta_attachments(text: str) -> list[Entry]:
     """isMeta-запись → вложения реплики; всё прочее (caveat) — шум."""
     return [Entry('attach', f'[Image #{os.path.splitext(os.path.basename(m))[0]}]')
             for m in _IMAGE_META_RE.findall(text)]
+
+
+# Отчёт фоновой задачи (субагент, фоновая команда, Monitor) приходит
+# отдельной записью много позже вызова и ссылается на него по
+# tool-use-id.
+_TASK_NOTE_RE = re.compile(r'<task-notification>(.*?)</task-notification>', re.S)
+_NOTE_FIELD_RE = re.compile(r'<(tool-use-id|status|summary)>(.*?)</\1>', re.S)
+
+
+def _task_entry(text: str, launched: dict) -> 'Entry | None':
+    """<task-notification> → запись об окончании фоновой задачи.
+
+    launched (id вызова → имя, аргументы) нужен, чтобы сказать, чья
+    это задача: сам отчёт знает только id.
+    """
+    body = _TASK_NOTE_RE.search(text) if isinstance(text, str) else None
+    if not body:
+        return None
+    fields = {k: _sanitize(v).strip() for k, v in _NOTE_FIELD_RE.findall(body.group(1))}
+    name, inp = launched.get(fields.get('tool-use-id'), ('', None))
+    status = fields.get('status', '')
+    return Entry('task', fields.get('summary', ''), name=name, tool_input=inp,
+                 error=status == 'failed', status=status)
 
 
 def _active_chain(objs: list) -> set:
@@ -228,28 +281,39 @@ def load_conversation(path: str) -> list[Entry]:
     легли бы под чужие заголовки).
     """
     entries = []
-    calls = {}   # tool_use_id → (имя, input, позиция вызова в entries)
+    calls = {}      # tool_use_id → (имя, input, позиция вызова в entries)
+    launched = {}   # то же, но переживает вывод: по нему ищем, чей отчёт пришёл
     objs = _read_objs(path)
     chain = _active_chain(objs)
     for o in objs:
         t = o.get('type')
-        if t not in ('user', 'assistant'):
+        if t not in ('user', 'assistant', 'attachment'):
             continue
         if chain and o.get('uuid') not in chain:
+            continue
+        if t == 'attachment':
+            note = _task_entry((o.get('attachment') or {}).get('prompt', ''), launched)
+            if note is not None:
+                entries.append(note)
             continue
         c = o.get('message', {}).get('content')
         if o.get('isMeta'):
             entries += _meta_attachments(_user_text(o))
             continue
+        # отчёт фоновой задачи приходит и отдельной записью, и
+        # приклеенным к реплике — тогда нужны обе записи
+        note = _task_entry(_user_text(o), launched) if t == 'user' else None
+        if note is not None:
+            entries.append(note)
         if isinstance(c, str):
-            txt = _entry_text(t, c)
-            if txt:
-                entries.append(Entry(t, txt))
+            entry = _text_entry(t, _entry_text(t, c))
+            if entry is not None:
+                entries.append(entry)
         elif isinstance(c, list):
             tur = o.get('toolUseResult')
             for b in c:
                 if isinstance(b, dict):
-                    _append_block(entries, t, b, calls, tur)
+                    _append_block(entries, t, b, calls, launched, tur)
     return entries
 
 
@@ -258,19 +322,29 @@ def _entry_text(kind: str, raw: str) -> str:
     return user_display(txt) if kind == 'user' else txt
 
 
+def _text_entry(kind: str, txt: str) -> 'Entry | None':
+    """Реплика — или служебная отметка о прерывании: её пользователь
+    не писал, и репликой она не является.
+    """
+    if _INTERRUPT_RE.match(txt):
+        return Entry('notice', INTERRUPTED)
+    return Entry(kind, txt) if txt else None
+
+
 def _append_block(entries: list, kind: str, block: dict, calls: dict,
-                  tur: 'dict | None' = None) -> None:
+                  launched: dict, tur: 'dict | None' = None) -> None:
     bt = block.get('type')
     if bt == 'text':
-        txt = _entry_text(kind, block.get('text', ''))
-        if txt:
-            entries.append(Entry(kind, txt))
+        entry = _text_entry(kind, _entry_text(kind, block.get('text', '')))
+        if entry is not None:
+            entries.append(entry)
     elif bt == 'tool_use':
         inp = block.get('input')
         inp = inp if isinstance(inp, dict) else None
         name = block.get('name', 'tool')
         if block.get('id'):
             calls[block['id']] = (name, inp, len(entries))
+            launched[block['id']] = (name, inp)
         entries.append(Entry('tool', name=name, tool_input=inp))
     elif bt == 'tool_result':
         tid = block.get('tool_use_id')
@@ -284,6 +358,10 @@ def _append_block(entries: list, kind: str, block: dict, calls: dict,
                     entries[pos] = entries[pos]._replace(name=name)
             else:
                 txt = _answers_text(tur) or txt
+        if isinstance(tur, dict) and tur.get('isAsync'):
+            # метаданные запуска (agentId и как продолжить агента)
+            # читателю ничего не говорят
+            txt = ''
         patch, stat = (), ()
         if isinstance(tur, dict) and isinstance(tur.get('structuredPatch'), list):
             patch, stat = _patch_lines(tur['structuredPatch'])

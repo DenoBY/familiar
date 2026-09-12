@@ -5,6 +5,35 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Added
+
+- session: у фонового агента появился конец. Сам вызов читается как
+  `⎿ Running in background` вместо сырого `Async_launched`, а когда агент
+  отчитывается, в транскрипте видно, чья это была задача и чем кончилась —
+  `⎿ Agent(Audit moon phase rounding) finished` и сводка агента под ней,
+  сворачиваемая как любой другой вывод. Так же показываются фоновые команды и
+  мониторы; отчёт о задаче, запущенной в прошлой сессии, остаётся безымянным
+  (`Background task finished`), но сводку сохраняет.
+
+### Changed
+
+- session: MCP-инструмент зовётся так же, как в Claude Code, —
+  `tinkerwell - evaluate-remote-php-code` вместо
+  `mcp__tinkerwell__evaluate-remote-php-code`, — а в скобках стоит код или
+  запрос, а не первая строка вызова (ей оказывался путь к проекту).
+- session: отклонённый пользователем вызов читается как `⎿ Rejected by user`
+  вместо абзаца инструкций, который Claude Code пишет для модели, а
+  `[Request interrupted by user]` висит под репликой отметкой, а не выдаёт себя
+  за написанное пользователем.
+
+### Fixed
+
+- session: вызовы, чей вывод не текст, больше не рисуют пустой `⎿`. Чтение
+  картинки говорит `⎿ Read image`, поиск инструмента перечисляет найденное, а
+  `Skill(release)` не повторяет сам себя строкой `Launching skill: release`.
+
 ## [0.34.0] — 2026-09-04
 
 ### Added

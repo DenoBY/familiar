@@ -361,6 +361,96 @@ class TestAskUserQuestion(unittest.TestCase):
         self.assertNotIn('⎿', ''.join(lines))
 
 
+class TestBackgroundTask(unittest.TestCase):
+    """Отчёт фоновой задачи приходит отдельной записью — вызов к
+    этому моменту давно отрисован и свой вывод получил.
+    """
+
+    def _task(self, expanded=frozenset(), **kw):
+        entry = Entry('task', kw.pop('text', ''), status=kw.pop('status', 'completed'),
+                      **kw)
+        return texts(T.transcript_lines([entry], W, expanded=expanded))
+
+    def test_head_names_the_call_and_the_outcome(self):
+        lines = self._task(name='Agent', tool_input={'description': 'Разведка'})
+        self.assertEqual(lines[0], '  ⎿  Agent(Разведка) finished')
+
+    def test_unknown_call_stays_nameless(self):
+        # запуск был в прошлой сессии — в этой о нём ничего нет
+        self.assertEqual(self._task(text='всё готово')[0],
+                         '  ⎿  Background task finished')
+
+    def test_summary_repeating_the_head_is_dropped(self):
+        lines = [ln for ln in self._task(
+            name='Agent', tool_input={'description': 'Разведка'},
+            text='Agent "Разведка" finished') if ln]
+        self.assertEqual(lines, ['  ⎿  Agent(Разведка) finished'])
+
+    def test_long_summary_folds(self):
+        text = '\n'.join(f'строка {i}' for i in range(6))
+        lines = [ln for ln in self._task(text=text) if ln]
+        self.assertEqual(lines[1:], ['     строка 0', '     строка 1',
+                                     '     … +4 lines (ctrl+o to expand)'])
+        self.assertIn('     строка 5', self._task(text=text, expanded={0}))
+
+    def test_failed_task_is_red(self):
+        lines = T.transcript_lines(
+            [Entry('task', 'exit code 1', status='failed', error=True)], W)
+        self.assertEqual(lines[0].text, '  ⎿  Background task failed')
+        self.assertEqual(lines[0].color, 'red')
+
+
+class TestMutedOutput(unittest.TestCase):
+    """Вывод, который нечего показывать: пустой «⎿» — мусор."""
+
+    def test_empty_output_draws_nothing(self):
+        entries = [_tool('ToolSearch', query='select:Monitor'),
+                   Entry('result', '', name='ToolSearch', tool_input={})]
+        self.assertNotIn('⎿', ''.join(texts(T.transcript_lines(entries, W))))
+
+    def test_skill_output_echoing_the_head_is_dropped(self):
+        entries = [_tool('Skill', skill='release'),
+                   Entry('result', 'Launching skill: release', name='Skill')]
+        lines = [ln for ln in texts(T.transcript_lines(entries, W)) if ln]
+        self.assertEqual(lines, ['⏺ Skill(release)'])
+
+    def test_failed_skill_still_shows(self):
+        entries = [_tool('Skill', skill='nope'),
+                   Entry('result', 'no such skill', name='Skill', error=True)]
+        self.assertIn('  ⎿  Error: no such skill',
+                      texts(T.transcript_lines(entries, W)))
+
+    def test_summary_without_body_has_no_expand_hint(self):
+        # вывод Read картинки — сама картинка: раскрывать нечего
+        lines = [ln for ln in T.transcript_lines(
+            [Entry('result', '', name='Read', tool_input={'file_path': '/p/a.png'},
+                   summary='Read image')], W) if ln.text]
+        self.assertEqual([ln.text for ln in lines], ['  ⎿  Read image'])
+        self.assertEqual(lines[0].entry, -1)    # раскрывать нечего — и клик не нужен
+
+    def test_rejected_call_is_not_an_error_message(self):
+        lines = texts(T.transcript_lines(
+            [Entry('result', 'Rejected by user', name='Bash', error=True)], W))
+        self.assertEqual(lines[0], '  ⎿  Rejected by user')
+
+    def test_interrupt_hangs_like_a_note(self):
+        entries = [Entry('user', 'стоп'), Entry('notice', 'Interrupted by user')]
+        self.assertIn('  ⎿  Interrupted by user', texts(T.transcript_lines(entries, W)))
+
+
+class TestMcpName(unittest.TestCase):
+    def test_server_and_tool_are_readable(self):
+        self.assertEqual(T.display_name('mcp__tinkerwell__evaluate-local-php-code'),
+                         'tinkerwell - evaluate-local-php-code')
+
+    def test_argument_prefers_the_meaningful_key(self):
+        # первым строковым ключом идёт путь к проекту — смысл в code
+        arg = T.tool_arg('mcp__tinkerwell__evaluate-local-php-code',
+                         {'siteRoot': '/p', 'connectionId': 'prod',
+                          'code': 'User::count();'})
+        self.assertEqual(arg, 'User::count();')
+
+
 class TestToolGroup(unittest.TestCase):
     SERIES = [
         _tool('Bash', command='ls /p'),

@@ -52,21 +52,67 @@ class TestConversation(TmpDirTest):
         write_jsonl(p, [{'type': 'user', 'message': {'content': blob}}])
         self.assertEqual(Cv.load_conversation(p), [Cv.Entry('user', 'вопрос')])
 
-    def test_task_notification_is_dropped(self):
-        # отчёт фоновой задачи — килобайты JSON,
-        # которые пользователь не писал
+    def test_task_notification_becomes_a_report(self):
+        # отчёт фоновой задачи — не реплика пользователя, но и не
+        # шум: только он говорит, чем кончился фоновый агент
         p = self.path('tn.jsonl')
         blob = ('<task-notification>\n<task-id>a1</task-id>\n'
-                '<result>{"findings": []}</result>\n</task-notification>\n'
-                'продолжай')
-        write_jsonl(p, [
-            {'type': 'user', 'message': {'content': blob}},
-            {'type': 'user', 'message': {'content':
-                '<task-notification>\n<status>ok</status>\n</task-notification>'}},
+                '<status>completed</status>\n<summary>нашёл причину</summary>\n'
+                '</task-notification>\nпродолжай')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': blob}}])
+        # из смешанной записи выходят обе: сначала отчёт, потом речь
+        self.assertEqual(Cv.load_conversation(p), [
+            Cv.Entry('task', 'нашёл причину', status='completed'),
+            Cv.Entry('user', 'продолжай'),
         ])
-        # от смешанной записи остаётся речь, чисто
-        # служебная пропадает целиком
-        self.assertEqual(Cv.load_conversation(p), [Cv.Entry('user', 'продолжай')])
+
+    def test_task_report_names_the_call_that_started_it(self):
+        # отчёт знает только id вызова — имя и аргументы берём у
+        # самого вызова, иначе читателю не понять, чья это задача
+        p = self.path('agent.jsonl')
+        write_jsonl(p, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 't1', 'name': 'Agent',
+                 'input': {'description': 'Разведка'}}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 't1',
+                 'content': 'Async agent launched. agentId: a1'}]},
+             'toolUseResult': {'isAsync': True, 'status': 'async_launched'}},
+            {'type': 'attachment', 'attachment': {'prompt':
+                '<task-notification>\n<tool-use-id>t1</tool-use-id>\n'
+                '<status>failed</status>\n<summary>упал</summary>\n'
+                '</task-notification>'}},
+        ])
+        entries = Cv.load_conversation(p)
+        self.assertEqual(entries[1], Cv.Entry(
+            'result', '', name='Agent', tool_input={'description': 'Разведка'},
+            summary='Running in background'))
+        self.assertEqual(entries[2], Cv.Entry(
+            'task', 'упал', name='Agent', tool_input={'description': 'Разведка'},
+            error=True, status='failed'))
+
+    def test_interrupt_is_not_a_user_line(self):
+        # «[Request interrupted by user]» пишет сам Claude Code
+        p = self.path('int.jsonl')
+        write_jsonl(p, [
+            {'type': 'user', 'message': {'content': '[Request interrupted by user]'}},
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'text', 'text': '[Request interrupted by user for tool use]'}]}},
+        ])
+        self.assertEqual(Cv.load_conversation(p), [
+            Cv.Entry('notice', Cv.INTERRUPTED),
+            Cv.Entry('notice', Cv.INTERRUPTED),
+        ])
+
+    def test_rejected_tool_use_keeps_only_the_fact(self):
+        # в отказе — абзац инструкций модели, читателю важен сам факт
+        p = self.path('rej.jsonl')
+        write_jsonl(p, [{'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 't1', 'is_error': True,
+             'content': "The user doesn't want to proceed with this tool use. "
+                        'The tool use was rejected. STOP what you are doing.'}]}}])
+        self.assertEqual(Cv.load_conversation(p),
+                         [Cv.Entry('result', Cv.REJECTED, error=True)])
 
     def test_image_meta_becomes_an_attachment(self):
         # isMeta-запись «[Image: source: …/13.png]» — не реплика,

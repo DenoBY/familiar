@@ -5,6 +5,36 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- session: a background agent now has an end. The call itself reads as
+  `⎿ Running in background` instead of the raw `Async_launched`, and when the
+  agent reports back, the transcript says whose task it was and how it ended —
+  `⎿ Agent(Audit moon phase rounding) finished` with the agent's summary under
+  it, folded like any other output. The same goes for background commands and
+  monitors; a report whose call started in an earlier session stays nameless
+  (`Background task finished`) but keeps its summary.
+
+### Changed
+
+- session: an MCP tool is named the way Claude Code names it —
+  `tinkerwell - evaluate-remote-php-code` instead of
+  `mcp__tinkerwell__evaluate-remote-php-code` — and its argument is the code or
+  the query, not the first string in the call (which used to be the project
+  path).
+- session: a call the user refused reads as `⎿ Rejected by user` instead of the
+  paragraph of instructions Claude Code writes for the model, and
+  `[Request interrupted by user]` hangs under the turn as a note instead of
+  posing as something the user typed.
+
+### Fixed
+
+- session: calls whose output is not text no longer draw an empty `⎿`. Reading
+  an image says `⎿ Read image`, a tool search lists what it found, and
+  `Skill(release)` no longer repeats itself with `Launching skill: release`.
+
 ## [0.34.0] — 2026-09-04
 
 ### Added

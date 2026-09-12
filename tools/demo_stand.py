@@ -567,6 +567,19 @@ class _Session:
             rec['toolUseResult'] = extra
         self.records.append(rec)
 
+    def task_note(self, tid: str, status: str, summary: str) -> None:
+        """Отчёт фоновой задачи: приходит отдельной записью много
+        позже вызова и ссылается на него по id.
+        """
+        rec = self._base('attachment')
+        rec['attachment'] = {
+            'type': 'queued_command',
+            'prompt': (f'<task-notification>\n<tool-use-id>{tid}</tool-use-id>\n'
+                       f'<status>{status}</status>\n'
+                       f'<summary>{summary}</summary>\n</task-notification>'),
+        }
+        self.records.append(rec)
+
     def ai_title(self, title: str) -> None:
         self.records.append(
             {'type': 'ai-title', 'aiTitle': title, 'sessionId': self.sid})
@@ -654,6 +667,14 @@ def _rich_session(repo: str, now: datetime) -> _Session:
         ]}]})
     tid = s.tool('Bash', {'command': 'python3 -m unittest discover -s tests'})
     s.result(tid, '....\n' + '-' * 70 + '\nRan 4 tests in 0.003s\n\nOK')
+    agent = s.tool('Agent', {'description': 'Audit moon phase rounding'})
+    s.result(agent, 'Async agent launched successfully.\nagentId: a1f3',
+             extra={'isAsync': True, 'status': 'async_launched', 'agentId': 'a1f3'})
+    s.assistant('The suite is green. A background agent is auditing the same '
+                'rounding in the moon phase code — meanwhile, the fix itself:')
+    s.task_note(agent, 'completed',
+                'Checked 3 call sites in sundial/moon.py: all of them already '
+                'round, none truncate. No further changes needed.')
     s.assistant('Fixed — the bug was plain truncation:\n\n'
                 '```python\n'
                 'minutes = round(raw_minutes)  # was: int(raw_minutes)\n'
