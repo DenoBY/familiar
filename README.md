@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="config/icon/familiar.png" alt="familiar" width="132">
+</p>
+
 # familiar
 
 [English](README.md) · [Русский](README.ru.md)

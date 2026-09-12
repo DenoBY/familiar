@@ -5,6 +5,20 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.38.0] — 2026-09-12
+
+### Added
+
+- terminal: kitty gets the familiar app icon — a kitty peeking out of a
+  terminal with Claude in it. `familiar enable` copies it next to your config
+  as `kitty.app.icns`, where kitty reads it at startup; it comes with the
+  terminal config and `--icon` / `--no-icon` decide it on their own. `familiar
+  disable` takes it back off, so kitty returns to its own icon — an icon you
+  had there before familiar is kept aside and put back, and one you dropped in
+  yourself afterwards is left alone. The icon needs a full restart, and the
+  Dock may need a `killall Dock` to let go of its cached copy.
+- The README now opens with that same mascot.
+
 ## [0.37.0] — 2026-09-12
 
 ### Added

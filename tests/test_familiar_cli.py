@@ -509,6 +509,90 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(leftovers, [])
 
 
+class IconTests(unittest.TestCase):
+    """Иконка приложения: enable кладёт свою, disable возвращает
+    kitty её собственную, а чужую не теряет по дороге.
+    """
+
+    FOREIGN = b"not our icon"
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.config_dir = self.dir.name
+        self.icon = os.path.join(self.config_dir, familiar.ICON_FILE)
+        self.backup = self.icon + familiar.BACKUP_SUFFIX
+        self._old_env = os.environ.get("KITTY_CONFIG_DIRECTORY")
+        os.environ["KITTY_CONFIG_DIRECTORY"] = self.config_dir
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        if self._old_env is None:
+            os.environ.pop("KITTY_CONFIG_DIRECTORY", None)
+        else:
+            os.environ["KITTY_CONFIG_DIRECTORY"] = self._old_env
+
+    def _is_ours(self):
+        return familiar._icon_is_ours(self.icon)
+
+    def test_source_icon_ships_with_the_config(self):
+        self.assertTrue(os.path.exists(familiar.icon_source()))
+
+    def test_terminal_config_brings_the_icon(self):
+        out = _run(["enable", "--all", "-y", "--no-lsp"])
+        self.assertTrue(self._is_ours())
+        self.assertIn("icon:", out)
+        self.assertIn("icon:       yes", _run(["status"]))
+
+    def test_kittens_only_leaves_the_icon_alone(self):
+        _run(["enable", "session"])
+        self.assertFalse(os.path.exists(self.icon))
+        self.assertIn("icon:       no", _run(["status"]))
+
+    def test_flags_override_the_default(self):
+        _run(["enable", "session", "--icon"])
+        self.assertTrue(self._is_ours())
+        _run(["disable"])
+        _run(["enable", "--all", "-y", "--no-lsp", "--no-icon"])
+        self.assertFalse(os.path.exists(self.icon))
+
+    def test_disable_takes_it_back(self):
+        _run(["enable", "--all", "-y", "--no-lsp"])
+        out = _run(["disable"])
+        self.assertFalse(os.path.exists(self.icon))
+        self.assertIn("icon:", out)
+
+    def test_icon_set_before_familiar_comes_back(self):
+        with open(self.icon, "wb") as f:
+            f.write(self.FOREIGN)
+
+        _run(["enable", "--all", "-y", "--no-lsp"])
+        self.assertTrue(self._is_ours())
+        with open(self.backup, "rb") as f:
+            self.assertEqual(f.read(), self.FOREIGN)
+
+        _run(["disable"])
+        with open(self.icon, "rb") as f:
+            self.assertEqual(f.read(), self.FOREIGN)
+
+    def test_icon_replaced_by_hand_is_not_removed(self):
+        _run(["enable", "--all", "-y", "--no-lsp"])
+        with open(self.icon, "wb") as f:
+            f.write(self.FOREIGN)
+
+        _run(["disable"])
+        with open(self.icon, "rb") as f:
+            self.assertEqual(f.read(), self.FOREIGN)
+
+    def test_enable_twice_keeps_the_first_backup(self):
+        with open(self.icon, "wb") as f:
+            f.write(self.FOREIGN)
+        _run(["enable", "--all", "-y", "--no-lsp"])
+        _run(["enable", "--all", "-y", "--no-lsp"])
+        with open(self.backup, "rb") as f:
+            self.assertEqual(f.read(), self.FOREIGN)
+
+
 if __name__ == "__main__":
     unittest.main()
 

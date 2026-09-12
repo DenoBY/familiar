@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import filecmp
 import json
 import os
 import shutil
@@ -34,6 +35,9 @@ MARKER_END = "# <<< familiar <<<"
 
 GENERATED_CONF = "familiar.conf"
 BACKUP_SUFFIX = ".familiar.bak"
+# Имя задано kitty: иконку приложения она берёт из каталога конфига
+# именно под этим именем (macOS), на старте.
+ICON_FILE = "kitty.app.icns"
 
 # Порядок ключей канонический (session, review, log) —
 # render_generated_conf выводит киты именно в нём, независимо от
@@ -450,6 +454,52 @@ def _backup_once(kitty_conf: str) -> str | None:
     return None
 
 
+def icon_source() -> str:
+    return os.path.join(config_source_dir(), "icon", ICON_FILE)
+
+
+def _icon_is_ours(target: str) -> bool:
+    source = icon_source()
+    return (os.path.exists(target) and os.path.exists(source)
+            and filecmp.cmp(target, source, shallow=False))
+
+
+def _install_icon(config_dir: str) -> str | None:
+    """Кладёт иконку familiar в каталог конфига kitty.
+
+    Чужой файл под этим именем сначала уходит в .bak: иконка могла
+    быть поставлена пользователем до familiar, и disable должен уметь
+    вернуть именно её, а не просто снять нашу.
+    """
+    source = icon_source()
+    if not os.path.exists(source):
+        return None
+    os.makedirs(config_dir, exist_ok=True)
+    target = os.path.join(config_dir, ICON_FILE)
+    backup = target + BACKUP_SUFFIX
+    if (os.path.exists(target) and not os.path.exists(backup)
+            and not _icon_is_ours(target)):
+        shutil.copy2(target, backup)
+    shutil.copy2(source, target)
+    return target
+
+
+def _remove_icon(config_dir: str) -> bool:
+    """Снимает нашу иконку, возвращая на её место спрятанную чужую.
+
+    Файл, не совпадающий с нашим, не трогаем совсем: значит его
+    поставили поверх, и это уже выбор пользователя.
+    """
+    target = os.path.join(config_dir, ICON_FILE)
+    if not _icon_is_ours(target):
+        return False
+    os.remove(target)
+    backup = target + BACKUP_SUFFIX
+    if os.path.exists(backup):
+        os.replace(backup, target)
+    return True
+
+
 def _confirm(prompt: str) -> bool:
     try:
         return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
@@ -485,6 +535,13 @@ def _resolve_restore(args: argparse.Namespace) -> bool:
     return bool(args.all) if args.restore_session is None else args.restore_session
 
 
+def _resolve_icon(args: argparse.Namespace, with_terminal: bool) -> bool:
+    """Иконка — часть внешнего вида: идёт с терминал-конфигом,
+    явный флаг перекрывает.
+    """
+    return with_terminal if args.icon is None else bool(args.icon)
+
+
 def _ensure_session_placeholder() -> None:
     """Заглушка снимка: startup_session не должен указывать в пустоту.
 
@@ -514,6 +571,7 @@ def cmd_enable(args: argparse.Namespace) -> None:
     backup = _backup_once(kitty_conf)
     if restore:
         _ensure_session_placeholder()
+    icon = _install_icon(config_dir) if _resolve_icon(args, with_terminal) else None
     _write(os.path.join(config_dir, GENERATED_CONF),
            render_generated_conf(names, with_terminal, args.theme, restore))
     _write(kitty_conf, upsert_managed_block(_read(kitty_conf),
@@ -526,9 +584,16 @@ def cmd_enable(args: argparse.Namespace) -> None:
     if args.theme != DEFAULT_THEME:
         print(f"theme:   {args.theme}"
               + ("" if with_terminal else " (kittens only — no --terminal)"))
+    if icon:
+        print(f"icon:    {icon}")
     if backup:
         print(f"backup:  {backup}")
     print("reload kitty (Cmd+Ctrl+, on macOS) or restart it to apply")
+    if icon:
+        # Иконку kitty читает только на старте, а Dock держит свою
+        # копию и после перезапуска — отсюда две отдельные строки.
+        print("the icon needs a full restart; if the Dock keeps the old "
+              "one: killall Dock")
 
 
 def _offer_lsp(names: list[str], args: argparse.Namespace) -> None:
@@ -600,6 +665,9 @@ def cmd_disable(args: argparse.Namespace) -> None:
     else:
         print("familiar is not enabled — nothing to remove")
 
+    if _remove_icon(config_dir):
+        print("icon:     removed, kitty is back to its own")
+
     # --restore работает и при уже снятом блоке: откат из .bak —
     # отдельное действие, а не продолжение disable.
     restored = False
@@ -642,6 +710,8 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"terminal:   {'yes' if _has_terminal_include(generated) else 'no'}")
         print(f"restore:    {'yes' if _has_restore(generated) else 'no'}")
         print(f"theme:      {wired_theme(generated)}")
+    has_icon = _icon_is_ours(os.path.join(config_dir, ICON_FILE))
+    print(f"icon:       {'yes' if has_icon else 'no'}")
     backup = kitty_conf + BACKUP_SUFFIX
     if os.path.exists(backup):
         print(f"backup:     {backup}")
@@ -861,6 +931,10 @@ def build_parser() -> argparse.ArgumentParser:
                         default=None,
                         help="keep a snapshot of open windows and bring it back "
                              "on start and on Cmd+Shift+T (default: on with --all)")
+    enable.add_argument("--icon", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="use the familiar app icon for kitty "
+                             "(default: on with the terminal config)")
     enable.add_argument("--theme", choices=THEMES, default=DEFAULT_THEME,
                         help="color theme: kitten syntax highlighting, plus the "
                              "terminal palette when --terminal/--all is used")
