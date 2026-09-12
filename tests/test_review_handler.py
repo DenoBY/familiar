@@ -456,6 +456,108 @@ class ReviewHandlerTest(unittest.TestCase):
         self._select_row(lambda r: r['type'] == 'dir' and r['name'] == 'dir')
         self.assertEqual(self.h._revert_targets(), {self.repo: (['dir/sub.txt'], [])})
 
+    # --- откат блока изменений с полей диффа ---
+
+    def _read(self, rel):
+        with open(os.path.join(self.repo, rel)) as f:
+            return f.read()
+
+    def _click_marker(self, di, col=0):
+        sticky = 1 if self.h.sticky_line() else 0
+        self.h.out = []
+        self.h.on_click(MouseEvent(cell_x=self.h.left_width() + 3 + col,
+                                   cell_y=di - self.h.diff_offset + sticky + 2))
+
+    def _two_edits(self):
+        """Две правки big.txt: два блока в одном файле."""
+        self.write('big.txt', ''.join(
+            (f'line {i}\n' if i not in (5, 15) else f'line {i} EDITED\n')
+            for i in range(30)))
+        self.h.refresh()
+        self._select_file('big.txt')
+
+    def test_marker_click_reverts_only_its_own_block(self):
+        self._two_edits()
+        self._click_marker(self.h.diff_hunks[0])
+        text = self._read('big.txt')
+        self.assertIn('line 5\n', text)              # первый блок откачен
+        self.assertIn('line 15 EDITED\n', text)      # второй на месте
+
+    def test_marker_is_drawn_next_to_a_changed_block(self):
+        self._select_file('big.txt')
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn('»', draw_text(self.h))
+
+    def test_reverting_the_only_block_leaves_the_file_clean(self):
+        self._select_file('sub.txt')
+        self._click_marker(self.h.diff_hunks[0])
+        self.assertNotIn('dir/sub.txt', self._status())
+
+    def test_click_on_the_line_number_does_not_revert(self):
+        self._two_edits()
+        before = self._read('big.txt')
+        self._click_marker(self.h.diff_hunks[0], col=1)
+        self.assertEqual(self._read('big.txt'), before)
+
+    def test_new_file_has_no_marker(self):
+        self._select_file('new.txt')
+        self.assertFalse(self.h._can_revert())
+
+    def test_no_marker_while_comparing_with_base(self):
+        self._select_file('big.txt')
+        self.h.source.vs_base = True
+        self.assertFalse(self.h._can_revert())
+
+    def test_hover_over_the_marker_offers_a_hand(self):
+        self._select_file('big.txt')
+        di = self.h.diff_hunks[0]
+        sticky = 1 if self.h.sticky_line() else 0
+        ev = MouseEvent(cell_x=self.h.left_width() + 3, cell_y=di + sticky + 2,
+                        type=EventType.MOVE)
+        self.h._on_mouse(ev)
+        self.assertEqual(self.h.revert_row, di)
+        self.assertEqual(self.h._wanted_pointer(ev), 'pointer')
+
+    def test_revert_takes_the_change_out_of_the_index_too(self):
+        self._select_file('big.txt')
+        self.h.stage_selected()
+        self.assertEqual(self._status()['big.txt'], 'M ')
+        self._select_file('big.txt')
+        self._click_marker(self.h.diff_hunks[0])
+        self.assertNotIn('big.txt', self._status())   # ни на диске, ни в индексе
+
+    def test_hover_draws_the_marker_over_its_own_cell(self):
+        self._select_file('big.txt')
+        di = self.h.diff_hunks[0]
+        sticky = 1 if self.h.sticky_line() else 0
+        lw = self.h.left_width()
+        self.h._on_mouse(MouseEvent(cell_x=lw + 3, cell_y=di + sticky + 2,
+                                    type=EventType.MOVE))
+        self.h.out = []
+        self.h.draw_screen()
+        self.assertIn(f'\x1b[{lw + 4}G»', draw_text(self.h))
+
+    def test_hover_leaves_with_the_mouse(self):
+        self._select_file('big.txt')
+        di = self.h.diff_hunks[0]
+        sticky = 1 if self.h.sticky_line() else 0
+        lw = self.h.left_width()
+        self.h._on_mouse(MouseEvent(cell_x=lw + 3, cell_y=di + sticky + 2,
+                                    type=EventType.MOVE))
+        self.h._on_mouse(MouseEvent(cell_x=lw + 9, cell_y=di + sticky + 2,
+                                    type=EventType.MOVE))
+        self.assertIsNone(self.h.revert_row)
+
+    def test_revert_refuses_when_the_file_changed_on_disk(self):
+        self._select_file('big.txt')
+        di = self.h.diff_hunks[0]
+        self.write('big.txt', 'written while the diff was on screen\n')
+        self._click_marker(di)
+        self.assertEqual(self._read('big.txt'),
+                         'written while the diff was on screen\n')
+        self.assertIn('press r to refresh', draw_text(self.h))
+
     # --- навигация ---
 
     def test_move_is_bounded(self):

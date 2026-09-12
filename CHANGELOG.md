@@ -5,6 +5,20 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.36.0] — 2026-09-12
+
+### Added
+
+- review: a block of changes can be rolled back from the diff itself. Every
+  block carries a `»` marker on the left margin — click it and those lines go
+  back to the committed version while the rest of the file's edits stay. The
+  marker is in both views (unified and the final file), stays away from new
+  files and from the comparison with the base branch, and a file that changed
+  on disk since the diff was drawn is left alone with a `press r to refresh`
+  note. A change that was already staged leaves the index too — it will not
+  come back with the commit, and the file drops out of the tree once its last
+  block is gone.
+
 ## [0.35.0] — 2026-09-12
 
 ### Added

@@ -54,6 +54,12 @@ _DEF_RE = re.compile(
     r'(?:def|class|func|function|fn|module|interface|type|struct|impl|trait|enum|'
     r'namespace|sub|method)\b')
 SEL_BG = CURSOR_BG
+# Маркер отката на полях блока изменений: клик по нему возвращает блок
+# к версии из git. Просит его тот, кто правит рабочее дерево (review);
+# в снимке коммита (log) откатывать нечего.
+REVERT_MARK = '»'
+REVERT_FG = 'gray'
+REVERT_HOVER_FG = 231   # под мышью: белый читается и на add-, и на del-заливке
 # Оттенок фокуса/выделения для строк со своим фоном: на add/del — ярче
 # того же цвета (иначе курсор сливается с фоном строки), на контексте —
 # серый.
@@ -71,30 +77,41 @@ def _split_code(body: str, gutter_w: int) -> 'tuple[str, str, str]':
     return body[:gutter_w], body[gutter_w:gutter_w + 2], body[gutter_w + 2:]
 
 
-def _geometry(one_col: bool, width: int) -> tuple[int, int]:
+# Колонка маркера отката плюс отступ до номеров: без своего места
+# маркер съедал бы цифру длинного номера и липнул к нему.
+REVERT_COLS = 2
+
+
+def _geometry(one_col: bool, width: int, reverts: bool = False) -> tuple[int, int]:
     """(ширина гуттера, ширина колонки кода). Два символа между ними —
     знак строки (+/− в unified, маркер на полях в final).
     """
     gutter_w = (_NUMW + 1) if one_col else (2 * _NUMW + 2)
+    gutter_w += REVERT_COLS if reverts else 0
     return gutter_w, max(1, width - gutter_w - 2)
 
 
-def gutter_width(one_col: bool, width: int) -> int:
+def gutter_width(one_col: bool, width: int, reverts: bool = False) -> int:
     """Ширина гуттера с номерами строк — граница «клик по номеру» vs
     «клик по коду» в просмотрщике.
     """
-    return _geometry(one_col, width)[0]
+    return _geometry(one_col, width, reverts)[0]
 
 
 def _render_diff_line(gut_plain: str, sign: str, sign_fg: 'str | None', code: str,
                       ext: str, base_bg: 'int | None', strong: 'set[int] | None',
                       strong_bg: 'int | None', num_fg: 'str | None', width: int,
-                      fgs: 'list[int | None] | None' = None) -> str:
+                      fgs: 'list[int | None] | None' = None,
+                      marker: bool = False) -> str:
     """Строка диффа: номера, знак, фон на всю ширину,
-    синтаксис + word-diff подсветка.
+    синтаксис + word-diff подсветка. marker — занять первую колонку
+    гуттера маркером отката.
     """
-    g = (styled(gut_plain, fg=num_fg, bg=base_bg)
-         if (num_fg or base_bg is not None) else gut_plain)
+    nums = gut_plain[1:] if marker else gut_plain
+    g = (styled(nums, fg=num_fg, bg=base_bg)
+         if (num_fg or base_bg is not None) else nums)
+    if marker:
+        g = styled(REVERT_MARK, fg=REVERT_FG, bg=base_bg) + g
     s = (styled(sign, fg=sign_fg, bold=True, bg=base_bg)
          if (sign_fg or base_bg is not None) else sign)
     line = g + s + render_code(code, ext, base_bg, strong, strong_bg, fgs)
@@ -182,19 +199,20 @@ class DiffSource:
 
 def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
                  hscroll: int = 0, expanded: 'dict | None' = None,
-                 expand_all: bool = False) -> DiffModel:
+                 expand_all: bool = False, reverts: bool = False) -> DiffModel:
     """Модель диффа для готового DiffSource.
 
     context — строк контекста вокруг изменений. expanded — id гэпа →
     сколько его строк уже раскрыто. expand_all — показать весь файл
-    без сворачивания. hscroll — горизонтальный сдвиг. Соседние
-    удалённая/добавленная строки спариваются — word-diff подсвечивает
-    изменившиеся слова.
+    без сворачивания. hscroll — горизонтальный сдвиг. reverts — метить
+    блоки маркером отката. Соседние удалённая/добавленная строки
+    спариваются — word-diff подсвечивает изменившиеся слова.
     """
     expanded = expanded or {}
     a, b = src.a, src.b
     one_col = src.one_col
-    _, codew = _geometry(one_col, width)
+    _, codew = _geometry(one_col, width, reverts)
+    pad = ' ' * REVERT_COLS if reverts else ''
     cols_a, cols_b = src.colors(ext, new=False), src.colors(ext, new=True)
     rows, plains, vis, hunks, linenos, gaps, kinds, fgs = (
         [], [], [], [], [], [], [], [])
@@ -206,10 +224,10 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
     def gutter(sign, old_ln, new_ln):
         if one_col:
             num = old_ln if sign == '-' else new_ln
-            return f'{num:>{_NUMW}} '
+            return f'{pad}{num:>{_NUMW}} '
         o = f'{old_ln:>{_NUMW}}' if sign in ('-', ' ') else ' ' * _NUMW
         n = f'{new_ln:>{_NUMW}}' if sign in ('+', ' ') else ' ' * _NUMW
-        return f'{o} {n} '
+        return f'{pad}{o} {n} '
 
     def clip(full):
         return truncate(full[hscroll:] if hscroll else full, codew)
@@ -250,7 +268,7 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
             cf = clip(full)
             fg = line_fgs(cols_a, i1 + k, cf)
             emit(_render_diff_line(gut, '- ', 'red', cf, ext, DEL_BG, strong,
-                                   DEL_WORD_BG, 'red', width, fg),
+                                   DEL_WORD_BG, 'red', width, fg, reverts and k == 0),
                  gut + '- ' + full, j1 + 1, bg=DEL_BG, visible=gut + '- ' + cf, fg=fg)
         for k, full in enumerate(add):
             strong = (clip_strong(strong_set(rng[k][1], rng[k][2], full))
@@ -259,7 +277,8 @@ def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
             cf = clip(full)
             fg = line_fgs(cols_b, j1 + k, cf)
             emit(_render_diff_line(gut, '+ ', 'green', cf, ext, ADD_BG, strong,
-                                   ADD_WORD_BG, 'green', width, fg),
+                                   ADD_WORD_BG, 'green', width, fg,
+                                   reverts and not rem and k == 0),
                  gut + '+ ' + full, j1 + k + 1, bg=ADD_BG, visible=gut + '+ ' + cf, fg=fg)
 
     def emit_gap(hidden, lineno, gid):
@@ -411,7 +430,8 @@ def change_map(marks: 'list[str | None]', height: int) -> 'list[str | None]':
     return out
 
 
-def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffModel:
+def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0,
+               reverts: bool = False) -> DiffModel:
     """Модель финального файла: все строки нового текста, без знаков
     +/− и без удалённых строк.
 
@@ -420,8 +440,10 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
     вырезано). Заливки внутри строки нет — код читается как код;
     что именно изменилось в строке, показывает unified-вид.
     """
-    _, codew = _geometry(True, width)
+    _, codew = _geometry(True, width, reverts)
     marks, hunks = line_marks(src)
+    starts = set(hunks) if reverts else set()
+    pad = ' ' * REVERT_COLS if reverts else ''
     cols = src.colors(ext, new=True)
     rows, plains, vis, linenos, fgs = [], [], [], [], []
     for j, raw in enumerate(src.b):
@@ -429,12 +451,12 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
         mark = marks[j]
         char = _MARK_CHAR.get(mark, _MARK_CHANGE) if mark is not None else ' '
         sign = char + ' '
-        gut = f'{j + 1:>{_NUMW}} '
+        gut = f'{pad}{j + 1:>{_NUMW}} '
         cf = truncate(full[hscroll:] if hscroll else full, codew)
         fg = fit_fgs(cols[j] if (cols is not None and j < len(cols)) else None,
                      hscroll, len(cf))
         rows.append(_render_diff_line(gut, sign, MARK_FG.get(mark), cf, ext, None,
-                                      None, None, 'gray', width, fg))
+                                      None, None, 'gray', width, fg, j in starts))
         # маркер входит в plain: под курсором печатается именно plain,
         # иначе строка дёргалась бы влево на ширину маркера
         plains.append(gut + sign + full)
@@ -446,11 +468,73 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0) -> DiffM
                      [None] * n, [None] * n, vis, fgs)
 
 
-def max_hscroll(src: DiffSource, width: int, final: bool = False) -> int:
+# ─────────────────── откат блока изменений ───────────────────
+
+def hunk_ops(src: DiffSource) -> 'list[tuple]':
+    """Блоки изменений в том же порядке, в каком они идут в диффе."""
+    return [op for op in src.ops if op[0] != 'equal']
+
+
+def op_at_row(src: DiffSource, hunks: list[int], di: int) -> 'tuple | None':
+    """Блок, которому принадлежит строка unified-диффа: блок занимает
+    подряд свои удалённые и добавленные строки, начиная с hunks[k].
+    """
+    for start, op in zip(hunks, hunk_ops(src)):
+        _tag, i1, i2, j1, j2 = op
+        if start <= di < start + (i2 - i1) + (j2 - j1):
+            return op
+    return None
+
+
+def op_at_line(src: DiffSource, line: int) -> 'tuple | None':
+    """Блок для строки нового файла (final-вид): её собственное
+    изменение, а если его нет — удаление, чья метка стоит на её полях
+    (своей строки у вырезанного кода не осталось).
+    """
+    j = line - 1
+    ops = hunk_ops(src)
+    for op in ops:
+        if op[3] <= j < op[4]:
+            return op
+    for op in ops:
+        _tag, _i1, _i2, j1, j2 = op
+        if j1 == j2 and src.b and _del_row(j1, len(src.b))[0] == j:
+            return op
+    return None
+
+
+def revert_op(before: str, after: str, op: tuple) -> str:
+    """Содержимое файла, где один блок изменений возвращён к before, а
+    остальные правки сохранены.
+    """
+    _tag, i1, i2, j1, j2 = op
+    a, b = before.splitlines(keepends=True), after.splitlines(keepends=True)
+    return _join_lines(b[:j1] + a[i1:i2] + b[j2:])
+
+
+def _join_lines(lines: list[str]) -> str:
+    """Склейка строк с их переводами. Файл без хвостового перевода
+    даёт строку без него, и в середине текста она склеила бы соседей.
+    """
+    last = len(lines) - 1
+    return ''.join(s if (i == last or s.endswith('\n')) else s + '\n'
+                   for i, s in enumerate(lines))
+
+
+def revert_marker(bg: 'int | None', focused: bool) -> str:
+    """Маркер отката под мышью: горит сам, но остаётся на фоне своей
+    строки — наведение не должно стирать заливку блока.
+    """
+    return styled(REVERT_MARK, fg=REVERT_HOVER_FG, bold=True,
+                  bg=_FOCUS_SHADE.get(bg, SEL_BG) if focused else bg)
+
+
+def max_hscroll(src: DiffSource, width: int, final: bool = False,
+                reverts: bool = False) -> int:
     """Предел горизонтального скролла: дальше вправо некуда — самая
     длинная строка уже целиком помещается в видимую ширину кода.
     """
-    _, codew = _geometry(True if final else src.one_col, width)
+    _, codew = _geometry(True if final else src.one_col, width, reverts)
     longest = src.longest_b if final else src.longest
     return max(0, longest - codew)
 

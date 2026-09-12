@@ -475,8 +475,9 @@ class GotoDefinitionTest(unittest.TestCase):
         self.h.diff_offset = 0
         di = next(i for i in range(len(self.h.diff_lineno))
                   if self.h._commentable(i))
-        # колонка 0 попадает в гуттер номеров строк
-        self.h.on_click(MouseEvent(cell_x=self.h.left_width() + 3, cell_y=di + 2))
+        # клик по номеру строки: нулевая колонка гуттера отдана
+        # маркеру отката, комментарий начинается со следующей
+        self.h.on_click(MouseEvent(cell_x=self.h.left_width() + 4, cell_y=di + 2))
         self.assertEqual(self.h.input_mode, 'comment')
 
     def test_diff_col_at_hscroll_keeps_gutter_fixed(self):

@@ -15,7 +15,9 @@ log — изменения коммита.
 - `tree_repos` — уровень репозиториев над файлами (мультирепо);
 - `_diff_line_clicked` — клик по строке диффа
   (review — двойной = коммент);
-- `_empty_pane_msg` — сообщение, когда файлов нет.
+- `_empty_pane_msg` — сообщение, когда файлов нет;
+- `_can_revert` / `_revert_hunk` — откат блока изменений с полей
+  (review в рабочем дереве).
 """
 
 import os
@@ -41,7 +43,10 @@ from .diff import (
     kinds_to_marks,
     line_marks,
     max_hscroll,
+    op_at_line,
+    op_at_row,
     render_diff_cell,
+    revert_marker,
     unified_rows,
 )
 from .util import STATUS_STYLE, compose, is_noise
@@ -49,6 +54,10 @@ from .workspace import Workspace
 
 
 THUMB_FG = 244   # ползунки обеих панелей: заметнее серого текста, тише белого
+
+# Разделитель панелей; его ширина задаёт колонку, с которой начинается
+# дифф — по ней ловится клик по первой колонке гуттера.
+SEP = ' │ '
 
 # бит Shift в mouse-событии kitty. Shift+клик доходит до кита только с
 # unmap в config/keys/mouse.conf: без него kitty съедает его под своё
@@ -133,6 +142,8 @@ class DiffTreeView(OverlayHandler):
         # (row, cs, ce) — выделение куска в одной строке
         self.diff_char_sel: 'tuple[int, int, int] | None' = None
         self.diff_cur = 0
+        # строка, у маркера отката которой стоит мышь
+        self.revert_row: 'int | None' = None
         self._click_di = -1
         self._click_t = 0.0
         self.search_query = ''
@@ -161,6 +172,17 @@ class DiffTreeView(OverlayHandler):
 
     def _empty_pane_msg(self) -> str:
         return 'no files'
+
+    def _can_revert(self) -> bool:
+        """Можно ли откатывать блоки показанного диффа: маркеры на
+        полях появляются только тогда.
+        """
+        return False
+
+    def _revert_hunk(self, di: int) -> None:
+        """Откатить блок, которому принадлежит строка (клик по
+        маркеру).
+        """
 
     # --- геометрия ---
 
@@ -589,6 +611,7 @@ class DiffTreeView(OverlayHandler):
         self.diff_cur = 0
         self.diff_sel = None
         self.diff_char_sel = None
+        self.revert_row = None
         self.expanded = {}
         self.diff_src = None
         it = self.current_item()
@@ -626,14 +649,15 @@ class DiffTreeView(OverlayHandler):
         if final and not self.diff_after:
             self._set_placeholder('  (file deleted — no final content)')
             return
-        self.hscroll_max = max_hscroll(self.diff_src, rw, final)
+        reverts = self._can_revert()
+        self.hscroll_max = max_hscroll(self.diff_src, rw, final, reverts)
         self.hscroll = min(self.hscroll, self.hscroll_max)
         if final:
-            model = final_rows(self.diff_src, self.diff_ext, rw, self.hscroll)
+            model = final_rows(self.diff_src, self.diff_ext, rw, self.hscroll, reverts)
             marks = line_marks(self.diff_src)[0]
         else:
             model = unified_rows(self.diff_src, self.diff_ext, rw, 3, self.hscroll,
-                                 self.expanded, self.expand)
+                                 self.expanded, self.expand, reverts)
             marks = None
         if model.rows:
             self._set_diff(model, marks)
@@ -1195,7 +1219,7 @@ class DiffTreeView(OverlayHandler):
         lw = self.left_width()
         self.clamp_left()
         vis = self.visible_rows()
-        sep = styled(' │ ', fg='gray')
+        sep = styled(SEP, fg='gray')
         rw = self.diff_width()
         cur = self.current_item()
         cur_rel = cur['path'] if cur else None
@@ -1217,11 +1241,20 @@ class DiffTreeView(OverlayHandler):
         for r in range(vis):
             li = self.left_offset + r
             left_row = self.rows[li] if li < len(self.rows) else None
+            hover = ''
             if sticky and r == 0:
                 right = styled(truncate('▸ ' + sticky, rw), fg='cyan', bold=True)
             else:
                 di = self.diff_offset + (r - 1 if sticky else r)
                 right = self._diff_cell(di, rw, cur_rel, cur_match)
+                if di == self.revert_row:
+                    # поверх своей ячейки, а не перерисовкой строки:
+                    # иначе номер и знак потеряли бы свои цвета
+                    bg = (self.diff_kind_bg[di]
+                          if di < len(self.diff_kind_bg) else None)
+                    focused = self.focus == 'diff' and di == self.diff_cur
+                    hover = (f'\x1b[{lw + len(SEP) + 1}G'
+                             + revert_marker(bg, focused))
             left = self._left_cell(left_row, lw - 1, li)
             left += self._thumb_cell(tree_bar, r)
             tail = ''
@@ -1231,7 +1264,7 @@ class DiffTreeView(OverlayHandler):
             thumb = self._thumb_cell(diff_bar, r)
             if thumb != ' ':
                 tail += thumb_col + thumb
-            self.print(left + sep + right + tail)
+            self.print(left + sep + right + tail + hover)
 
     def _draw_input_line(self) -> None:
         if not self.input_mode:
@@ -1278,7 +1311,37 @@ class DiffTreeView(OverlayHandler):
         if self.diff_src is None:
             return 0
         one_col = self.view_mode == 'final' or self.diff_src.one_col
-        return gutter_width(one_col, self.diff_width())
+        return gutter_width(one_col, self.diff_width(), self._can_revert())
+
+    def _hunk_op_at(self, di: int) -> 'tuple | None':
+        """Блок изменений, которому принадлежит строка диффа."""
+        if self.diff_src is None or not (0 <= di < len(self.diff_rows)):
+            return None
+        if self.view_mode == 'final':
+            line = self.diff_lineno[di] if di < len(self.diff_lineno) else 0
+            return op_at_line(self.diff_src, line) if line else None
+        return op_at_row(self.diff_src, self.diff_hunks, di)
+
+    def _revert_row_at(self, ev) -> 'int | None':
+        """Строка, на маркере отката которой стоит мышь.
+
+        Маркеру отдана первая колонка гуттера и только та строка, где
+        он нарисован (начало блока): ниже по блоку в той же колонке
+        по-прежнему живёт комментарий, и промах не стоит правок.
+        """
+        if not self._can_revert() or ev.cell_x != self.left_width() + len(SEP):
+            return None
+        di = self._diff_row_at(ev)
+        if di is None or di not in self.diff_hunks or self._hunk_op_at(di) is None:
+            return None
+        return di
+
+    def _track_revert(self, ev) -> None:
+        row = self._revert_row_at(ev)
+        if row == self.revert_row:
+            return
+        self.revert_row = row
+        self.draw_screen()
 
     def _dir_row_at(self, ev) -> bool:
         r = ev.cell_y - 2
@@ -1290,6 +1353,8 @@ class DiffTreeView(OverlayHandler):
     def _pointer_for(self, ev) -> 'str | None':
         # рука — на кликабельном «раскрытии» (папка дерева, gap
         # диффа), текст — на строке кода (drag-select), иначе стрелка
+        if self._revert_row_at(ev) is not None:
+            return 'pointer'
         di = self._diff_row_at(ev)
         if di is not None:
             return 'pointer' if self._gap_at(di) is not None else 'text'
@@ -1298,6 +1363,7 @@ class DiffTreeView(OverlayHandler):
         return None
 
     def _on_mouse(self, ev) -> None:
+        self._track_revert(ev)
         self.update_pointer(ev)
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
             up = ev.buttons == MouseButton.WHEEL_UP
@@ -1370,6 +1436,9 @@ class DiffTreeView(OverlayHandler):
             return
         if self._gap_at(di) is not None:
             self.expand_gap(di)
+            return
+        if self._revert_row_at(ev) is not None:
+            self._revert_hunk(di)
             return
         now = time.monotonic()
         double = (di == self._click_di and now - self._click_t < 0.4)

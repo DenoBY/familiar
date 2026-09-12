@@ -479,5 +479,95 @@ class DiffCellTest(unittest.TestCase):
         self.assertNotIn('ctx', out)
 
 
+class TestRevertMarks(unittest.TestCase):
+    def test_marker_only_on_first_row_of_a_hunk(self):
+        m = unified('a\nb\nc\nd\n', 'a\nB\nC\nd\n', '.txt', 60, reverts=True)
+        h = m.hunks[0]
+        self.assertTrue(m.rows[h].startswith(D.REVERT_MARK))
+        self.assertFalse(any(m.rows[i].startswith(D.REVERT_MARK)
+                             for i in range(len(m.rows)) if i != h))
+
+    def test_marker_asked_for_explicitly(self):
+        m = unified('a\nb\n', 'a\nB\n', '.txt', 60)
+        self.assertFalse(any(r.startswith(D.REVERT_MARK) for r in m.rows))
+
+    def test_marker_takes_only_the_first_column(self):
+        m = unified('a\nb\n', 'a\nB\n', '.txt', 60, reverts=True)
+        h = m.hunks[0]
+        self.assertEqual(m.rows[h][1:10], m.plains[h][1:10])   # номера не съехали
+
+    def test_marker_has_its_own_column_and_a_gap(self):
+        # номер из четырёх цифр: без своей колонки маркер затёр бы
+        # первую цифру и прилип бы к остальным
+        before = ''.join(f'line {i}\n' for i in range(1200))
+        after = before.replace('line 1100\n', 'line CHANGED\n')
+        m = unified(before, after, '.txt', 80, reverts=True)
+        h = m.hunks[0]
+        self.assertTrue(m.rows[h].startswith(D.REVERT_MARK + ' '))
+        self.assertEqual(m.plains[h][:6], '  1101')     # номер цел
+
+    def test_final_view_marks_changed_line(self):
+        m = final('a\nb\nc\n', 'a\nB\nc\n', '.txt', 60, reverts=True)
+        self.assertTrue(m.rows[1].startswith(D.REVERT_MARK))
+        self.assertFalse(m.rows[0].startswith(D.REVERT_MARK))
+
+
+class TestHunkOps(unittest.TestCase):
+    def test_row_belongs_to_its_block(self):
+        src = D.DiffSource('a\nb\nc\nd\n', 'a\nB\nC\nd\n')
+        m = D.unified_rows(src, '.txt', 60)
+        start = m.hunks[0]
+        op = D.op_at_row(src, m.hunks, start)
+        self.assertEqual(op[0], 'replace')
+        # блок занимает свои удалённые и добавленные строки подряд
+        for di in range(start, start + 4):
+            self.assertEqual(D.op_at_row(src, m.hunks, di), op)
+        self.assertIsNone(D.op_at_row(src, m.hunks, start - 1))
+        self.assertIsNone(D.op_at_row(src, m.hunks, start + 4))
+
+    def test_line_of_final_view_belongs_to_its_block(self):
+        src = D.DiffSource('a\nb\nc\n', 'a\nB\nc\n')
+        self.assertEqual(D.op_at_line(src, 2)[0], 'replace')
+        self.assertIsNone(D.op_at_line(src, 1))
+
+    def test_deletion_is_found_by_the_line_that_carries_its_mark(self):
+        src = D.DiffSource('a\ngone\nb\n', 'a\nb\n')
+        self.assertEqual(D.op_at_line(src, 2)[0], 'delete')   # метка на 'b'
+
+    def test_deletion_at_the_end_marks_the_last_line(self):
+        src = D.DiffSource('a\nb\ngone\n', 'a\nb\n')
+        self.assertEqual(D.op_at_line(src, 2)[0], 'delete')
+
+
+class TestRevertOp(unittest.TestCase):
+    def test_reverts_one_block_and_keeps_the_others(self):
+        before, after = 'a\nb\nc\nd\n', 'A\nb\nc\nD\n'
+        first, last = D.hunk_ops(D.DiffSource(before, after))
+        self.assertEqual(D.revert_op(before, after, first), 'a\nb\nc\nD\n')
+        self.assertEqual(D.revert_op(before, after, last), 'A\nb\nc\nd\n')
+
+    def test_added_block_disappears(self):
+        before, after = 'a\nb\n', 'a\nnew\nb\n'
+        op = D.hunk_ops(D.DiffSource(before, after))[0]
+        self.assertEqual(D.revert_op(before, after, op), before)
+
+    def test_deleted_block_comes_back(self):
+        before, after = 'a\ngone\nb\n', 'a\nb\n'
+        op = D.hunk_ops(D.DiffSource(before, after))[0]
+        self.assertEqual(D.revert_op(before, after, op), before)
+
+    def test_line_without_trailing_newline_does_not_glue_neighbours(self):
+        # хвостовой перевод строки в файле пропал, и возвращаемый блок
+        # встаёт сразу за строкой без него
+        before, after = 'a\nb\nc\n', 'a\nb'
+        op = D.hunk_ops(D.DiffSource(before, after))[0]
+        self.assertEqual(D.revert_op(before, after, op), 'a\nb\nc\n')
+
+    def test_file_without_trailing_newline_stays_without_it(self):
+        before, after = 'a\nb', 'A\nb'
+        op = D.hunk_ops(D.DiffSource(before, after))[0]
+        self.assertEqual(D.revert_op(before, after, op), 'a\nb')
+
+
 if __name__ == '__main__':
     unittest.main()

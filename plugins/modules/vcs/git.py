@@ -153,6 +153,19 @@ def read_text(path: str) -> str:
         return ''
 
 
+def write_text(path: str, text: str) -> bool:
+    """Перезаписать файл рабочего дерева. False — не вышло, причина в
+    last_error(). Кодировка — как у чтения (read_text).
+    """
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+    except OSError as e:
+        set_error(str(e))
+        return False
+    return True
+
+
 def git_blob(root: str, ref: str, path: str) -> str:
     """Содержимое файла из git-объекта.
 

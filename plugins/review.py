@@ -12,7 +12,7 @@ review — kitten для kitty.
 (комментарии к строкам, go-to-definition, Find in Files, метки,
 редактор); тем же экраном log показывает изменения коммита. Здесь
 только специфика рабочего дерева: живой refresh, git add и откат
-правок.
+правок — файлами из дерева и блоками с полей диффа.
 
 Подключение в ~/.config/kitty/kitty.conf:
     map cmd+shift+r kitten /path/to/familiar/plugins/review.py
@@ -34,8 +34,8 @@ if '__file__' in globals():
 from modules.keylayout import to_latin
 from modules.overlay import mark_overlay, restore_layout
 from modules.text import plural, short_path
-from modules.vcs.diff import group_key, repo_key
-from modules.vcs.git import last_error
+from modules.vcs.diff import group_key, repo_key, revert_op
+from modules.vcs.git import git_blob, last_error, write_text
 from modules.vcs.screen import ReviewScreen, apply_result, run_screen
 from modules.vcs.source import UNVERSIONED, WorkTreeSource
 from modules.vcs.workspace import Workspace, by_repo, open_workspace
@@ -219,6 +219,38 @@ class ReviewHandler(ReviewScreen):
         if new:
             deleted = f', {plural(new, "new file")} will be deleted for good'
         return f' revert {plural(total, "file")}{deleted}?   y — yes   any other key — no'
+
+    # --- откат блока изменений (клик по маркеру на полях диффа) ---
+
+    def _can_revert(self) -> bool:
+        it = self.current_item()
+        # новый файл откатывать некуда — его удаляют целиком из дерева;
+        # в сравнении с базой блок увёл бы за собой и закоммиченное
+        return bool(it and not it['untracked'] and not self.source.vs_base
+                    and not self._external and not self.find_mode)
+
+    def _revert_hunk(self, di: int) -> None:
+        it, op = self.current_item(), self._hunk_op_at(di)
+        if it is None or op is None:
+            return
+        rel, root = it['path'], self.root
+        # дифф — снимок, а файл живой: пока его смотрят, правку мог
+        # дописать агент или редактор, и писать поверх нельзя
+        if self.source.read(rel, it.get('repo')) != self.diff_after:
+            self.flash = 'file changed on disk — press r to refresh'
+            self.draw_screen()
+            return
+        # правка, добавленная в индекс, пережила бы откат рабочего
+        # дерева и вернулась бы в коммит — снимаем и оттуда
+        staged = git_blob(root, '', rel) == self.diff_after
+        text = revert_op(self.diff_before, self.diff_after, op)
+        if not write_text(os.path.join(root, rel), text):
+            self.flash = f'revert failed: {last_error()}'
+        elif staged and not stage_paths(root, [rel]):
+            self.flash = f'reverted on disk, git add failed: {last_error()}'
+        else:
+            self.flash = 'hunk reverted'
+        self.refresh()
 
 
 def main(args: list[str]) -> dict:

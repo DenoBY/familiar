@@ -309,7 +309,8 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
             else:
                 act = ('Enter expand' if self._gap_at(self.diff_cur) is not None
                        else 'Enter/c comment')
-                base = (f' [diff]  ↑↓ line · {act} · ⌥/d def · ⌘c copy · [ ] hunk'
+                rev = ' · click » revert' if self._can_revert() else ''
+                base = (f' [diff]  ↑↓ line · {act} · ⌥/d def · ⌘c copy · [ ] hunk{rev}'
                         f' · h/l scroll · {modes} · w export · ←/Tab tree'
                         f' · e edit{back}{self._back_hint()}')
         else:
