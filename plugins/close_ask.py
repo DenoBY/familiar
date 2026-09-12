@@ -18,7 +18,6 @@ import os
 import sys
 
 from kittens.tui.handler import result_handler
-from kittens.tui.loop import Loop
 
 
 # Пакет modules лежит рядом с этим файлом; подробности — в session.py.
@@ -27,7 +26,7 @@ if '__file__' in globals():
 
 from modules.close.pane import close as close_pane
 from modules.close.screen import CloseScreen
-from modules.overlay import mark_overlay
+from modules.overlay import mark_overlay, run_loop
 
 
 def main(args: list[str]) -> dict:
@@ -35,7 +34,7 @@ def main(args: list[str]) -> dict:
     # familiar.conf превращает в ⌃c, то есть в отмену вопроса.
     mark_overlay('close')
     handler = CloseScreen(*args[1:3])
-    Loop().loop(handler)
+    run_loop(handler)
     # Не None даже при отказе: без результата kitty не зовёт
     # handle_result, а закрыть панель можно только оттуда.
     return {'action': 'close' if handler.confirmed else 'cancel'}

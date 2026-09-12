@@ -19,7 +19,7 @@ import sys
 import time
 
 from kittens.tui.handler import result_handler
-from kittens.tui.loop import Loop, MouseButton
+from kittens.tui.loop import MouseButton
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
@@ -34,7 +34,7 @@ if '__file__' in globals():
 from modules.clipboard import osc52
 from modules.handler import OverlayHandler
 from modules.keylayout import chord, ctrl_letter, to_latin
-from modules.overlay import mark_overlay, restore_layout
+from modules.overlay import mark_overlay, restore_layout, run_loop
 from modules.session.data import (
     append_custom_title,
     build_projects,
@@ -879,9 +879,8 @@ class SessionsHandler(OverlayHandler):
 def main(args: list[str]) -> dict:
     mark_overlay('session')
     now = time.time()
-    loop = Loop()
     handler = SessionsHandler(args, now)
-    loop.loop(handler)
+    run_loop(handler)
     # Не None даже при выходе без действия: без результата kitty не
     # вызывает handle_result — а layout вернуть надо всегда.
     return handler.result or {'action': 'close'}

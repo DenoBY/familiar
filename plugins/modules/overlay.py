@@ -1,9 +1,13 @@
-"""Маркировка overlay-окна плагина для взаимного вытеснения
-(см. kittens.conf) и возврат layout после полноэкранного оверлея.
+"""Обвязка кита-оверлея: маркировка окна для взаимного вытеснения
+(см. kittens.conf), прокрутка TUI-цикла и возврат layout после
+полноэкранного оверлея.
 """
 
 import base64
 import sys
+
+from kittens.tui.handler import Handler
+from kittens.tui.loop import Loop
 
 
 OVERLAY_VAR = 'cc_plugin'
@@ -24,6 +28,22 @@ def mark_overlay(name: str) -> None:
     # Без своего заголовка окно kitten показывается в табе как «kitty».
     sys.stdout.write(f'\033]2;{name.title()}\007')
     sys.stdout.flush()
+
+
+def run_loop(handler: Handler) -> None:
+    """Прокрутить TUI-цикл кита, пережив обрыв кадра на выходе.
+
+    Кадр уходит в tty через os.writev: тот пишет сколько влезло и
+    режет буфер по байтам, а недописанный хвост kitty в конце
+    Loop.loop декодирует строгим utf-8 (kittens/tui/loop.py, 0.47).
+    Выход посреди кадра с многобайтовыми символами валит кит
+    UnicodeDecodeError'ом уже после того, как выбор сделан, и
+    действие теряется. Хвоста не жаль: экран всё равно закрывается.
+    """
+    try:
+        Loop().loop(handler)
+    except UnicodeDecodeError:
+        pass
 
 
 def _base_name(layout: 'str | None') -> str:

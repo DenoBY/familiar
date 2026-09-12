@@ -114,14 +114,14 @@ class AnswerTest(unittest.TestCase):
 
 class ScreenArgsTest(unittest.TestCase):
     def test_main_passes_the_argv_strings_to_the_screen(self):
-        with mock.patch.object(CA, 'Loop') as loop, \
+        with mock.patch.object(CA, 'run_loop') as run_loop, \
                 mock.patch.object(CA, 'mark_overlay'):
-            loop.return_value.loop.side_effect = lambda h: setattr(h, 'confirmed', True)
+            run_loop.side_effect = lambda h: setattr(h, 'confirmed', True)
             result = CA.main(['close_ask', 'claude · kitty · busy', 'Saved.'])
         self.assertEqual(result, {'action': 'close'})
 
     def test_main_survives_a_call_without_arguments(self):
-        with mock.patch.object(CA, 'Loop'), mock.patch.object(CA, 'mark_overlay'):
+        with mock.patch.object(CA, 'run_loop'), mock.patch.object(CA, 'mark_overlay'):
             self.assertEqual(CA.main(['close_ask']), {'action': 'cancel'})
 
 

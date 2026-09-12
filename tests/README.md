@@ -57,7 +57,7 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | `test_vcs_grep.py` | the Find in Files `git grep` layer against a **real temporary repository**: smart-case, regex mode and its errors, untracked/ignored/binary files, the match cap |
 | `test_review_find.py` | review's Find in Files mode: enter/exit with state restore, live query with debounce, tree with match counts, match navigation, regex toggle, read-only guards, open in editor |
 | `test_result_handlers.py` | `handle_result` of the kittens — building the remote-control command (the kitty-process side) |
-| `test_overlay.py` | `modules.overlay.mark_overlay`: the OSC 1337 `SetUserVar` escape with the base64-encoded plugin name |
+| `test_overlay.py` | `modules.overlay`: the OSC 1337 `SetUserVar` escape with the base64-encoded plugin name, the layout restored after the overlay, and `run_loop` surviving the torn frame tail kitty decodes as strict UTF-8 |
 | `test_pointer.py` | `modules.pointer`: the OSC 22 escapes that push a mouse pointer shape onto the stack and pop it back |
 | `test_theme.py` | color themes: the `palette/*.conf` format and role inheritance, the fallback for a role missing even from the default palette, Darcula's truecolor values against the JetBrains scheme, `FAMILIAR_THEME` parsing |
 | `test_update.py` | update checks: the daily interval, the cache and its rewrite from the background thread, CLI and kittens agreeing on the tags URL and version parsing |

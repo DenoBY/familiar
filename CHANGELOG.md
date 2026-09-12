@@ -5,6 +5,16 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.36.1] — 2026-09-12
+
+### Fixed
+
+- kittens no longer die with `UnicodeDecodeError` when you leave them right
+  after they open. kitty hands the frame to the terminal in chunks and cuts the
+  buffer mid-character; the leftover tail was then decoded as strict UTF-8, so
+  the kitten crashed with a traceback on screen and the action you had already
+  picked — creating a new session, say — never happened.
+
 ## [0.36.0] — 2026-09-12
 
 ### Added

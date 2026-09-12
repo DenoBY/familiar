@@ -14,11 +14,12 @@ import subprocess
 from typing import ClassVar
 
 from kittens.tui.loop import EventType as MouseEventType
-from kittens.tui.loop import Loop, MouseButton
+from kittens.tui.loop import MouseButton
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
 from ..keylayout import chord, ctrl_letter, to_latin
+from ..overlay import run_loop
 from ..text import short_path, truncate
 from .annotate import AnnotationsMixin
 from .editor import editor_command
@@ -624,7 +625,7 @@ def run_screen(handler) -> dict:
     Не None даже при выходе без действия: без результата kitty не
     вызывает handle_result — а layout вернуть надо всегда.
     """
-    Loop().loop(handler)
+    run_loop(handler)
     return handler.action or {'action': 'close'}
 
 

@@ -18,7 +18,6 @@ import os
 import sys
 
 from kittens.tui.handler import result_handler
-from kittens.tui.loop import Loop
 from kitty.fast_data_types import (
     IMPERATIVE_CLOSE_REQUESTED,
     set_application_quit_request,
@@ -29,7 +28,7 @@ from kitty.fast_data_types import (
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from modules.overlay import mark_overlay, restore_layout
+from modules.overlay import mark_overlay, restore_layout, run_loop
 from modules.quit.screen import QuitScreen
 from modules.restore.snapshot import write_snapshot
 
@@ -37,7 +36,7 @@ from modules.restore.snapshot import write_snapshot
 def main(args: list[str]) -> dict:
     mark_overlay('quit')
     handler = QuitScreen()
-    Loop().loop(handler)
+    run_loop(handler)
     # Не None даже при отказе: без результата kitty не зовёт
     # handle_result, а layout вернуть надо всегда.
     return {'action': 'quit' if handler.confirmed else 'cancel'}

@@ -1,9 +1,11 @@
 import io
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 import kittymock  # noqa: F401
-from modules.overlay import mark_overlay, restore_layout
+from modules import overlay
+from modules.overlay import mark_overlay, restore_layout, run_loop
 
 
 class MarkOverlayTest(unittest.TestCase):
@@ -83,6 +85,29 @@ class RestoreLayoutTest(unittest.TestCase):
 
     def test_source_window_gone_is_noop(self):
         restore_layout(FakeBoss(None), 7)   # не должно упасть
+
+
+class RunLoopTest(unittest.TestCase):
+    def test_handler_reaches_the_loop(self):
+        handler = object()
+        with mock.patch.object(overlay, 'Loop') as loop:
+            run_loop(handler)
+        loop.return_value.loop.assert_called_once_with(handler)
+
+    def test_torn_frame_tail_does_not_kill_the_kitten(self):
+        # хвост кадра, обрезанный os.writev посреди многобайтового
+        # символа: kitty декодирует его строгим utf-8 уже после того,
+        # как выбор сделан, и без перехвата действие теряется
+        torn = UnicodeDecodeError('utf-8', b'\x80', 0, 1, 'invalid start byte')
+        with mock.patch.object(overlay, 'Loop') as loop:
+            loop.return_value.loop.side_effect = torn
+            run_loop(object())
+
+    def test_other_errors_still_surface(self):
+        with mock.patch.object(overlay, 'Loop') as loop:
+            loop.return_value.loop.side_effect = RuntimeError('boom')
+            with self.assertRaises(RuntimeError):
+                run_loop(object())
 
 
 if __name__ == '__main__':
