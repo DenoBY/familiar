@@ -5,6 +5,14 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Changed
+
+- review: при переключении панели в final-вид (`v`) теперь всплывает
+  `final view — whole file · v back to diff` вместо легенды маркеров, чьи
+  символы `▎`/`▔` в футере съезжали со строки текста.
+
 ## [0.38.1] — 2026-09-12
 
 ### Fixed

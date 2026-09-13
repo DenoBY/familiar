@@ -863,7 +863,7 @@ class DiffTreeView(OverlayHandler):
         self.diff_sel = self.diff_char_sel = None
         self.build_diff_rows()
         self._center_on_line(line)
-        self.flash = ('final code — ▎ changed, ▔ deleted here'
+        self.flash = ('final view — whole file · v back to diff'
                       if self.view_mode == 'final' else 'unified diff')
         self.draw_screen()
 

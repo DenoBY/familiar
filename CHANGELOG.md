@@ -5,6 +5,14 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- review: switching the pane to the final view (`v`) now flashes
+  `final view — whole file · v back to diff` instead of a marker legend whose
+  `▎`/`▔` glyphs floated off the text line in the footer.
+
 ## [0.38.1] — 2026-09-12
 
 ### Fixed
