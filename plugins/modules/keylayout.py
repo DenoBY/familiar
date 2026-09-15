@@ -17,6 +17,13 @@ def to_latin(ch: str) -> str:
     return LAYOUT.get(ch, ch)
 
 
+def answer_letter(text: str, in_bracketed_paste: bool) -> str:
+    """Буква ответа на запрос «y — yes» ('' — это не ответ). Вставка из
+    буфера — данные: текст, начатый с «y», подтвердил бы необратимое.
+    """
+    return '' if in_bracketed_paste else to_latin(text[:1])
+
+
 def ctrl_letter(text: str, in_bracketed_paste: bool = False) -> 'str | None':
     """Буква ctrl-сочетания, пришедшего C0-байтом ('\\x0f' → 'o').
 

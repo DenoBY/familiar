@@ -15,6 +15,7 @@ Source-agnostic слой без обращения к git и без состоя
 import bisect
 import difflib
 import re
+from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
 from kittens.tui.operations import styled
@@ -70,9 +71,18 @@ def _bg(text: str, bg: 'int | None') -> str:
     return styled(text, bg=bg) if bg is not None and text else text
 
 
+def _sign(sign: str, bg: 'int | None', mark: 'str | None') -> str:
+    """Знак на полях поверх фона курсора или выделения: без своего цвета
+    маркер правки белел, и красная черта «здесь вырезано» читалась как
+    мусор у номера строки.
+    """
+    fg = MARK_FG.get(mark) if mark else None
+    return styled(sign, fg=fg, bold=True, bg=bg) if fg else _bg(sign, bg)
+
+
 def _split_code(body: str, gutter_w: int) -> 'tuple[str, str, str]':
     """(номера, знак(2 симв.), код) из plain-строки диффа — код
-    перерисовать с подсветкой, гуттер/знак оставить плоскими.
+    перерисовать с подсветкой, номера оставить плоскими.
     """
     return body[:gutter_w], body[gutter_w:gutter_w + 2], body[gutter_w + 2:]
 
@@ -96,6 +106,10 @@ def gutter_width(one_col: bool, width: int, reverts: bool = False) -> int:
     «клик по коду» в просмотрщике.
     """
     return _geometry(one_col, width, reverts)[0]
+
+
+def code_width(one_col: bool, width: int, reverts: bool = False) -> int:
+    return _geometry(one_col, width, reverts)[1]
 
 
 def _render_diff_line(gut_plain: str, sign: str, sign_fg: 'str | None', code: str,
@@ -135,7 +149,7 @@ class DiffModel(NamedTuple):
     цвета символов кода каждой строки (полнофайловый лексинг), чтобы
     выделение/курсор сохраняли подсветку, а не пере-лексили построчно.
     """
-    rows: 'list[str]'
+    rows: 'Sequence[str]'
     plains: 'list[str]'
     hunks: 'list[int]'
     linenos: 'list[int]'
@@ -163,16 +177,45 @@ class DiffSource:
         self.one_col = (not before) or (not after)
         self.ops = difflib.SequenceMatcher(
             None, self.a, self.b, autojunk=False).get_opcodes()
-        self.longest = max(
-            (len(s.replace('\t', '    ')) for s in self.a + self.b), default=0)
+        self.longest_a = _longest(self.a)
+        self._colors: 'dict[tuple, list | None]' = {}
+        self._index_after()
+
+    def _index_after(self) -> None:
+        """Всё, что считается по новому тексту без SequenceMatcher: у
+        правки в редакторе это пересчитывается на каждое нажатие.
+        """
         # final-вид показывает только новый файл — hscroll там не должен
         # уезжать вслед за длинной удалённой строкой
-        self.longest_b = max((len(s.replace('\t', '    ')) for s in self.b), default=0)
+        self.longest_b = _longest(self.b)
+        self.longest = max(self.longest_a, self.longest_b)
         # строки-определения нового файла — для sticky-заголовка скоупа
         self.def_lns = [i + 1 for i, s in enumerate(self.b) if _DEF_RE.match(s)]
         self.def_txt = [self.b[n - 1].strip() for n in self.def_lns]
         self._ranges_by_op: 'dict[int, list]' = {}
-        self._colors: 'dict[tuple, list | None]' = {}
+
+    def patched(self, after: str, lo: int, old_n: int, new_n: int) -> 'DiffSource':
+        """Тот же источник после правки строк [lo, lo+old_n) нового
+        текста на new_n других.
+
+        Сравнение и лексинг всего файла на каждое нажатие стоят сотни
+        миллисекунд, поэтому блоки изменений выводятся из прежних, а
+        цвета правленых строк сброшены — render_code красит их сам,
+        построчно. Точный пересчёт редактор делает в фоне на паузе.
+        """
+        src = DiffSource.__new__(DiffSource)
+        src.before, src.after, src.a = self.before, after, self.a
+        src.b = after.splitlines()
+        src.one_col = (not self.before) or (not after)
+        src.ops = remap_ops(self.ops, len(self.a), lo, old_n, new_n)
+        src.longest_a = self.longest_a
+        src._colors = {}
+        for (ext, new), cols in self._colors.items():
+            if new and cols is not None:
+                cols = cols[:lo] + [None] * new_n + cols[lo + old_n:]
+            src._colors[(ext, new)] = cols
+        src._index_after()
+        return src
 
     def colors(self, ext: str, new: bool) -> 'list[list] | None':
         """Цвета символов каждой строки файла (нового или старого),
@@ -195,6 +238,54 @@ class DiffSource:
             cached = [word_ranges(rem[k], add[k]) for k in range(pairs)]
             self._ranges_by_op[oi] = cached
         return cached
+
+
+def _longest(lines: list[str]) -> int:
+    return max((len(s.replace('\t', '    ')) for s in lines), default=0)
+
+
+def remap_ops(ops: list, na: int, lo: int, old_n: int, new_n: int) -> list[tuple]:
+    """Opcodes после замены строк [lo, lo+old_n) нового текста на new_n
+    других — без повторного SequenceMatcher.
+
+    Каждой строке нового текста сопоставлена строка старого (или
+    ничего); правленые строки теряют пару, и из этой карты блоки
+    собираются заново. Результат не обязан совпасть с SequenceMatcher
+    буква в букву, но описывает ту же пару текстов.
+    """
+    amap: 'list[int | None]' = [None] * (ops[-1][4] if ops else 0)
+    for tag, i1, _i2, j1, j2 in ops:
+        if tag == 'equal':
+            amap[j1:j2] = range(i1, i1 + j2 - j1)
+    amap[lo:lo + old_n] = [None] * new_n
+    out: list[tuple] = []
+    i = j = 0
+    nb = len(amap)
+    # пары в amap строго растут (equal-блоки идут по порядку), поэтому
+    # следующая пара никогда не левее уже пройденного i
+    while j < nb:
+        start = amap[j]
+        if start is not None:
+            if start > i:
+                out.append(('delete', i, start, j, j))
+            j0 = j
+            while j < nb and amap[j] == start + (j - j0):
+                j += 1
+            out.append(('equal', start, start + j - j0, j0, j))
+            i = start + j - j0
+            continue
+        j0 = j
+        while j < nb and amap[j] is None:
+            j += 1
+        nxt = amap[j] if j < nb else na
+        if nxt > i:
+            out.append(('replace', i, nxt, j0, j))
+            i = nxt
+        else:
+            out.append(('insert', i, i, j0, j))
+    if i < na:
+        out.append(('delete', i, na, nb, nb))
+    return out
 
 
 def unified_rows(src: DiffSource, ext: str, width: int, context: int = 3,
@@ -430,6 +521,31 @@ def change_map(marks: 'list[str | None]', height: int) -> 'list[str | None]':
     return out
 
 
+class LazyRows(Sequence):
+    """ANSI-строки модели, отрисованные при первом обращении.
+
+    final-вид держит файл целиком, а на экран попадает пара десятков
+    строк; в режиме правки модель пересобирается на каждое нажатие, и
+    раскраска тысяч невидимых строк съедала бы сотню миллисекунд.
+    """
+
+    def __init__(self, n: int, render: Callable[[int], str]) -> None:
+        self._rows: 'list[str | None]' = [None] * n
+        self._render = render
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def __getitem__(self, i: 'int | slice') -> 'str | list[str]':
+        if isinstance(i, slice):
+            return [self[k] for k in range(*i.indices(len(self)))]
+        i = range(len(self._rows))[i]
+        row = self._rows[i]
+        if row is None:
+            row = self._rows[i] = self._render(i)
+        return row
+
+
 def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0,
                reverts: bool = False) -> DiffModel:
     """Модель финального файла: все строки нового текста, без знаков
@@ -445,7 +561,7 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0,
     starts = set(hunks) if reverts else set()
     pad = ' ' * REVERT_COLS if reverts else ''
     cols = src.colors(ext, new=True)
-    rows, plains, vis, linenos, fgs = [], [], [], [], []
+    plains, vis, linenos, fgs = [], [], [], []
     for j, raw in enumerate(src.b):
         full = raw.replace('\t', '    ')
         mark = marks[j]
@@ -455,16 +571,22 @@ def final_rows(src: DiffSource, ext: str, width: int, hscroll: int = 0,
         cf = truncate(full[hscroll:] if hscroll else full, codew)
         fg = fit_fgs(cols[j] if (cols is not None and j < len(cols)) else None,
                      hscroll, len(cf))
-        rows.append(_render_diff_line(gut, sign, MARK_FG.get(mark), cf, ext, None,
-                                      None, None, 'gray', width, fg, j in starts))
         # маркер входит в plain: под курсором печатается именно plain,
         # иначе строка дёргалась бы влево на ширину маркера
         plains.append(gut + sign + full)
         vis.append(gut + sign + cf)
         linenos.append(j + 1)
         fgs.append(fg)
-    n = len(rows)
-    return DiffModel(rows, plains, hunks, linenos, _scopes(src, linenos),
+    gut_w = len(pad) + _NUMW + 1
+
+    def render(j: int) -> str:
+        v = vis[j]
+        return _render_diff_line(v[:gut_w], v[gut_w:gut_w + 2], MARK_FG.get(marks[j]),
+                                 v[gut_w + 2:], ext, None, None, None, 'gray', width,
+                                 fgs[j], j in starts)
+
+    n = len(plains)
+    return DiffModel(LazyRows(n, render), plains, hunks, linenos, _scopes(src, linenos),
                      [None] * n, [None] * n, vis, fgs)
 
 
@@ -574,7 +696,8 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
                      char_sel: 'tuple[int, int, int] | None' = None,
                      vis: 'list[str] | None' = None, hscroll: int = 0,
                      ext: str = '', gutter_w: int = 0,
-                     fgs: 'list[list | None] | None' = None) -> str:
+                     fgs: 'list[list | None] | None' = None,
+                     marks: 'list[str | None] | None' = None) -> str:
     """Правая ячейка строки диффа: курсор, выделение, маркер аннотации,
     совпадение поиска или обычная строка. Чистая — все данные и
     состояние приходят параметрами (annotated считает вызывающий: у
@@ -584,11 +707,14 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
     (перекрывает всё остальное для этой строки): подсвечивается фоном
     диапазон символов [cs, ce). vis — видимый plain-текст с учётом
     hscroll (fallback на plains, если не передан): фон рисуется по нему,
-    чтобы подсветка ехала вместе с горизонтальным скроллом.
+    чтобы подсветка ехала вместе с горизонтальным скроллом. marks —
+    метки строк ('add'/'mod'/'del'): по ним знак на полях сохраняет цвет
+    под курсором и в выделении.
     """
     if di >= len(rows):
         return ''
     visible = vis if vis is not None else plains
+    mark = marks[di] if marks and di < len(marks) else None
     if char_sel is not None and di == char_sel[0]:
         body = truncate(visible[di], rw)
         cs = max(0, min(char_sel[1] - hscroll, len(body)))
@@ -596,12 +722,12 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
         base = kind_bg[di] if di < len(kind_bg) else None
         pad = ' ' * (rw - len(body)) if len(body) < rw else ''
         # код рисуем реальными цветами файла (fgs), выделение — фоном на
-        # диапазоне (SEL_RANGE_BG как strong_bg), знак/номер — плоско
+        # диапазоне (SEL_RANGE_BG как strong_bg), номер — плоско
         head, sign, code = _split_code(body, gutter_w)
         row_fgs = fgs[di] if (fgs and di < len(fgs)) else None
         off = gutter_w + 2
         strong = set(range(max(0, cs - off), max(0, ce - off))) if ce > cs else None
-        out = (_bg(head, base) + _bg(sign, base)
+        out = (_bg(head, base) + _sign(sign, base, mark)
                + render_code(code, ext, base, strong, SEL_RANGE_BG, row_fgs)
                + _bg(pad, base))
         return out
@@ -630,7 +756,7 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
             out = styled('●', fg='yellow', bg=sel_bg, bold=True) + _bg(head[1:], sel_bg)
         else:
             out = _bg(head, sel_bg)
-        out += _bg(sign, sel_bg) + render_code(code, ext, sel_bg, None, None, row_fgs)
+        out += _sign(sign, sel_bg, mark) + render_code(code, ext, sel_bg, None, None, row_fgs)
         if len(body) < rw:
             out += styled(' ' * (rw - len(body)), bg=sel_bg)
         return out

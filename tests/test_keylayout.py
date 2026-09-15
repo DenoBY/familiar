@@ -44,6 +44,15 @@ class TestCtrlLetter(unittest.TestCase):
         self.assertIsNone(K.ctrl_letter('\n', in_bracketed_paste=True))
 
 
+class TestAnswerLetter(unittest.TestCase):
+    def test_typed_answer_in_any_layout(self):
+        self.assertEqual(K.answer_letter('y', False), 'y')
+        self.assertEqual(K.answer_letter('н', False), 'y')
+
+    def test_paste_is_not_an_answer(self):
+        self.assertEqual(K.answer_letter('yes', True), '')
+
+
 class TestChord(unittest.TestCase):
     def test_matches_modifier_and_letter(self):
         self.assertTrue(K.chord(KeyEvent(key='c', ctrl=True), 'ctrl', 'c'))

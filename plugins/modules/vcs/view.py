@@ -258,8 +258,21 @@ class DiffTreeView(OverlayHandler):
 
     # --- дерево файлов ---
 
+    def _row_id(self, row: dict) -> tuple:
+        """Чем строка дерева узнаётся после пересборки. Файл — по ключу,
+        а не по idx: idx указывает в прежний filtered, и стоит файлу
+        выпасть из списка или появиться в нём, узнали бы соседа.
+        """
+        if row['type'] == 'dir':
+            return 'dir', row['key']
+        return 'file', item_key(self.filtered[row['idx']])
+
+    def _row_by_id(self, rid: tuple) -> 'int | None':
+        return next((i for i, r in enumerate(self.rows) if self._row_id(r) == rid), None)
+
     def rebuild_tree(self) -> None:
         prev = self.rows[self.tsel] if (self.rows and 0 <= self.tsel < len(self.rows)) else None
+        prev_id = self._row_id(prev) if prev else None
         self.filtered = [it for it in self.items
                          if (self.show_noise or not is_noise(it['path']))
                          and self._tree_visible(it)]
@@ -272,16 +285,15 @@ class DiffTreeView(OverlayHandler):
         # файлы, а не строки: свёрнутая папка не занижает счётчик
         self.n_files = len(self.filtered)
         self.tsel = min(self.tsel, max(0, len(self.rows) - 1))
-        if prev:
-            for i, r in enumerate(self.rows):
-                if (prev['type'] == 'dir' and r['type'] == 'dir'
-                        and r.get('key') == prev.get('key')):
-                    self.tsel = i
-                    break
-                if (prev['type'] == 'file' and r['type'] == 'file'
-                        and r.get('idx') == prev.get('idx')):
-                    self.tsel = i
-                    break
+        row = self._row_by_id(prev_id) if prev_id else None
+        if row is None and prev_id and prev['type'] == 'file' and self.filtered:
+            # файл ушёл из списка (откатили, застейджили): курсор — на
+            # тот, что занял его место, а не на папку под той же строкой
+            idx = min(prev['idx'], len(self.filtered) - 1)
+            row = next((i for i, r in enumerate(self.rows)
+                        if r['type'] == 'file' and r['idx'] == idx), None)
+        if row is not None:
+            self.tsel = row
         self.ensure_left_visible()
 
     def source_ws(self) -> Workspace:
@@ -650,7 +662,7 @@ class DiffTreeView(OverlayHandler):
             self._set_placeholder('  (file deleted — no final content)')
             return
         reverts = self._can_revert()
-        self.hscroll_max = max_hscroll(self.diff_src, rw, final, reverts)
+        self.hscroll_max = self._hscroll_limit(rw, final, reverts)
         self.hscroll = min(self.hscroll, self.hscroll_max)
         if final:
             model = final_rows(self.diff_src, self.diff_ext, rw, self.hscroll, reverts)
@@ -664,6 +676,9 @@ class DiffTreeView(OverlayHandler):
         else:
             self._set_placeholder('  (no textual changes)')
 
+    def _hscroll_limit(self, rw: int, final: bool, reverts: bool) -> int:
+        return max_hscroll(self.diff_src, rw, final, reverts)
+
     def _diff_cell(self, di: int, rw: int, cur_rel: 'str | None', cur_match: int) -> str:
         return render_diff_cell(
             di, rw, self.focus == 'diff', self.diff_cur, self.diff_sel,
@@ -672,7 +687,8 @@ class DiffTreeView(OverlayHandler):
             kind_bg=self.diff_kind_bg, gaps=self.diff_gap,
             cur_match=cur_match, query=self.search_query, char_sel=self.diff_char_sel,
             vis=self.diff_vis, hscroll=self.hscroll,
-            ext=self.diff_ext, gutter_w=self._gutter_cols(), fgs=self.diff_fgs)
+            ext=self.diff_ext, gutter_w=self._gutter_cols(), fgs=self.diff_fgs,
+            marks=self.diff_marks)
 
     # --- навигация по диффу ---
 
@@ -1215,6 +1231,14 @@ class DiffTreeView(OverlayHandler):
         mark = cmap[r] if r < len(cmap) else None
         return styled('│', fg=MARK_FG[mark]) if mark is not None else ' '
 
+    def _pane_blank(self) -> bool:
+        """Показывать нечего, кроме причины. Пустое дерево ещё не
+        значит пустую панель: файл, открытый мимо дерева (прыжок к
+        определению, только что ставший чистым после правки), виден и
+        без него.
+        """
+        return not self.rows and self.diff_src is None
+
     def _draw_pane_body(self) -> None:
         lw = self.left_width()
         self.clamp_left()
@@ -1225,8 +1249,9 @@ class DiffTreeView(OverlayHandler):
         cur_rel = cur['path'] if cur else None
         cur_match = self.search_matches[self.search_idx] if self.search_matches else -1
         sticky = self.sticky_line()
-        if not self.rows:
-            self.print(styled('  ' + (self.status or self._empty_pane_msg()), fg='gray'))
+        empty = '  ' + (self.status or self._empty_pane_msg())
+        if self._pane_blank():
+            self.print(styled(empty, fg='gray'))
             for _ in range(vis - 1):
                 self.print()
             return
@@ -1255,7 +1280,10 @@ class DiffTreeView(OverlayHandler):
                     focused = self.focus == 'diff' and di == self.diff_cur
                     hover = (f'\x1b[{lw + len(SEP) + 1}G'
                              + revert_marker(bg, focused))
-            left = self._left_cell(left_row, lw - 1, li)
+            if not self.rows and r == 0:
+                left = styled(pad(empty, lw - 1), fg='gray')
+            else:
+                left = self._left_cell(left_row, lw - 1, li)
             left += self._thumb_cell(tree_bar, r)
             tail = ''
             mark_cell = self._change_cell(cmap, r)
@@ -1414,22 +1442,8 @@ class DiffTreeView(OverlayHandler):
         lw = self.left_width()
         if ev.cell_x < lw:
             li = self.left_offset + r
-            if li >= len(self.rows):
-                return
-            # промах по соседней строке (и возврат в дерево из диффа)
-            # не должен перестраивать дерево под курсором
-            already_selected = self.focus == 'tree' and self.tsel == li
-            self._drop_marks()   # клик — тоже навигация без Shift
-            self.focus = 'tree'
-            self.tsel = li
-            if self.rows[li]['type'] == 'dir':
-                if already_selected:
-                    self.set_fold(self.rows[li]['key'] not in self.collapsed)
-                else:
-                    self.draw_screen()
-            else:
-                self.load_diff()
-                self.draw_screen()
+            if li < len(self.rows):
+                self._tree_row_clicked(li)
             return
         di = self._diff_row_at(ev)
         if di is None:
@@ -1446,3 +1460,19 @@ class DiffTreeView(OverlayHandler):
         self.focus = 'diff'
         self.diff_cur = di
         self._diff_line_clicked(di, double, self._diff_col_at(ev))
+
+    def _tree_row_clicked(self, li: int) -> None:
+        # промах по соседней строке (и возврат в дерево из диффа)
+        # не должен перестраивать дерево под курсором
+        already_selected = self.focus == 'tree' and self.tsel == li
+        self._drop_marks()   # клик — тоже навигация без Shift
+        self.focus = 'tree'
+        self.set_tsel(li)
+        if self.rows[li]['type'] == 'dir':
+            if already_selected:
+                self.set_fold(self.rows[li]['key'] not in self.collapsed)
+            else:
+                self.draw_screen()
+        else:
+            self.load_diff()
+            self.draw_screen()

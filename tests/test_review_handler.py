@@ -1084,7 +1084,7 @@ class ReviewHandlerTest(unittest.TestCase):
         rows = list(self.h.diff_rows)
         self.h.toggle_expand()
         self.assertFalse(self.h.expand)
-        self.assertEqual(self.h.diff_rows, rows)
+        self.assertEqual(list(self.h.diff_rows), rows)
 
     def test_final_view_of_deleted_file_shows_placeholder(self):
         os.remove(os.path.join(self.repo, 'dir/sub.txt'))

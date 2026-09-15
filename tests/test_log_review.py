@@ -92,6 +92,14 @@ class CommitReviewTest(unittest.TestCase):
         self.assertIn('return 2', self.h.diff_after)
         self.assertNotIn('999', self.h.diff_after)
 
+    def test_commit_review_has_no_edit_mode(self):
+        self.open_head()
+        before = self.h.diff_after
+        self.h.on_text('i')
+        self.h.on_text('x')
+        self.assertFalse(getattr(self.h, 'editing', False))
+        self.assertEqual(self.h.diff_after, before)
+
     # --- комментарии к строкам ---
 
     def test_comment_on_commit_line(self):

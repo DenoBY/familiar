@@ -35,6 +35,7 @@ from modules.keylayout import to_latin
 from modules.overlay import mark_overlay, restore_layout
 from modules.text import plural, short_path
 from modules.vcs.diff import group_key, repo_key, revert_op
+from modules.vcs.editmode import EditorMixin
 from modules.vcs.git import git_blob, last_error, write_text
 from modules.vcs.screen import ReviewScreen, apply_result, run_screen
 from modules.vcs.source import UNVERSIONED, WorkTreeSource
@@ -42,7 +43,7 @@ from modules.vcs.workspace import Workspace, by_repo, open_workspace
 from modules.vcs.worktree import revert_paths, stage_paths
 
 
-class ReviewHandler(ReviewScreen):
+class ReviewHandler(EditorMixin, ReviewScreen):
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close review?'
 
@@ -68,10 +69,11 @@ class ReviewHandler(ReviewScreen):
         header += f'/{len(self.items)})' if self.filter_query else ')'
         cur = self.current_item()
         if self._external:
-            header += f'   ▸ {self._external} (read-only)'
+            ro = ' (read-only)' if os.path.isabs(self._external) else ''
+            header += f'   ▸ {self._external}{ro}'
         elif cur:
             header += f'   ▸ {self._copy_rel(cur["path"], cur.get("repo"))}'
-        return header
+        return header + self._edit_badge()
 
     def _escape_bottom(self) -> None:
         # дно каскада: вместо тихого выхода — подтверждение
@@ -190,17 +192,23 @@ class ReviewHandler(ReviewScreen):
         self.pending_revert = targets
         self.draw_screen()
 
+    # подтверждение делят откат файлов и конфликт правки (EditorMixin):
+    # не наш запрос — передаём дальше по цепочке
     def _pending_active(self) -> bool:
-        return self.pending_revert is not None
+        return self.pending_revert is not None or super()._pending_active()
 
     def _cancel_pending(self) -> None:
         if self.pending_revert is None:
+            super()._cancel_pending()
             return
         self.pending_revert = None
         self.flash = 'revert cancelled'
         self.draw_screen()
 
     def _confirm_pending(self) -> None:
+        if self.pending_revert is None:
+            super()._confirm_pending()
+            return
         targets, self.pending_revert = self.pending_revert, None
         n, ok = 0, True
         for root, (tracked, untracked) in targets.items():
@@ -213,6 +221,8 @@ class ReviewHandler(ReviewScreen):
         self.refresh()
 
     def _pending_prompt(self) -> str:
+        if self.pending_revert is None:
+            return super()._pending_prompt()
         total = sum(len(t) + len(u) for t, u in self.pending_revert.values())
         new = sum(len(u) for _, u in self.pending_revert.values())
         deleted = ''
@@ -230,6 +240,9 @@ class ReviewHandler(ReviewScreen):
                     and not self._external and not self.find_mode)
 
     def _revert_hunk(self, di: int) -> None:
+        if self.editing:
+            self.revert_hunk_in_buffer(di)
+            return
         it, op = self.current_item(), self._hunk_op_at(di)
         if it is None or op is None:
             return

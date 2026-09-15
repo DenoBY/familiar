@@ -153,6 +153,18 @@ def read_text(path: str) -> str:
         return ''
 
 
+def read_bytes(path: str) -> 'bytes | None':
+    """Файл как есть. Сверке с диском read_text не годится: он сводит
+    переводы строк и заменяет битые байты, и разные файлы читались бы
+    одинаково.
+    """
+    try:
+        with open(path, 'rb') as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def write_text(path: str, text: str) -> bool:
     """Перезаписать файл рабочего дерева. False — не вышло, причина в
     last_error(). Кодировка — как у чтения (read_text).

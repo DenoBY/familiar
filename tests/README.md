@@ -32,20 +32,22 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | File | What it checks |
 |------|----------------|
 | `test_text.py` | `modules.text`: truncation/padding, `short_path`, pluralization, word wrapping and the shared `wrap_words` engine |
-| `test_keylayout.py` | `modules.keylayout`: ЙЦУКЕН→QWERTY, modifier chords independent of layout, ctrl-letter from a C0 byte and its opt-out inside a paste |
+| `test_keylayout.py` | `modules.keylayout`: ЙЦУКЕН→QWERTY, modifier chords independent of layout, ctrl-letter from a C0 byte and its opt-out inside a paste, a confirmation answer that a paste never gives |
 | `test_vcs_util.py` / `test_sessions_util.py` | `compose`, `is_noise`, the status table, `human_age` |
 | `test_vcs_git.py` | the shared git layer `modules.vcs.git` against a **real temporary repository**: running git, `last_error`, `has_head`, `read_text`, streaming `git_lines` with early stop |
 | `test_vcs_worktree.py` | the working-tree source against a **real temporary repository**: uncommitted changes, untracked, rename, numstat |
-| `test_review_diff.py` | core of `modules.vcs.diff`: highlighting (`_fg_map`), word-diff, `unified_rows` (modification, gaps, expand, one-column, scopes), tree, cell rendering (`render_diff_cell`/`render_match`/`is_code_row`) |
+| `test_review_diff.py` | core of `modules.vcs.diff`: highlighting (`_fg_map`), word-diff, `unified_rows` (modification, gaps, expand, one-column, scopes), tree, cell rendering (`render_diff_cell`/`render_match`/`is_code_row`), `DiffSource.patched`/`remap_ops` against a real diff, final-view rows rendered on first read |
 | `test_highlight.py` | syntax highlighting in `modules.highlight`: the vendored Pygments, token colors by role (keywords, strings, comments, classes), multi-line docstrings, the huge-file skip, `fit_fgs`, per-side color caching for diffs |
 | `test_log_git.py` | log's git layer against a **real temporary repository**: `load_commits` (branch/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (root commit via the empty tree), `commit_contents` |
 | `test_log_graph.py` | the branch graph engine `modules.log.graph.build_graph`: linear history, branch+merge (glyphs/lanes), lane colors, width alignment |
 | `test_sessions_data.py` | the `modules.session.data` registry: projects and sessions on disk, live pids, metadata, `append_custom_title` (on temporary directories) |
 | `test_sessions_conversation.py` | the `modules.session.conversation` parser: a session jsonl into a feed of entries (messages, tool calls, output, file edits, rejected questions) |
 | `test_review_handler.py` | `ReviewHandler`: tree, navigation, filter, focus/cursor, gaps, search, comments, `_editor_command` |
-| `test_log_handler.py` | `CommitLogHandler`: commit list, filter, branch/`--all` mode, opening a commit, diff, copy, mouse |
+| `test_log_handler.py` | `CommitLogHandler`: commit list, filter, branch/`--all` mode, opening a commit, diff, copy, mouse, push confirmation |
 | `test_log_review.py` | reviewing a commit in log: the commit snapshot as the source, line comments naming the commit, go-to-definition and Find in Files against that snapshot, review footer, no stage/revert |
 | `test_vcs_view.py` | vertical geometry of the diff pane: the sticky scope header shortens the pane, so the cursor stays on screen after `[`/`]`, arrows and scrolling |
+| `test_vcs_buffer.py` | the edit-mode text model `modules.vcs.buffer`: caret moves and selection, typing/paste/delete, indent, undo/redo grouping, byte-exact trailing newline, refusing CRLF/non-UTF-8, `line_splice` |
+| `test_review_edit.py` | editing in the final view: `i` from either view, typing in any layout, autosave on `Esc`/tree click/`⌃c`/navigation, the disk-conflict prompt (`y`/`d`/paste), hunk revert into the buffer, comments following their lines and returning on discard, the tree staying on the edited file and a tree click landing on the clicked one, the fast patched model and the single background recompute |
 | `test_sessions_transcript.py` | `modules.session.transcript`: tool labels, `⎿` output, edit diffs, plans, folding, widths |
 | `test_sessions_markdown.py` | `modules.session.markdown`: inline styles, headings, lists, fenced code, wrapping |
 | `test_sessions_handler.py` | `SessionsHandler`: projects/sessions/preview, filter, rename, resume, navigation, mouse |

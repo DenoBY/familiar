@@ -31,7 +31,7 @@ from kitty.key_encoding import EventType
 if '__file__' in globals():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from modules.keylayout import chord, to_latin
+from modules.keylayout import answer_letter, chord, to_latin
 from modules.log.git import (
     commit_detail,
     display_refs,
@@ -751,7 +751,7 @@ class CommitLogHandler(ReviewScreen):
         if self.confirm_text(text, in_bracketed_paste):
             return
         if self.pending_push:
-            if to_latin(text[:1]) in ('y', 'Y'):
+            if answer_letter(text, in_bracketed_paste) in ('y', 'Y'):
                 self._confirm_pending()
             else:
                 self._cancel_pending()

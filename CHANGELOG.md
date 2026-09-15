@@ -7,6 +7,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- review: the final view is now an editor. Press `i` — in the unified diff too,
+  it switches to the final view on the same line — and a thin blinking caret
+  appears between the characters, like in an IDE: type in any layout, move with
+  the arrows (`⌥` by words, `⌘←`/`⌘→` to the line ends, `⌘↑`/`⌘↓` to the file
+  ends), select with `⇧` or the mouse, `Enter` keeps the indent, `Tab`/`⇧Tab`
+  indent, `⌘z`/`⌘⇧z` undo and redo, `⌘c`/`⌘x`/`⌘v` and `⌘a` work as you would
+  expect. The gutter markers and the change map follow every keystroke, ⌥-click still goes
+  to a definition and `⌘f` still searches. `Esc` saves and leaves; the file is
+  also saved when you move to another one, jump with `⌃o` or ⌥-click, open
+  Find in Files or quit, and `⌘s` saves in place. If the file changed on disk
+  in the meantime — Claude kept editing — nothing is overwritten silently: `y`
+  overwrites, `d` drops your edit into the clipboard and shows the disk version.
+  A click on a block's `»` while editing reverts it in the editor, so `⌘z`
+  brings it back, and comments move along with their lines. Editing is
+  review-only: commits in log and Find in Files stay read-only. A file opened by
+  go-to-definition can be edited when it lives in the repository; binary,
+  non-UTF-8 and CRLF files and files over 400 KB are refused with a reason.
+
+### Fixed
+
+- review, log: the gutter marker on the line under the cursor and in a
+  selection keeps its colour — a red `▔` (code cut here) used to turn into a
+  white stub next to the line number, and `+`/`−` lost their green and red.
+- review: the tree cursor and `⌃o` no longer land on a neighbouring file when
+  the list of changed files shifts under them — a file became clean or showed
+  up.
+- review, log: a paste no longer answers a confirmation — clipboard text that
+  started with `y` used to confirm a revert in review or a push in log.
+
 ### Changed
 
 - review, log: the line under the cursor in the diff is marked by its background

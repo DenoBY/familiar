@@ -36,6 +36,7 @@ from ..text import elide_path, short_path, truncate
 from .diff import DiffSource, group_key, repo_key
 from .git import read_text
 from .symbols import find_identifier, symbol_at, word_span
+from .view import item_key
 
 
 # бит Alt/Option в mouse-событии. kitty кодирует модификаторы мыши
@@ -325,8 +326,10 @@ class GotoDefinitionMixin:
         """Куда вернуться после прыжка к определению (⌃o) или выхода
         из поиска по проекту.
         """
+        cur = self.current_item()
         return {'external': self._external, 'repo': self.view_repo,
-                'tsel': self.tsel, 'diff_offset': self.diff_offset,
+                'tsel': self.tsel, 'item': item_key(cur) if cur else None,
+                'diff_offset': self.diff_offset,
                 'diff_cur': self.diff_cur, 'view_mode': self.view_mode,
                 'hscroll': self.hscroll, 'left_offset': self.left_offset,
                 'focus': self.focus, 'collapsed': set(self.collapsed)}
@@ -346,7 +349,12 @@ class GotoDefinitionMixin:
             self._show_file(s['external'], 0, s.get('repo'))
         else:
             self._external = None
-            self.set_tsel(s.get('tsel', 0))
+            # файл ищем по ключу: пока смотрели определение, дерево
+            # могло пересобраться (сохранение правки), и старый индекс
+            # строки указал бы на соседа
+            key = s.get('item')
+            row = self._tree_row_for(key[1], key[0]) if key else None
+            self.set_tsel(row if row is not None else s.get('tsel', 0))
             self.load_diff()
         if s.get('hscroll') and self.hscroll != s['hscroll']:
             self.hscroll = min(s['hscroll'], self.hscroll_max)

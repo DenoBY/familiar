@@ -32,20 +32,22 @@ python3 -m unittest test_review_handler.ReviewHandlerTest.test_expand_gap
 | Файл | Что проверяет |
 |------|----------------|
 | `test_text.py` | `modules.text`: обрезка/паддинг, `short_path`, множественное число, перенос по словам и общий движок `wrap_words` |
-| `test_keylayout.py` | `modules.keylayout`: ЙЦУКЕН→QWERTY, сочетания с модификаторами независимо от раскладки, ctrl-буква из C0-байта и её отключение внутри вставки |
+| `test_keylayout.py` | `modules.keylayout`: ЙЦУКЕН→QWERTY, сочетания с модификаторами независимо от раскладки, ctrl-буква из C0-байта и её отключение внутри вставки, ответ на подтверждение, которым вставка не бывает |
 | `test_vcs_util.py` / `test_sessions_util.py` | `compose`, `is_noise`, таблица статусов, `human_age` |
 | `test_vcs_git.py` | общий git-слой `modules.vcs.git` на **настоящем временном репозитории**: запуск git, `last_error`, `has_head`, `read_text`, потоковый `git_lines` с обрывом |
 | `test_vcs_worktree.py` | источник «рабочее дерево» на **настоящем временном репозитории**: незакоммиченные правки, untracked, rename, numstat |
-| `test_review_diff.py` | ядро `modules.vcs.diff`: подсветка (`_fg_map`), word-diff, `unified_rows` (модификация, гэпы, expand, one-column, скоупы), дерево, отрисовка ячейки (`render_diff_cell`/`render_match`/`is_code_row`) |
+| `test_review_diff.py` | ядро `modules.vcs.diff`: подсветка (`_fg_map`), word-diff, `unified_rows` (модификация, гэпы, expand, one-column, скоупы), дерево, отрисовка ячейки (`render_diff_cell`/`render_match`/`is_code_row`), `DiffSource.patched`/`remap_ops` против честного диффа, строки final-вида, отрисованные при первом чтении |
 | `test_highlight.py` | подсветка синтаксиса `modules.highlight`: vendored Pygments, цвета токенов по ролям (ключевые слова, строки, комментарии, классы), многострочные docstring, пропуск огромных файлов, `fit_fgs`, кэш цветов по сторонам диффа |
 | `test_log_git.py` | git-слой log на **настоящем временном репозитории**: `load_commits` (ветка/`--all`/limit/skip, merge, refs/`parse_refs`), `commit_files` (корневой коммит через пустое дерево), `commit_contents` |
 | `test_log_graph.py` | движок графа веток `modules.log.graph.build_graph`: линейная история, ветка+мерж (глифы/лейны), цвета лейнов, выравнивание ширины |
 | `test_sessions_data.py` | реестр `modules.session.data`: проекты и сессии на диске, живые pid, метаданные, `append_custom_title` (на временных каталогах) |
 | `test_sessions_conversation.py` | парсер `modules.session.conversation`: jsonl сессии → лента записей (реплики, вызовы инструментов, вывод, правки файлов, отклонённые вопросы) |
 | `test_review_handler.py` | `ReviewHandler`: дерево, навигация, фильтр, фокус/курсор, гэпы, поиск, аннотации, `_editor_command` |
-| `test_log_handler.py` | `CommitLogHandler`: список коммитов, фильтр, режим ветка/`--all`, открытие коммита, дифф, копирование, мышь |
+| `test_log_handler.py` | `CommitLogHandler`: список коммитов, фильтр, режим ветка/`--all`, открытие коммита, дифф, копирование, мышь, подтверждение push |
 | `test_log_review.py` | ревью коммита в log: снимок коммита как источник, комментарии к строкам с названием коммита, go-to-definition и Find in Files по этому снимку, футер ревью, отсутствие stage/revert |
 | `test_vcs_view.py` | вертикальная геометрия панели диффа: липкий заголовок скоупа укорачивает панель, поэтому курсор остаётся на экране после `[`/`]`, стрелок и прокрутки |
+| `test_vcs_buffer.py` | модель текста режима правки `modules.vcs.buffer`: движение каретки и выделение, ввод/вставка/удаление, отступы, склейка undo/redo, хвостовой перевод строки байт-в-байт, отказ CRLF/не-UTF-8, `line_splice` |
+| `test_review_edit.py` | правка в final-виде: `i` из обоих видов, ввод в любой раскладке, автосохранение на `Esc`/клике в дерево/`⌃c`/переходах, вопрос при конфликте с диском (`y`/`d`/вставка), откат ханка в буфер, комментарии вслед за строками и обратно при отказе от правки, дерево остаётся на правленом файле, а клик в дерево попадает в кликнутый, быстрая пропатченная модель и единственный фоновый пересчёт |
 | `test_sessions_transcript.py` | `modules.session.transcript`: метки инструментов, вывод `⎿`, diff правок, планы, сворачивание, ширина |
 | `test_sessions_markdown.py` | `modules.session.markdown`: инлайн-стили, заголовки, списки, fenced-код, перенос |
 | `test_sessions_handler.py` | `SessionsHandler`: проекты/сессии/предпросмотр, фильтр, переименование, resume, навигация, мышь |

@@ -170,6 +170,15 @@ class LogHandlerTest(unittest.TestCase):
                                capture_output=True, text=True, env=os.environ).stdout
         self.assertEqual(heads.strip(), '')
 
+    def test_paste_starting_with_y_does_not_push(self):
+        remote = self._push_ready()
+        self.h.on_text('p')
+        self.h.on_text('yes, deploy', in_bracketed_paste=True)
+        self.assertIsNone(self.h.pending_push)
+        heads = subprocess.run(['git', '--git-dir', remote, 'branch'],
+                               capture_output=True, text=True, env=os.environ).stdout
+        self.assertEqual(heads.strip(), '')
+
     def test_y_pushes_and_clears_unpushed(self):
         remote = self._push_ready()
         self.assertTrue(self.h.unpushed)

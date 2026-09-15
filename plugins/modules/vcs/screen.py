@@ -18,7 +18,7 @@ from kittens.tui.loop import MouseButton
 from kittens.tui.operations import styled
 from kitty.key_encoding import EventType
 
-from ..keylayout import chord, ctrl_letter, to_latin
+from ..keylayout import answer_letter, chord, ctrl_letter, to_latin
 from ..overlay import run_loop
 from ..text import short_path, truncate
 from .annotate import AnnotationsMixin
@@ -82,6 +82,17 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         """Куда ведёт Esc из диффа, если это не выход."""
         return ''
 
+    # режим правки файла (review): ввод идёт в него раньше команд экрана
+    def _edit_key(self, key_event) -> bool:
+        return False
+
+    def _edit_text(self, text: str, in_bracketed_paste: bool) -> bool:
+        return False
+
+    def _edit_hint(self) -> str:
+        """Подсказка футера про правку, пока она доступна."""
+        return ''
+
     # опасное действие ждёт подтверждения «y» (revert правок, push)
     def _pending_active(self) -> bool:
         return False
@@ -94,6 +105,12 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
 
     def _cancel_pending(self) -> None:
         pass
+
+    def _pending_text(self, ch: str) -> bool:
+        """Ответ на подтверждение, кроме «y» (у конфликта правки есть
+        ещё «d»). True — ответ принят.
+        """
+        return False
 
     # --- источник данных ---
 
@@ -302,8 +319,11 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
     def _review_footer(self) -> str:
         modes = self._mode_hints()
         back = ' · ⌃o back' if self._navstack else ''
+        edit = self._edit_hint()
         if self._external:
-            return f' [read-only]  ↑↓ scroll · [ ] hunk · h/l scroll · ⌥/d def{back} · q'
+            label = '[file]' if edit else '[read-only]'
+            return (f' {label}  ↑↓ scroll{edit} · [ ] hunk · h/l scroll · ⌥/d def{back}'
+                    ' · q')
         if self.focus == 'diff':
             if self.diff_sel is not None or self.diff_char_sel is not None:
                 base = ' [diff]  drag selects (line/text) · ⌘c copy · d def · Esc clear'
@@ -311,7 +331,7 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
                 act = ('Enter expand' if self._gap_at(self.diff_cur) is not None
                        else 'Enter/c comment')
                 rev = ' · click » revert' if self._can_revert() else ''
-                base = (f' [diff]  ↑↓ line · {act} · ⌥/d def · ⌘c copy · [ ] hunk{rev}'
+                base = (f' [diff]  ↑↓ line{edit} · {act} · ⌥/d def · ⌘c copy · [ ] hunk{rev}'
                         f' · h/l scroll · {modes} · w export · ←/Tab tree'
                         f' · e edit{back}{self._back_hint()}')
         else:
@@ -426,6 +446,8 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         if chord(key_event, 'super', 'f'):
             self.start_search()
             return
+        if self._edit_key(key_event):
+            return
         if chord(key_event, 'super+shift', 'c'):
             self.smart_copy_location()
             return
@@ -503,9 +525,10 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         if self.confirm_text(text, in_bracketed_paste):
             return
         if self._pending_active():
-            if to_latin(text[:1]) in ('y', 'Y'):
+            ch = answer_letter(text, in_bracketed_paste)
+            if ch in ('y', 'Y'):
                 self._confirm_pending()
-            else:
+            elif not self._pending_text(ch):
                 self._cancel_pending()
             return
         if self._cand is not None:
@@ -519,6 +542,8 @@ class ReviewScreen(FindInFilesMixin, GotoDefinitionMixin, AnnotationsMixin,
         if ctrl is not None and self._ctrl_key(ctrl):
             return
         if self.input_text(text):
+            return
+        if self._edit_text(text, in_bracketed_paste):
             return
         if self.find_mode:
             self.find_text(text)

@@ -248,7 +248,17 @@ class TestFinalRows(unittest.TestCase):
 
     def test_delete_of_whole_file_has_no_rows(self):
         rows, *_ = final('a\nb\n', '', '.py', 40)
-        self.assertEqual(rows, [])                      # плейсхолдер ставит view
+        self.assertEqual(list(rows), [])                # плейсхолдер ставит view
+
+    def test_rows_are_rendered_only_when_read(self):
+        calls = []
+        rows = D.LazyRows(4, lambda j: calls.append(j) or f'row {j}')
+        self.assertEqual(rows[-1], 'row 3')
+        self.assertEqual(rows[1:3], ['row 1', 'row 2'])
+        self.assertEqual(rows[3], 'row 3')
+        self.assertEqual(calls, [3, 1, 2])
+        with self.assertRaises(IndexError):
+            rows[4]
 
     def test_added_file_all_lines_marked_add(self):
         src = D.DiffSource('', 'n1\nn2\n')
@@ -413,6 +423,26 @@ class DiffCellTest(unittest.TestCase):
         # но текст сохранён целиком
         self.assertEqual(D.render_match('abcabc', 100, 'bc'), 'abcabc')
 
+    def test_gutter_sign_keeps_its_color_under_cursor_and_selection(self):
+        calls = []
+
+        def spy(text, **kw):
+            calls.append((text, kw.get('fg')))
+            return text
+
+        real, D.styled = D.styled, spy
+        self.addCleanup(setattr, D, 'styled', real)
+        arrays = {**self._arrays(), 'marks': [None, 'add']}
+        D.render_diff_cell(1, 40, True, 1, None, False, gutter_w=4, **arrays)
+        self.assertIn(('+ ', 'green'), calls)
+        calls.clear()
+        D.render_diff_cell(1, 40, True, 0, (0, 1), False, gutter_w=4, **arrays)
+        self.assertIn(('+ ', 'green'), calls)
+        calls.clear()
+        D.render_diff_cell(1, 40, True, 1, None, False, gutter_w=4,
+                           char_sel=(1, 6, 8), **arrays)
+        self.assertIn(('+ ', 'green'), calls)
+
     def test_cell_plain_when_not_focused(self):
         out = D.render_diff_cell(0, 40, False, 0, None, False, **self._arrays())
         self.assertEqual(out, 'row-ctx')                        # без фокуса — готовая строка
@@ -576,6 +606,59 @@ class TestRevertOp(unittest.TestCase):
         before, after = 'a\nb', 'A\nb'
         op = D.hunk_ops(D.DiffSource(before, after))[0]
         self.assertEqual(D.revert_op(before, after, op), 'a\nb')
+
+
+def splice(lines, lo, old_n, new):
+    return lines[:lo] + new + lines[lo + old_n:]
+
+
+class TestPatchedSource(unittest.TestCase):
+    """Правка в редакторе пересобирает источник без SequenceMatcher:
+    блоки обязаны описывать ту же пару текстов, а метки — сойтись с
+    честным сравнением.
+    """
+
+    def assertValidOps(self, ops, a, b):
+        i = j = 0
+        for tag, i1, i2, j1, j2 in ops:
+            self.assertEqual((i1, j1), (i, j), ops)
+            if tag == 'equal':
+                self.assertEqual(a[i1:i2], b[j1:j2])
+            i, j = i2, j2
+        self.assertEqual((i, j), (len(a), len(b)))
+
+    def check(self, before, after, lo, old_n, new):
+        src = D.DiffSource(before, after)
+        b = splice(after.splitlines(), lo, old_n, new)
+        text = '\n'.join(b) + '\n'
+        patched = src.patched(text, lo, old_n, len(new))
+        self.assertValidOps(patched.ops, src.a, patched.b)
+        self.assertEqual(D.line_marks(patched)[0], D.line_marks(D.DiffSource(before, text))[0])
+        return patched
+
+    def test_typing_inside_unchanged_line(self):
+        self.check('a\nb\nc\n', 'a\nb\nc\n', 1, 1, ['bX'])
+
+    def test_inserted_and_deleted_lines(self):
+        base = ''.join(f'l{i}\n' for i in range(10))
+        self.check(base, base, 3, 0, ['new1', 'new2'])
+        self.check(base, base, 3, 2, [])
+
+    def test_edit_next_to_an_existing_change(self):
+        self.check('a\nb\nc\nd\n', 'a\nB\nc\nd\n', 2, 1, ['C'])
+
+    def test_empty_after_grows_first_line(self):
+        patched = self.check('', '', 0, 0, ['x'])
+        self.assertEqual(patched.ops, [('insert', 0, 0, 0, 1)])
+
+    def test_edited_rows_lose_cached_colors(self):
+        src = D.DiffSource('a = 1\nb = 2\n', 'a = 1\nb = 2\n')
+        cols = src.colors('.py', new=True)
+        patched = src.patched('a = 1\nX\nb = 2\n', 1, 0, 1)
+        new_cols = patched.colors('.py', new=True)
+        self.assertEqual(new_cols[0], cols[0])
+        self.assertIsNone(new_cols[1])
+        self.assertEqual(new_cols[2], cols[1])
 
 
 if __name__ == '__main__':
