@@ -134,6 +134,9 @@ ADD_FOCUS_BG = _P['add_focus_bg']
 DEL_FOCUS_BG = _P['del_focus_bg']
 CURSOR_BG = _P['cursor_bg']
 SEL_RANGE_BG = _P['sel_range_bg']
+MENU_BG = _P['menu_bg']
+MENU_SEL_BG = _P['menu_sel_bg']
+MENU_DIM = _P['menu_dim']
 
 # Ниже этой похожести строки считаем разными: подсвечивать в них
 # «изменившиеся слова» бессмысленно — подсветилась бы вся строка.

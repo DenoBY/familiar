@@ -600,7 +600,8 @@ def _offer_lsp(names: list[str], args: argparse.Namespace) -> None:
     """Предложить серверы тому, кто включил review или log.
 
     Момент выбран не случайно: именно здесь человек заявил, что будет
-    смотреть код, — а go-to-definition без сервера не работает вовсе.
+    смотреть код, — а go-to-definition и автодополнение без сервера не
+    работают вовсе.
     """
     if getattr(args, "no_lsp", False) or not ({"review", "log"} & set(names)):
         return
@@ -616,7 +617,7 @@ def _offer_lsp(names: list[str], args: argparse.Namespace) -> None:
     shown = ", ".join(missing[:6])
     if len(missing) > 6:
         shown += f", and {len(missing) - 6} more"
-    print("\ngo-to-definition needs a language server per language.")
+    print("\ngo-to-definition and completion need a language server per language.")
     print(f"not installed yet: {shown}")
     # без tty спрашивать некого: brew test и CI повисли бы на вводе
     if not sys.stdin.isatty():
@@ -957,7 +958,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_lsp_parser(sub) -> None:
-    lsp = sub.add_parser("lsp", help="language servers for go-to-definition")
+    lsp = sub.add_parser("lsp", help="language servers for go-to-definition and completion")
     lsp_sub = lsp.add_subparsers(dest="lsp_command", required=True)
 
     status = lsp_sub.add_parser("status", help="what is configured and found")

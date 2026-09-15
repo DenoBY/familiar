@@ -77,7 +77,9 @@ class Tabstops:
                     return False
             moved.append((mode, line, a, b))
         self._anchors = moved
-        for line, a, b in self.places(new):
-            if not 0 <= a <= b <= len(new[line]):
+        for i, (line, a, b) in enumerate(self.places(new)):
+            # текущий плейсхолдер как раз переписывают: его конец
+            # устарел, и мерить его нечем — остальные обязаны уцелеть
+            if i != self.index and not 0 <= a <= b <= len(new[line]):
                 return False
         return True

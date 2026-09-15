@@ -217,6 +217,27 @@ class ImmediateLoop:
             callback(*args)
 
 
+class DeferredLoop(ImmediateLoop):
+    """Как в kitty: call_soon ждёт конца обработки события.
+
+    ImmediateLoop выполняет его на месте, и порядок «ввод → пересборка
+    строк» в тестах получался бы иным, чем в ките: ошибки, завязанные
+    на отложенную пересборку, так не поймать.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.ready = []
+
+    def call_soon(self, callback, *args):
+        self.ready.append((callback, args))
+
+    def run_ready(self):
+        while self.ready:
+            callback, args = self.ready.pop(0)
+            callback(*args)
+
+
 class KeyEvent:
     def __init__(self, key=None, type=EventType.PRESS, matches=(),
                  ctrl=False, super=False, shift=False, alt=False):

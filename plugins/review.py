@@ -11,8 +11,9 @@ review — kitten для kitty.
 Сам экран ревью — общий класс modules.vcs.screen.ReviewScreen
 (комментарии к строкам, go-to-definition, Find in Files, метки,
 редактор); тем же экраном log показывает изменения коммита. Здесь
-только специфика рабочего дерева: живой refresh, git add и откат
-правок — файлами из дерева и блоками с полей диффа.
+только специфика рабочего дерева: живой refresh, git add, откат
+правок — файлами из дерева и блоками с полей диффа — и правка файла
+прямо в final-виде, с автодополнением и подсказкой сигнатуры.
 
 Подключение в ~/.config/kitty/kitty.conf:
     map cmd+shift+r kitten /path/to/familiar/plugins/review.py
@@ -34,16 +35,18 @@ if '__file__' in globals():
 from modules.keylayout import to_latin
 from modules.overlay import mark_overlay, restore_layout
 from modules.text import plural, short_path
+from modules.vcs.complete import CompletionMixin
 from modules.vcs.diff import group_key, repo_key, revert_op
 from modules.vcs.editmode import EditorMixin
 from modules.vcs.git import git_blob, last_error, write_text
 from modules.vcs.screen import ReviewScreen, apply_result, run_screen
+from modules.vcs.signature import SignatureMixin
 from modules.vcs.source import UNVERSIONED, WorkTreeSource
 from modules.vcs.workspace import Workspace, by_repo, open_workspace
 from modules.vcs.worktree import revert_paths, stage_paths
 
 
-class ReviewHandler(EditorMixin, ReviewScreen):
+class ReviewHandler(SignatureMixin, CompletionMixin, EditorMixin, ReviewScreen):
 
     QUIT_CONFIRM_MSG = 'Are you sure you want to close review?'
 

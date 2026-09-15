@@ -5,6 +5,25 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- review: autocomplete in the editor, backed by the same language servers as
+  go-to-definition. A list opens under the word after two letters and at once
+  after `.`, `->`, `::`, `$` or `\` (whatever the server declares); `⌃Space`
+  opens it by hand (`⌥Esc` too, for when macOS takes `⌃Space` to switch the
+  input source). It filters as you type — prefixes and camel humps first, the
+  matched letters in bold — `↑`/`↓` pick, `Enter` or `Tab` insert, `Esc` closes
+  the list and a second `Esc` leaves the editor as before. Next to the list is
+  the documentation of the selected item; `⌃Space` hides or brings it back.
+  Picking a class that is not imported yet adds the `use`/`import` line at the
+  top, and the whole insertion goes back with one `⌘z`. Functions come with
+  their arguments as placeholders: type over the selected one and `Tab` moves
+  to the next. Inside a call, the signature hangs above the line with the
+  current parameter underlined. While the server is starting, or for files
+  without one, the list offers words from the file itself.
+
 ## [0.40.0] — 2026-09-15
 
 ### Changed

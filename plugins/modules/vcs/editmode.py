@@ -243,7 +243,14 @@ class EditorMixin:
         self._ensure_cursor_visible()
         if changed:
             self._arm_exact()
+        self._edit_synced()
         self.draw_screen()
+
+    def _edit_synced(self) -> None:
+        """Хук: строки экрана догнали буфер, кадр ещё не нарисован —
+        всё, что держится за каретку (список дополнения, сигнатура),
+        сверяется здесь, куда сходятся и клавиши, и мышь, и поиск.
+        """
 
     def _replayed(self, splices: 'list | None') -> 'list | None':
         """Шаги apply_edits, если они ровно ведут от показанного текста
@@ -847,17 +854,27 @@ class EditorMixin:
     def _draw_pane_body(self) -> None:
         super()._draw_pane_body()
         self._set_beam(self.editing)
+        if self._pending_active() or not self.rows:
+            return
+        cell = self._caret_cell()
+        if cell is not None:
+            self.set_caret(*cell)
+
+    def _caret_cell(self, dcol: 'int | None' = None) -> 'tuple[int, int] | None':
+        """Экранная клетка (строка, колонка) каретки — или экранной
+        колонки `dcol` на её строке; None — вне видимой части кода.
+        """
         snap = self._caret_snap if self.editing else None
-        if snap is None or self._pending_active() or not self.rows:
-            return
-        row, dcol = snap[0], snap[1]
-        r = row - self.diff_offset
+        if snap is None:
+            return None
+        r = snap[0] - self.diff_offset
         if not 0 <= r < self.diff_visible_rows():
-            return
+            return None
         code_x = self.left_width() + len(SEP) + self._gutter_cols() + 2
-        x = code_x + dcol - self.hscroll
-        if code_x <= x < self.screen_size.cols - 2:
-            self.set_caret(2 + (1 if self.sticky_line() else 0) + r, x)
+        x = code_x + (snap[1] if dcol is None else dcol) - self.hscroll
+        if not code_x <= x < self.screen_size.cols - 2:
+            return None
+        return 2 + (1 if self.sticky_line() else 0) + r, x
 
     def _review_footer(self) -> str:
         if not self.editing:
