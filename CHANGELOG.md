@@ -15,8 +15,9 @@ versioning follows [SemVer](https://semver.org/).
   opens it by hand (`⌥Esc` too, for when macOS takes `⌃Space` to switch the
   input source). It filters as you type — prefixes and camel humps first, the
   matched letters in bold — `↑`/`↓` pick, `Enter` or `Tab` insert, `Esc` closes
-  the list and a second `Esc` leaves the editor as before. Next to the list is
-  the documentation of the selected item; `⌃Space` hides or brings it back.
+  the list and a second `Esc` leaves the editor as before. The list stays
+  compact, as in JetBrains IDEs: `⌃Space` with it open shows the documentation
+  of the selected item beside it, and hides it again.
   Picking a class that is not imported yet adds the `use`/`import` line at the
   top, and the whole insertion goes back with one `⌘z`. Functions come with
   their arguments as placeholders: type over the selected one and `Tab` moves

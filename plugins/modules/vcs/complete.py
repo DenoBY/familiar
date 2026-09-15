@@ -193,7 +193,9 @@ class CompletionMixin:
         self._cmp_rows = MAX_ROWS
         self._cmp_swallow = False
         self._words_cache: 'tuple[int, int, list[str]]' = (-1, -1, [])
-        self._doc_on = True
+        # документация выбранного пункта — только по ⌃Space, как в
+        # JetBrains: рядом со списком она всё время перекрывала код
+        self._doc_on = False
         self._resolve_timer = None
         self._resolve_busy = False
         self._tabs: 'Tabstops | None' = None

@@ -379,7 +379,6 @@ class AcceptTest(CompletionTestBase):
         self.edit_at_end(9)
         self.key('ENTER')
         self.type('Pat')
-        self.h._doc_on = False            # только resolve при вставке
         self.session.resolved.clear()
         self.key('ENTER')
         self.assertEqual(self.buf.lines[0], 'from pathlib import Path')
@@ -587,6 +586,9 @@ class ScreenTest(CompletionTestBase):
         self.session.resolve = {'greet': {'documentation': {
             'kind': 'markdown', 'value': '```python\ndef greet(name)\n```\n---\nSay hello.'}}}
         self.open()
+        self.assertNotIn('Say hello.', self.screen())
+        self.assertEqual(self.session.resolved, [])      # не спрошенная — не нужна
+        self.key(' ', ctrl=True)
         out = self.screen()
         self.assertIn('Say hello.', out)
         self.assertIn('def greet(name)', out)
