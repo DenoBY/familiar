@@ -32,12 +32,16 @@
 | [review](https://github.com/DenoBY/familiar/wiki/Review-(RU)) | `Cmd+Shift+R` | Двухпанельный ревьювер незакоммиченных правок git: дерево файлов + unified diff с подсветкой синтаксиса, word-diff, go to definition (⌥-клик), IDE-вид «финальный код» с правкой прямо в нём, поиск, прыжки по изменениям, git add из дерева и построчные замечания, собираемые в markdown для вставки обратно в Claude. `Cmd+Shift+F` внутри оверлея — режим Find in Files: живой `git grep` по всему проекту с навигацией по совпадениям. |
 | [log](https://github.com/DenoBY/familiar/wiki/Log-(RU)) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — полный экран `review` (комментарии, go-to-definition, Find in Files), `git fetch` / `git push` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
 
+<table><tr><td>
+
 <details>
 <summary><b>🎬 Смотреть видеообзор</b> — 2 минуты, с субтитрами</summary>
 
 https://github.com/user-attachments/assets/dd2bc537-e136-4c39-87bc-0d93a803cc35
 
 </details>
+
+</td></tr></table>
 
 Полные раскладки клавиш — на страницах китов в
 [wiki](https://github.com/DenoBY/familiar/wiki/Home-(RU)).
