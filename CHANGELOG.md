@@ -177,7 +177,7 @@ versioning follows [SemVer](https://semver.org/).
 ### Added
 
 - review, log: a folder that holds several independent repositories is no longer
-  a dead end. Opening either kitten from `~/Projects/yr` used to say
+  a dead end. Opening either kitten from such a folder used to say
   `not a git repository`, because both asked git for the root of the current
   directory and got nothing. They now scan the folder two levels deep and work
   with everything they find.

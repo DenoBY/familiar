@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Генератор демо-стенда для скриншотов familiar.
 
-Создаёт две площадки:
+Создаёт три площадки:
 - <dir>/repo — git-проект «sundial» с историей, ветками и
   незакоммиченными правками (для китов review и log);
+- <dir>/workspace — папка с независимыми репозиториями api (тот же
+  sundial), web и infra (мультирепо-режим review и log);
 - <dir>/claude — фейковое хранилище Claude Code (для session).
 
 Скриншоты снимаются из отдельного инстанса kitty, запущенного с
@@ -408,6 +410,210 @@ def notify_sunset(minutes_left: int) -> None:
 
 
 # ---------------------------------------------------------------
+# Соседи sundial по папке-воркспейсу: веб-клиент на TypeScript и
+# инфраструктура.
+# ---------------------------------------------------------------
+
+WEB_PACKAGE = '''\
+{
+  "name": "sundial-web",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}
+'''
+
+WEB_INDEX = '''\
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>sundial</title>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+'''
+
+WEB_README_V1 = '''\
+# sundial-web
+
+Browser front end for the sundial API.
+'''
+
+WEB_README_V2 = WEB_README_V1 + '''
+## Development
+
+```sh
+npm install
+npm run dev
+```
+'''
+
+WEB_API_V1 = '''\
+export interface DayTimes {
+  sunrise: string | null;
+  sunset: string | null;
+}
+
+export async function fetchDay(lat: number, lon: number, day: string): Promise<DayTimes> {
+  const res = await fetch(`/api/day?lat=${lat}&lon=${lon}&date=${day}`);
+  if (!res.ok) {
+    throw new Error(`sundial api: ${res.status}`);
+  }
+  return res.json();
+}
+'''
+
+WEB_API_V2 = WEB_API_V1.replace(
+    'export async function fetchDay(',
+    'const cache = new Map<string, Promise<DayTimes>>();\n\n'
+    'export function fetchDay(lat: number, lon: number, day: string): Promise<DayTimes> {\n'
+    '  const key = `${lat},${lon},${day}`;\n'
+    '  if (!cache.has(key)) {\n'
+    '    cache.set(key, load(lat, lon, day));\n'
+    '  }\n'
+    '  return cache.get(key)!;\n'
+    '}\n\n'
+    'async function load(',
+)
+
+WEB_MAIN_V1 = '''\
+import './styles.css';
+
+const app = document.querySelector<HTMLElement>('#app')!;
+app.textContent = 'sundial';
+'''
+
+WEB_MAIN_V2 = '''\
+import './styles.css';
+import { fetchDay } from './api';
+
+const app = document.querySelector<HTMLElement>('#app')!;
+
+async function render(day: string): Promise<void> {
+  const { sunrise, sunset } = await fetchDay(38.7, -9.1, day);
+  app.innerHTML = `
+    <p class="time">Sunrise <b>${sunrise ?? 'polar night'}</b></p>
+    <p class="time">Sunset <b>${sunset ?? 'polar day'}</b></p>
+  `;
+}
+
+render(new Date().toISOString().slice(0, 10));
+'''
+
+WEB_MAIN_V3 = WEB_MAIN_V2.replace(
+    "render(new Date().toISOString().slice(0, 10));\n",
+    "const picker = document.createElement('input');\n"
+    "picker.type = 'date';\n"
+    "picker.valueAsDate = new Date();\n"
+    "picker.addEventListener('change', () => render(picker.value));\n"
+    "document.body.prepend(picker);\n\n"
+    "render(picker.value);\n",
+)
+
+WEB_MAIN_V4 = WEB_MAIN_V3.replace(
+    "import { fetchDay } from './api';\n",
+    "import { fetchDay } from './api';\nimport { moonWidget } from './moon';\n",
+).replace(
+    "  `;\n}",
+    "  `;\n  app.append(moonWidget(new Date(day)));\n}",
+)
+
+WEB_MOON = '''\
+const SYNODIC_MONTH = 29.530588853;
+const KNOWN_NEW_MOON = Date.UTC(2000, 0, 6);
+const PHASES = ['new', 'waxing crescent', 'first quarter', 'waxing gibbous',
+                'full', 'waning gibbous', 'last quarter', 'waning crescent'];
+
+export function moonAge(day: Date): number {
+  const days = (day.getTime() - KNOWN_NEW_MOON) / 86_400_000;
+  return ((days % SYNODIC_MONTH) + SYNODIC_MONTH) % SYNODIC_MONTH;
+}
+
+export function moonWidget(day: Date): HTMLElement {
+  const index = Math.floor(moonAge(day) / SYNODIC_MONTH * 8) % 8;
+  const el = document.createElement('p');
+  el.className = 'moon';
+  el.textContent = `Moon: ${PHASES[index]}`;
+  return el;
+}
+'''
+
+WEB_STYLES_V1 = '''\
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+.time {
+  font-size: 1.5rem;
+  margin: 0.25rem 0;
+}
+'''
+
+WEB_STYLES_WT = WEB_STYLES_V1 + '''
+.moon {
+  color: #8a8fb5;
+  font-style: italic;
+}
+'''
+
+INFRA_CI_V1 = '''\
+name: ci
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m unittest discover -s tests
+'''
+
+INFRA_CI_V2 = INFRA_CI_V1.replace(
+    "          python-version: '3.13'\n",
+    "          python-version: '3.13'\n          cache: pip\n",
+)
+
+INFRA_DOCKERFILE = '''\
+FROM python:3.13-slim
+WORKDIR /app
+COPY . .
+RUN pip install --no-cache-dir .
+CMD ["python", "-m", "sundial.server"]
+'''
+
+INFRA_FLY_V1 = '''\
+app = "sundial-api"
+primary_region = "ams"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+[[vm]]
+  memory = "256mb"
+'''
+
+INFRA_FLY_WT = INFRA_FLY_V1.replace('"256mb"', '"512mb"').replace(
+    'primary_region = "ams"\n',
+    'primary_region = "ams"\n\n[env]\n  SUNDIAL_CACHE_DAYS = "7"\n',
+)
+
+
+# ---------------------------------------------------------------
 # Сборка git-репозитория
 # ---------------------------------------------------------------
 
@@ -421,9 +627,11 @@ _GIT_ENV = {
 class _Repo:
     """Сборка истории: файлы и коммиты с ровным ходом дат."""
 
-    def __init__(self, path: str, start: datetime):
+    def __init__(self, path: str, start: datetime,
+                 step: timedelta = timedelta(hours=31)):
         self.path = path
         self.clock = start
+        self.step = step
 
     def git(self, *args: str) -> None:
         env = {**os.environ, **_GIT_ENV,
@@ -441,7 +649,7 @@ class _Repo:
     def commit(self, message: str, files: 'dict[str, str]') -> None:
         for rel, content in files.items():
             self.write(rel, content)
-        self.clock += timedelta(hours=31)
+        self.clock += self.step
         self.git('add', '-A')
         self.git('commit', '-q', '-m', message)
 
@@ -501,6 +709,46 @@ def build_repo(repo: str) -> None:
     r.write('sundial/core.py', CORE_WT)
     r.write('tests/test_core.py', TESTS_WT)
     r.write('sundial/notify.py', NOTIFY_WT)
+
+
+def build_workspace(workspace: str) -> None:
+    """Папка с тремя независимыми репозиториями: api (sundial) на main,
+    web на фиче-ветке, infra на main. Шаги часов подобраны так, чтобы
+    свежие коммиты всех трёх перемежались в общей ленте log.
+    """
+    build_repo(os.path.join(workspace, 'api'))
+    now = datetime.now().astimezone()
+
+    web = _Repo(os.path.join(workspace, 'web'), now - timedelta(hours=102),
+                step=timedelta(hours=11))
+    os.makedirs(web.path)
+    web.git('init', '-q', '-b', 'main')
+    web.commit('init: vite skeleton', {
+        'package.json': WEB_PACKAGE,
+        'index.html': WEB_INDEX,
+        'src/main.ts': WEB_MAIN_V1,
+        'README.md': WEB_README_V1,
+    })
+    web.commit('api: sunrise and sunset client', {'src/api.ts': WEB_API_V1})
+    web.commit('main: render the times for today', {'src/main.ts': WEB_MAIN_V2})
+    web.commit('styles: follow the system theme', {'src/styles.css': WEB_STYLES_V1})
+    web.commit('api: cache responses per day', {'src/api.ts': WEB_API_V2})
+    web.commit('main: date picker', {'src/main.ts': WEB_MAIN_V3})
+    web.commit('README: dev server', {'README.md': WEB_README_V2})
+    web.git('checkout', '-q', '-b', 'feature/moon-widget')
+    web.commit('moon: phase widget', {'src/moon.ts': WEB_MOON})
+    web.commit('main: mount the moon widget', {'src/main.ts': WEB_MAIN_V4})
+    web.write('src/styles.css', WEB_STYLES_WT)
+
+    infra = _Repo(os.path.join(workspace, 'infra'), now - timedelta(hours=96),
+                  step=timedelta(hours=22))
+    os.makedirs(infra.path)
+    infra.git('init', '-q', '-b', 'main')
+    infra.commit('ci: run the tests on push', {'.github/workflows/ci.yml': INFRA_CI_V1})
+    infra.commit('docker: api image', {'Dockerfile': INFRA_DOCKERFILE})
+    infra.commit('deploy: fly.io app', {'fly.toml': INFRA_FLY_V1})
+    infra.commit('ci: cache pip downloads', {'.github/workflows/ci.yml': INFRA_CI_V2})
+    infra.write('fly.toml', INFRA_FLY_WT)
 
 
 # ---------------------------------------------------------------
@@ -812,11 +1060,14 @@ def main() -> int:
 
     repo = os.path.join(root, 'repo')
     claude = os.path.join(root, 'claude')
+    workspace = os.path.join(root, 'workspace')
     build_repo(repo)
+    build_workspace(workspace)
     build_claude(claude, repo)
 
     print(f'''Demo stand is ready:
   review/log repo : {repo}
+  multi-repo      : {workspace}
   Claude storage  : {claude}
 
 Launch a dedicated kitty instance with the fake storage:
