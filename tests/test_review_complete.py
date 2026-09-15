@@ -140,6 +140,45 @@ class OpenCloseTest(CompletionTestBase):
         self.type('Use')
         self.assertEqual(self.shown()[0], 'User')
 
+    def test_capital_letter_is_not_an_exact_keyword(self):
+        self.session.completion = labels('use', 'User')
+        self.edit_at_end(9)
+        self.key('ENTER')
+        self.type('Use')
+        self.assertEqual(self.shown(), ['User', 'use'])
+
+    def test_what_is_in_scope_goes_above_auto_import(self):
+        line = len(SOURCE.split('\n'))
+        auto = {'range': _rng(0, 0, 0), 'newText': 'from x import _returns\n'}
+        self.session.completion = {'items': [
+            {'label': '_returns', 'sortText': '1', 'additionalTextEdits': [auto],
+             'textEdit': {'range': _rng(line, 0, 3), 'newText': '_returns'}},
+            {'label': 'resolve_timeout', 'sortText': '2'}]}
+        self.edit_at_end(9)
+        self.key('ENTER')
+        self.type('ret')
+        self.assertEqual(self.shown(), ['resolve_timeout', '_returns'])
+
+    def test_names_used_in_the_file_go_first(self):
+        # greeting встречается в файле, gremlin — нет, хотя сервер
+        # поставил его выше
+        self.session.completion = labels('gremlin', 'greeting')
+        self.edit_at_end(9)
+        self.key('ENTER')
+        self.type('gre')
+        self.assertEqual(self.shown(), ['greeting', 'gremlin'])
+
+    def test_recently_picked_goes_first_next_time(self):
+        self.session.completion = labels('global', 'glob')
+        self.edit_at_end(9)
+        self.key('ENTER')
+        self.type('gl')
+        self.key('DOWN')
+        self.key('ENTER')
+        self.key('ENTER')
+        self.type('gl')
+        self.assertEqual(self.shown(), ['glob', 'global'])
+
     def test_typing_on_refilters_without_asking_again(self):
         self.edit_at_end(9)
         self.key('ENTER')

@@ -32,7 +32,7 @@ from ..lsp.completion import (
 from ..lsp.position import encode_character
 from ..lsp.rpc import RpcError
 from ..lsp.session import NoServer
-from .fuzzy import FUZZY, Match, buffer_words, match
+from .fuzzy import Match, buffer_words, match
 from .popup import (
     MAX_ROWS,
     MenuRow,
@@ -92,12 +92,16 @@ class Popup:
     """Открытый список: пункты ответа и то, что из них видно сейчас."""
 
     def __init__(self, ask: Ask, items: 'list[Item]', incomplete: bool,
-                 encoding: str, session: object = None) -> None:
+                 encoding: str, session: object = None,
+                 known: 'frozenset[str]' = frozenset(),
+                 recent: 'dict[str, int] | None' = None) -> None:
         self.ask = ask
         self.items = items
         self.incomplete = incomplete
         self.encoding = encoding
         self.session = session
+        self.known = known
+        self.recent = recent or {}
         self.starts = [item_start(it, ask.line_text, ask.caret, encoding) for it in items]
         self.min_start = min(self.starts, default=word_start(ask.line_text, ask.caret))
         self._uniform = all(s == self.min_start for s in self.starts)
@@ -144,18 +148,26 @@ class Popup:
         self.sel = self.top = 0
 
     def _rank(self, entry: 'tuple[int, Match, str]') -> tuple:
-        # счёт грубее сортировки сервера: между почти равными решает
-        # sortText — gopls и ts ранжируют пункты сами. Но префикс в
-        # том же регистре важнее: на `Use` класс User — выше use_…
+        """Порядок, как у JetBrains: регистр первой буквы, затем то, что
+        уже в области видимости, — выше auto-import; недавно выбранное
+        и имена из этого файла — выше прочих; sortText сервера решает
+        между почти равными.
+
+        Автоимпорт узнаём по additionalTextEdits: без этого pyright
+        поднимал `_ReturnT_co` из typing над константой своего модуля.
+        """
         i, m, query = entry
         item = self.items[i]
-        cased = m.tier < FUZZY and item.filter_text.startswith(query)
-        return m.tier, not cased, -(m.score // 8), item.sort_text, len(item.label), i
+        return (m.tier, not _first_letter_case(query, item.filter_text, m),
+                bool(item.additional), -self.recent.get(item.label, 0),
+                -(m.score // 8), item.label not in self.known,
+                item.sort_text, len(item.label), i)
 
     def _rank_empty(self, entry: 'tuple[int, Match, str]') -> tuple:
         i = entry[0]
         item = self.items[i]
-        return not item.preselect, item.sort_text, item.label, i
+        return (not item.preselect, bool(item.additional),
+                -self.recent.get(item.label, 0), item.sort_text, item.label, i)
 
     def selected(self) -> 'Item | None':
         return self.shown[self.sel][0] if self.shown else None
@@ -193,6 +205,9 @@ class CompletionMixin:
         self._cmp_rows = MAX_ROWS
         self._cmp_swallow = False
         self._words_cache: 'tuple[int, int, list[str]]' = (-1, -1, [])
+        self._known_cache: 'tuple[int, frozenset[str]]' = (-1, frozenset())
+        # метка → номер выбора: недавно вставленное в следующий раз выше
+        self._cmp_recent: 'dict[str, int]' = {}
         # документация — только по ⌃Space, как в JetBrains: панель
         # рядом со списком перекрывает код на каждом нажатии
         self._doc_on = False
@@ -412,7 +427,8 @@ class CompletionMixin:
 
     def _cmp_install(self, ask: Ask, session, items: 'list[Item]', incomplete: bool) -> None:
         buf = self.edit_buf
-        popup = Popup(ask, items, incomplete, session.encoding, session)
+        popup = Popup(ask, items, incomplete, session.encoding, session,
+                      self._known_words(), self._cmp_recent)
         line = buf.lines[buf.line]
         if buf.col < popup.min_start or line[:popup.min_start] != ask.line_text[:popup.min_start]:
             return
@@ -453,7 +469,7 @@ class CompletionMixin:
             item = Item({'label': word})
             item.kind = WORD_KIND
             items.append(item)
-        popup = Popup(ask, items, False, 'utf-16')
+        popup = Popup(ask, items, False, 'utf-16', recent=self._cmp_recent)
         popup.refilter(buf.lines[buf.line], buf.col)
         if not popup.shown:
             if ask.manual and fallback:
@@ -464,6 +480,12 @@ class CompletionMixin:
             popup.above = current.above
         self._cmp = popup
         self.schedule_draw()
+
+    def _known_words(self) -> 'frozenset[str]':
+        buf = self.edit_buf
+        if self._known_cache[0] != buf.version:
+            self._known_cache = (buf.version, frozenset(buffer_words(buf.lines, buf.line, '')))
+        return self._known_cache[1]
 
     def _buffer_words(self, exclude: str) -> 'list[str]':
         buf = self.edit_buf
@@ -517,6 +539,7 @@ class CompletionMixin:
             caret = first[:2]
             if first[2] > first[1]:
                 select = (first[:2], (first[0], first[2]))
+        self._cmp_recent[item.label] = max(self._cmp_recent.values(), default=0) + 1
         self._cmp_close()
         self._end_snippet()
         self.apply_edits([((line, edit.start), (line, edit.end), edit.text), *extra],
@@ -787,6 +810,16 @@ def _is_manual(key_event) -> bool:
     if key_event.key in (' ', 'SPACE') and mods == {'ctrl'}:
         return True
     return key_event.key == 'ESCAPE' and mods == {'alt'}
+
+
+def _first_letter_case(query: str, candidate: str, m: Match) -> bool:
+    """Совпал ли регистр первой буквы запроса (`$` и `_` не буквы):
+    `Use` — это класс User, а не use_soap_error_handler.
+    """
+    k = next((i for i, ch in enumerate(query) if ch.isalpha()), None)
+    if k is None or k >= len(m.positions):
+        return True
+    return candidate[m.positions[k]] == query[k]
 
 
 def _mods(key_event) -> 'set[str]':

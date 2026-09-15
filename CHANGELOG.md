@@ -13,17 +13,20 @@ versioning follows [SemVer](https://semver.org/).
   go-to-definition. A list opens under the word after two letters and at once
   after `.`, `->`, `::`, `$` or `\` (whatever the server declares); `⌃Space`
   opens it by hand (`⌥Esc` too, for when macOS takes `⌃Space` to switch the
-  input source). It filters as you type — prefixes and camel humps first, the
-  matched letters in bold — `↑`/`↓` pick, `Enter` or `Tab` insert, `Esc` closes
-  the list and a second `Esc` leaves the editor as before. The list stays
-  compact, as in JetBrains IDEs: `⌃Space` with it open shows the documentation
-  of the selected item beside it, and hides it again.
-  Picking a class that is not imported yet adds the `use`/`import` line at the
-  top, and the whole insertion goes back with one `⌘z`. Functions come with
-  their arguments as placeholders: type over the selected one and `Tab` moves
-  to the next. Inside a call, the signature hangs above the line with the
-  current parameter underlined. While the server is starting, or for files
-  without one, the list offers words from the file itself.
+  input source). It filters as you type, ordered like JetBrains IDEs — the case
+  of the first letter counts, what is already in scope comes before
+  auto-imports, recently picked items and names used in the file go first,
+  prefixes and camel humps before scattered letters; matched letters are bold.
+  `↑`/`↓` pick, `Enter` or `Tab` insert, `Esc` closes the list and a second
+  `Esc` leaves the editor as before. The list stays compact, as in JetBrains
+  IDEs: `⌃Space` with it open shows the documentation of the selected item
+  beside it, and hides it again. Picking a class that is not imported yet adds
+  the `use`/`import` line at the top, and the whole insertion goes back with one
+  `⌘z`. Functions come with their arguments as placeholders: type over the
+  selected one and `Tab` moves to the next. Inside a call, the signature hangs
+  above the line with the current parameter underlined. While the server is
+  starting, or for files without one, the list offers words from the file
+  itself.
 
 ## [0.40.0] — 2026-09-15
 

@@ -79,7 +79,9 @@ def match(query: str, candidate: str) -> 'Match | None':
         if pos < 0:
             return None
     if cl.startswith(ql):
-        tier = EXACT if len(cl) == len(ql) else PREFIX
+        # точное — с регистром: `Use` не должен ставить ключевое слово
+        # use выше класса User
+        tier = EXACT if candidate == query else PREFIX
         return Match(tier, _score(query, candidate, 0, len(ql) - 1)[0],
                      tuple(range(len(ql))))
     best = None
