@@ -33,7 +33,7 @@
 | [log](https://github.com/DenoBY/familiar/wiki/Log-(RU)) | `Cmd+Shift+L` | Просмотр истории git: список коммитов с графом веток, по коммиту — полный экран `review` (комментарии, go-to-definition, Find in Files), `git fetch` / `git push` и копирование hash / `@путь` / `@путь#L42` для промта Claude Code. |
 
 <details>
-<summary><b>▶ Видеообзор</b> — 2 минуты, с субтитрами</summary>
+<summary><b>🎬 Смотреть видеообзор</b> — 2 минуты, с субтитрами</summary>
 
 https://github.com/user-attachments/assets/dd2bc537-e136-4c39-87bc-0d93a803cc35
 
