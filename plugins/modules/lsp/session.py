@@ -17,9 +17,9 @@ from collections import OrderedDict
 from typing import Callable, NamedTuple
 
 from .install import install_hint, resolve, runtime_env
-from .position import uri_from_path
+from .position import line_splice, uri_from_path
 from .registry import ServerSpec, find_root, for_path, spec_for
-from .rpc import LspProcess, RpcError, RpcTimeout
+from .rpc import Call, LspProcess, RpcError, RpcTimeout
 
 
 INIT_TIMEOUT = 20.0
@@ -36,6 +36,9 @@ MAX_SESSIONS = 4
 
 # «сервер ещё не готов отвечать» из спеки JSON-RPC для LSP
 SERVER_NOT_INITIALIZED = -32002
+
+# TextDocumentSyncKind.Incremental
+SYNC_INCREMENTAL = 2
 
 
 class NoServer(Exception):
@@ -60,6 +63,37 @@ _CLIENT_CAPS = {
         # linkSupport не просим: Location проще, а LocationLink всё
         # равно разбираем — часть серверов шлёт его без спроса
         'definition': {'linkSupport': False},
+        'completion': {
+            'contextSupport': True,
+            'insertTextMode': 2,
+            'completionItem': {
+                'snippetSupport': True,
+                # commitCharacters не просим: ts шлёт «. , ; (», и
+                # точка после имени молча принимала бы чужой пункт
+                'commitCharactersSupport': False,
+                'insertReplaceSupport': True,
+                'labelDetailsSupport': True,
+                'deprecatedSupport': True,
+                'tagSupport': {'valueSet': [1]},
+                'preselectSupport': True,
+                'documentationFormat': ['markdown', 'plaintext'],
+                # auto-import ts отдаёт только в resolve
+                'resolveSupport': {'properties': ['documentation', 'detail',
+                                                  'additionalTextEdits']},
+                'insertTextModeSupport': {'valueSet': [1, 2]},
+            },
+            'completionList': {'itemDefaults': ['commitCharacters', 'editRange',
+                                                'insertTextFormat', 'insertTextMode',
+                                                'data']},
+        },
+        'signatureHelp': {
+            'contextSupport': True,
+            'signatureInformation': {
+                'documentationFormat': ['markdown', 'plaintext'],
+                'parameterInformation': {'labelOffsetSupport': True},
+                'activeParameterSupport': True,
+            },
+        },
     },
 }
 
@@ -74,6 +108,9 @@ class Session:
         self._proc: 'LspProcess | None' = None
         self._caps: dict = {}
         self._docs: 'dict[str, tuple[int, str]]' = {}
+        # goto и автодополнение синхронизируют текст из разных потоков;
+        # замок держит и отправку — правки обязаны дойти по порядку
+        self._docs_lock = threading.Lock()
         self._ready = threading.Event()
         self._stopped = threading.Event()
         self._started = 0.0
@@ -154,6 +191,44 @@ class Session:
         result = self._request('workspace/symbol', {'query': query})
         return [x for x in result or [] if isinstance(x, dict)]
 
+    def completion_call(self, path: str, line: int, character: int,
+                        context: dict) -> Call:
+        return self._call('textDocument/completion', {
+            'textDocument': {'uri': uri_from_path(path)},
+            'position': {'line': line - 1, 'character': character},
+            'context': context})
+
+    def resolve_call(self, item: dict) -> Call:
+        return self._call('completionItem/resolve', item)
+
+    def signature_call(self, path: str, line: int, character: int,
+                       context: dict) -> Call:
+        return self._call('textDocument/signatureHelp', {
+            'textDocument': {'uri': uri_from_path(path)},
+            'position': {'line': line - 1, 'character': character},
+            'context': context})
+
+    @property
+    def has_completion(self) -> bool:
+        return isinstance(self._caps.get('completionProvider'), dict)
+
+    @property
+    def completion_triggers(self) -> 'tuple[str, ...]':
+        return _chars((self._caps.get('completionProvider') or {}).get('triggerCharacters'))
+
+    @property
+    def resolve_provider(self) -> bool:
+        return bool((self._caps.get('completionProvider') or {}).get('resolveProvider'))
+
+    @property
+    def signature_triggers(self) -> 'tuple[str, ...]':
+        return _chars((self._caps.get('signatureHelpProvider') or {}).get('triggerCharacters'))
+
+    @property
+    def signature_retriggers(self) -> 'tuple[str, ...]':
+        provider = self._caps.get('signatureHelpProvider') or {}
+        return _chars(provider.get('retriggerCharacters'))
+
     def open_doc(self, path: str, text: str) -> None:
         """Синхронизировать содержимое файла с сервером.
 
@@ -161,18 +236,50 @@ class Session:
         сервер увидит именно то, что показано в диффе.
         """
         uri = uri_from_path(path)
-        known = self._docs.get(uri)
-        if known is None:
-            self._docs[uri] = (1, text)
-            self._notify('textDocument/didOpen', {'textDocument': {
-                'uri': uri, 'languageId': self.spec.language_id,
-                'version': 1, 'text': text}})
-        elif known[1] != text:
-            version = known[0] + 1
-            self._docs[uri] = (version, text)
-            self._notify('textDocument/didChange', {
-                'textDocument': {'uri': uri, 'version': version},
-                'contentChanges': [{'text': text}]})
+        with self._docs_lock:
+            known = self._docs.get(uri)
+            if known is None:
+                self._docs[uri] = (1, text)
+                self._notify('textDocument/didOpen', {'textDocument': {
+                    'uri': uri, 'languageId': self.spec.language_id,
+                    'version': 1, 'text': text}})
+            elif known[1] != text:
+                version = known[0] + 1
+                self._docs[uri] = (version, text)
+                self._notify('textDocument/didChange', {
+                    'textDocument': {'uri': uri, 'version': version},
+                    'contentChanges': [self._change(known[1], text)]})
+
+    def _change(self, old: str, new: str) -> dict:
+        """Правка для didChange: замена целых строк, если сервер умеет
+        инкрементально, иначе весь текст.
+
+        Автодополнение шлёт текст на каждое нажатие, а полный файл в
+        сотни килобайт сервер разбирал бы заново. Строки режем по
+        `\n` только у текстов, которые им кончаются: без хвостового
+        перевода последняя «строка» не имеет конца, и диапазон ушёл
+        бы за документ.
+        """
+        if self._sync_kind() != SYNC_INCREMENTAL or not (old.endswith('\n')
+                                                          and new.endswith('\n')):
+            return {'text': new}
+        a, b = old[:-1].split('\n'), new[:-1].split('\n')
+        lo, old_n, new_n = line_splice(a, b)
+        replaced = ''.join(line + '\n' for line in b[lo:lo + new_n])
+        return {'range': {'start': {'line': lo, 'character': 0},
+                          'end': {'line': lo + old_n, 'character': 0}},
+                'text': replaced}
+
+    def _sync_kind(self) -> int:
+        sync = self._caps.get('textDocumentSync')
+        if isinstance(sync, dict):
+            sync = sync.get('change')
+        return sync if isinstance(sync, int) else 1
+
+    def _call(self, method: str, params: dict) -> Call:
+        if self._proc is None:
+            raise RpcError('language server is not running')
+        return self._proc.call(method, params)
 
     def _request(self, method: str, params: dict) -> object:
         if self._proc is None:
@@ -316,6 +423,12 @@ class Session:
         self._proc.stop(wait=self.spec.shutdown_wait)
 
 
+def _chars(value: object) -> 'tuple[str, ...]':
+    if not isinstance(value, list):
+        return ()
+    return tuple(x for x in value if isinstance(x, str) and x)
+
+
 def _dir_size(path: str) -> int:
     total = 0
     try:
@@ -357,6 +470,25 @@ class SessionPool:
         только по shebang. NoServer — язык не в реестре или сервер не
         установлен.
         """
+        lang, root, spec = self._resolve(rel, first_line)
+        return self._session(lang, root, spec)
+
+    def peek(self, rel: str, first_line: str = '') -> 'Session | None':
+        """Живая сессия для файла, если она уже есть: сервер не
+        поднимает и `_start_lock` не ждёт.
+
+        Главному потоку надо сразу знать, есть ли кого спросить: старт
+        держит замок до INIT_TIMEOUT, и ждать его значило бы замереть.
+        """
+        try:
+            lang, root, _spec = self._resolve(rel, first_line)
+        except NoServer:
+            return None
+        with self._lock:
+            live = self._live.get((lang, root))
+        return live if live is not None and live.alive() else None
+
+    def _resolve(self, rel: str, first_line: str) -> 'tuple[str, str, ServerSpec]':
         lang = self.language(rel, first_line)
         if lang is None:
             raise NoServer(f'no language server configured for {_ext(rel)}')
@@ -370,7 +502,7 @@ class SessionPool:
         spec = probe if root == self.git_root else spec_for(lang, root, self.git_root)
         if spec is None:
             raise NoServer(f'no language server configured for {_ext(rel)}')
-        return self._session(lang, root, spec)
+        return lang, root, spec
 
     def _session(self, lang: str, root: str, spec: ServerSpec) -> Session:
         key = (lang, root)

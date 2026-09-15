@@ -10,6 +10,7 @@ import unittest
 import kittymock  # noqa: F401
 from modules.lsp.rpc import (
     LspProcess,
+    RpcCancelled,
     RpcError,
     RpcTimeout,
     encode_frame,
@@ -167,6 +168,49 @@ class ProcessTest(unittest.TestCase):
             proc.request('workspace/symbol', {'query': 'x'}, timeout=5)
         with self.assertRaises(RpcError):
             proc.request('initialize', {}, timeout=1)
+
+    def test_cancel_wakes_waiter_and_tells_server(self):
+        proc = self.start({'hang_on': 'textDocument/completion'})
+        proc.request('initialize', {}, timeout=5)
+        call = proc.call('textDocument/completion', {})
+        threading.Timer(0.1, call.cancel).start()
+        started = time.monotonic()
+        with self.assertRaises(RpcCancelled):
+            call.result(timeout=5)
+        self.assertLess(time.monotonic() - started, 2, 'отмена не разбудила ждущего')
+        cancelled = proc.request('workspace/symbol', {'query': '__cancelled__'}, timeout=5)
+        self.assertEqual([c['name'] for c in cancelled], [str(call._mid)])
+        self.assertTrue(proc.alive())
+
+    def test_cancel_after_answer_is_harmless(self):
+        proc = self.start({'completion': {'isIncomplete': False, 'items': []}})
+        proc.request('initialize', {}, timeout=5)
+        call = proc.call('textDocument/completion', {})
+        self.assertEqual(call.result(timeout=5)['items'], [])
+        call.cancel()
+
+    def test_cancel_racing_the_answer_never_hangs(self):
+        # отмена и ответ приходят вперемешку: второй put в Queue(1)
+        # повесил бы отменяющий поток
+        proc = self.start({'completion': []})
+        proc.request('initialize', {}, timeout=5)
+        for _ in range(30):
+            call = proc.call('textDocument/completion', {})
+            call.cancel()
+            try:
+                call.result(timeout=5)
+            except RpcCancelled:
+                pass
+
+    def test_stop_wakes_pending_call(self):
+        proc = self.start({'hang_on': 'textDocument/completion'})
+        proc.request('initialize', {}, timeout=5)
+        call = proc.call('textDocument/completion', {})
+        threading.Timer(0.1, lambda: proc.stop(wait=0.05)).start()
+        started = time.monotonic()
+        with self.assertRaises(RpcError):
+            call.result(timeout=5)
+        self.assertLess(time.monotonic() - started, 2, 'stop не разбудил ждущего')
 
     def test_missing_binary_raises_at_start(self):
         proc = LspProcess(['definitely-not-a-real-server-xyz'], cwd=self.dir)

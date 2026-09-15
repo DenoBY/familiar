@@ -24,7 +24,8 @@ from kittens.tui.loop import MouseButton
 
 from ..highlight import MAX_HIGHLIGHT_BYTES
 from ..keylayout import chord, to_latin
-from .buffer import TextBuffer, decode_editable, line_splice
+from ..lsp.position import line_splice
+from .buffer import TextBuffer, decode_editable
 from .diff import DiffSource, code_width
 from .git import last_error, read_bytes, write_text
 from .goto import ALT_MOD

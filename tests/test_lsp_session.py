@@ -128,6 +128,56 @@ class SessionTest(SessionTestBase):
         session.open_doc(path, 'v2\n')
         self.assertEqual([s['name'] for s in session.symbols('__opened__')], ['v2\n'])
 
+    def test_incremental_change_keeps_server_text_exact(self):
+        path = self.write('a.py', '')
+        session = self.session({'capabilities': {'textDocumentSync': {'change': 2},
+                                                 'workspaceSymbolProvider': True}})
+        steps = ['a\nb\nc\n', 'a\nB\nc\n', 'use X;\na\nB\nc\n', 'use X;\nc\n', '\n',
+                 'tail without eol', 'x\ny\n']
+        for text in steps:
+            session.open_doc(path, text)
+            seen = [s['name'] for s in session.symbols('__opened__')]
+            self.assertEqual(seen, [text])
+
+    def test_full_sync_by_default(self):
+        session = self.session({'capabilities': {'textDocumentSync': 1}})
+        self.assertEqual(session._change('a\n', 'b\n'), {'text': 'b\n'})
+
+    def test_incremental_change_replaces_whole_lines(self):
+        session = self.session({'capabilities': {'textDocumentSync': 2}})
+        change = session._change('a\nb\nc\n', 'a\nX\nY\nc\n')
+        self.assertEqual(change['range'], {'start': {'line': 1, 'character': 0},
+                                           'end': {'line': 2, 'character': 0}})
+        self.assertEqual(change['text'], 'X\nY\n')
+
+    def test_completion_and_resolve(self):
+        path = self.write('a.py', 'x\n')
+        item = {'label': 'foo', 'data': 7}
+        session = self.session({
+            'capabilities': {'completionProvider': {'triggerCharacters': ['.', ''],
+                                                    'resolveProvider': True},
+                             'signatureHelpProvider': {'triggerCharacters': ['('],
+                                                       'retriggerCharacters': [',']}},
+            'completion': {'isIncomplete': True, 'items': [item]},
+            'resolve': {'foo': {'detail': 'def foo()'}},
+            'signature': {'signatures': [{'label': 'foo(a)'}]}})
+        self.assertTrue(session.has_completion)
+        self.assertEqual(session.completion_triggers, ('.',))
+        self.assertTrue(session.resolve_provider)
+        self.assertEqual(session.signature_triggers, ('(',))
+        self.assertEqual(session.signature_retriggers, (',',))
+        got = session.completion_call(path, 1, 0, {'triggerKind': 1}).result(5)
+        self.assertEqual(got['items'], [item])
+        resolved = session.resolve_call(item).result(5)
+        self.assertEqual(resolved, {'label': 'foo', 'data': 7, 'detail': 'def foo()'})
+        sig = session.signature_call(path, 1, 0, {'triggerKind': 1}).result(5)
+        self.assertEqual(sig['signatures'][0]['label'], 'foo(a)')
+
+    def test_no_completion_capability(self):
+        session = self.session({'capabilities': {}})
+        self.assertFalse(session.has_completion)
+        self.assertEqual(session.completion_triggers, ())
+
     def test_missing_server_raises_with_hint(self):
         self.wire({})
         conf = R.user_path()
@@ -313,6 +363,16 @@ class PoolTest(SessionTestBase):
         pool = SessionPool(self.repo)
         self.addCleanup(pool.stop_all)
         self.assertIs(pool.session_for('packages/api/b.py'), pool.session_for('a.py'))
+
+    def test_peek_never_starts_a_server(self):
+        self.wire({})
+        pool = SessionPool(self.repo)
+        self.addCleanup(pool.stop_all)
+        self.assertIsNone(pool.peek('a.py'))
+        self.assertEqual(pool.active(), [])
+        session = pool.session_for('a.py')
+        self.assertIs(pool.peek('b.py'), session)
+        self.assertIsNone(pool.peek('notes.txt'))
 
     def test_stop_all_kills_every_server(self):
         self.wire({})

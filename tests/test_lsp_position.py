@@ -4,6 +4,7 @@ import kittymock  # noqa: F401
 from modules.lsp.position import (
     Target,
     collapse_overloads,
+    decode_character,
     encode_character,
     location_target,
     locations,
@@ -70,6 +71,25 @@ class EncodeCharacterTest(unittest.TestCase):
 
     def test_utf32_counts_code_points(self):
         self.assertEqual(encode_character('🙂x', 2, 'utf-32'), 2)
+
+
+class DecodeCharacterTest(unittest.TestCase):
+    def test_roundtrip_through_every_encoding(self):
+        raw = 'a🙂б\tc'
+        for enc in ('utf-16', 'utf-8', 'utf-32'):
+            for idx in range(len(raw) + 1):
+                units = encode_character(raw, idx, enc)
+                self.assertEqual(decode_character(raw, units, enc), idx, (enc, idx))
+
+    def test_middle_of_surrogate_pair_goes_to_char_start(self):
+        self.assertEqual(decode_character('🙂x', 1), 0)
+
+    def test_past_the_end_clamps(self):
+        self.assertEqual(decode_character('ab', 9), 2)
+        self.assertEqual(decode_character('аб', 9), 2)
+
+    def test_negative_is_zero(self):
+        self.assertEqual(decode_character('ab', -1), 0)
 
 
 class UriTest(unittest.TestCase):

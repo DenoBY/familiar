@@ -18,6 +18,9 @@
     hang_on        метод, на который не отвечать
     delay          пауза перед каждым ответом
     want_config    спросить ли workspace/configuration после initialized
+    completion     что отдать на textDocument/completion (как есть)
+    resolve        label → поля, которые completionItem/resolve допишет
+    signature      что отдать на textDocument/signatureHelp
 """
 
 import json
@@ -53,12 +56,29 @@ def read_frame(stream):
     return json.loads(body)
 
 
+def apply_change(text: str, change: dict) -> str:
+    """Правка didChange: полный текст или замена диапазона — строки и
+    колонки считаем в символах, тестам хватает ASCII.
+    """
+    rng = change.get('range')
+    if rng is None:
+        return change.get('text', '')
+    lines = text.split('\n')
+
+    def offset(pos: dict) -> int:
+        line = pos['line']
+        return sum(len(s) + 1 for s in lines[:line]) + pos['character']
+
+    return text[:offset(rng['start'])] + change.get('text', '') + text[offset(rng['end']):]
+
+
 class FakeServer:
     def __init__(self, scenario: dict) -> None:
         self.s = scenario
         self.out = sys.stdout.buffer
         self.lock = threading.Lock()
         self.opened: 'dict[str, str]' = {}
+        self.cancelled: 'list[int]' = []
         self.running = True
 
     def send(self, payload: dict) -> None:
@@ -101,8 +121,10 @@ class FakeServer:
             self.opened[doc.get('uri', '')] = doc.get('text', '')
         elif method == 'textDocument/didChange':
             uri = (params.get('textDocument') or {}).get('uri', '')
-            changes = params.get('contentChanges') or [{}]
-            self.opened[uri] = changes[-1].get('text', '')
+            for change in params.get('contentChanges') or []:
+                self.opened[uri] = apply_change(self.opened.get(uri, ''), change)
+        elif method == '$/cancelRequest':
+            self.cancelled.append(params.get('id'))
         elif method == 'textDocument/didClose':
             self.opened.pop((params.get('textDocument') or {}).get('uri', ''), None)
         elif method == 'textDocument/definition':
@@ -113,6 +135,10 @@ class FakeServer:
                 # чем тест проверяет, какой PATH достался серверу
                 self.reply(mid, [{'name': os.environ.get('PATH', ''), 'kind': 12,
                                   'location': {'uri': '', 'range': _ZERO}}])
+            elif query == '__cancelled__':
+                self.reply(mid, [{'name': str(i), 'kind': 12,
+                                  'location': {'uri': '', 'range': _ZERO}}
+                                 for i in self.cancelled])
             elif query == '__opened__':
                 # чем тест проверяет, какой текст сервер реально видит
                 self.reply(mid, [{'name': text, 'kind': 12,
@@ -120,6 +146,13 @@ class FakeServer:
                                  for uri, text in sorted(self.opened.items())])
             else:
                 self.reply(mid, self.s.get('symbols', {}).get(query, []))
+        elif method == 'textDocument/completion':
+            self.reply(mid, self.s.get('completion'))
+        elif method == 'completionItem/resolve':
+            extra = self.s.get('resolve', {}).get(params.get('label'), {})
+            self.reply(mid, {**params, **extra})
+        elif method == 'textDocument/signatureHelp':
+            self.reply(mid, self.s.get('signature'))
         elif method == 'shutdown':
             self.reply(mid, None)
         elif method == 'exit':

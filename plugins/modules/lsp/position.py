@@ -67,6 +67,39 @@ def encode_character(raw: str, idx: int, encoding: str = 'utf-16') -> int:
     return len(head.encode('utf-16-le')) // 2
 
 
+def decode_character(raw: str, units: int, encoding: str = 'utf-16') -> int:
+    """`character` сервера → индекс символа; обратная к
+    encode_character. Позиция посреди суррогатной пары или байтов
+    одного символа отходит к его началу, за концом строки — к концу.
+    """
+    if units <= 0:
+        return 0
+    if encoding == 'utf-32' or raw.isascii():
+        return min(units, len(raw))
+    pos = 0
+    for i, ch in enumerate(raw):
+        width = len(ch.encode('utf-8')) if encoding == 'utf-8' else (2 if ord(ch) > 0xFFFF else 1)
+        if pos + width > units:
+            return i
+        pos += width
+    return len(raw)
+
+
+def line_splice(old: list[str], new: list[str]) -> tuple[int, int, int]:
+    """(lo, old_n, new_n): new получен из old заменой old[lo:lo+old_n]
+    на new[lo:lo+new_n]. Годится для любой правки — набора, вставки,
+    отката — без знания, что именно случилось.
+    """
+    n = min(len(old), len(new))
+    lo = 0
+    while lo < n and old[lo] == new[lo]:
+        lo += 1
+    k = 0
+    while k < n - lo and old[-1 - k] == new[-1 - k]:
+        k += 1
+    return lo, len(old) - lo - k, len(new) - lo - k
+
+
 def uri_from_path(path: str) -> str:
     return 'file://' + quote(os.path.abspath(path))
 

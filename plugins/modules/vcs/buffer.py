@@ -38,21 +38,6 @@ def decode_editable(raw: bytes) -> 'str | None':
     return None if _FOREIGN_BREAKS.search(text) else text
 
 
-def line_splice(old: list[str], new: list[str]) -> tuple[int, int, int]:
-    """(lo, old_n, new_n): new получен из old заменой old[lo:lo+old_n]
-    на new[lo:lo+new_n]. Годится для любой правки — набора, вставки,
-    отката — без знания, что именно случилось.
-    """
-    n = min(len(old), len(new))
-    lo = 0
-    while lo < n and old[lo] == new[lo]:
-        lo += 1
-    k = 0
-    while k < n - lo and old[-1 - k] == new[-1 - k]:
-        k += 1
-    return lo, len(old) - lo - k, len(new) - lo - k
-
-
 def _expand(s: str) -> str:
     return s.replace('\t', ' ' * TAB_WIDTH)
 

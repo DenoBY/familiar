@@ -5,7 +5,8 @@
 import unittest
 
 import kittymock  # noqa: F401
-from modules.vcs.buffer import TextBuffer, decode_editable, line_splice
+from modules.lsp.position import line_splice
+from modules.vcs.buffer import TextBuffer, decode_editable
 
 
 def buf_at(text, line=0, col=0):

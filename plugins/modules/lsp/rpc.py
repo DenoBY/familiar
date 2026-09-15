@@ -32,6 +32,10 @@ class RpcTimeout(RpcError):
     """Ответ не пришёл за отведённое время."""
 
 
+class RpcCancelled(RpcError):
+    """Запрос отменил сам клиент: ответ устарел, не дождавшись."""
+
+
 # Запросы сервера, которым достаточно пустого ответа. Без ответа
 # gopls и intelephense ждут его вечно, молча не индексируя.
 _ACK: 'dict[str, object]' = {
@@ -175,7 +179,8 @@ class LspProcess:
                 self.notify('exit', {})
             except RpcError:
                 pass
-        self._dead = True
+        # ждущие ответа проснутся сразу, а не по своему таймауту
+        self._die('language server stopped')
         # сначала terminate, потом пайпы: закрыть stdout, пока читатель
         # висит в readline(), значит ждать лока буфера — то есть ровно
         # той секунды, которой хотели избежать
@@ -187,6 +192,12 @@ class LspProcess:
     # --- переписка ---
 
     def request(self, method: str, params: dict, timeout: float) -> object:
+        return self.call(method, params).result(timeout)
+
+    def call(self, method: str, params: dict) -> 'Call':
+        """Отправить запрос, не дожидаясь ответа: ждёт `Call.result`,
+        а отменить может любой поток через `Call.cancel`.
+        """
         with self._lock:
             if self._dead:
                 raise RpcError(self._error or 'language server is not running')
@@ -194,24 +205,23 @@ class LspProcess:
             mid = self._id
             box: Queue = Queue(maxsize=1)
             self._pending[mid] = box
-        self._send({'jsonrpc': '2.0', 'id': mid, 'method': method, 'params': params})
         try:
-            msg = box.get(timeout=timeout)
-        except Empty:
-            with self._lock:
-                self._pending.pop(mid, None)
-            self._cancel(mid)
-            raise RpcTimeout(f'{method} timed out after {timeout:g}s') from None
-        if isinstance(msg, RpcError):
-            raise msg
-        if 'error' in msg:
-            err = msg['error'] or {}
-            raise RpcError(f"{method}: {err.get('message') or err.get('code')}",
-                           err.get('code'))
-        return msg.get('result')
+            self._send({'jsonrpc': '2.0', 'id': mid, 'method': method, 'params': params})
+        except RpcError:
+            self._take(mid)
+            raise
+        return Call(self, mid, method, box)
 
     def notify(self, method: str, params: dict) -> None:
         self._send({'jsonrpc': '2.0', 'method': method, 'params': params})
+
+    def _take(self, mid: int) -> 'Queue | None':
+        """Снять ожидание ответа. Класть в ящик вправе только тот, кому
+        вернулся ящик: ответ, отмена, таймаут и смерть сервера иначе
+        положили бы в Queue(1) дважды, и второй put повис бы навсегда.
+        """
+        with self._lock:
+            return self._pending.pop(mid, None)
 
     def _cancel(self, mid: int) -> None:
         try:
@@ -258,10 +268,9 @@ class LspProcess:
         mid = msg.get('id')
         method = msg.get('method')
         if mid is not None and method is None:
-            with self._lock:
-                box = self._pending.pop(mid, None)
+            box = self._take(mid)
             if box is not None:
-                box.put(msg)
+                box.put_nowait(msg)
             return
         if mid is not None:
             self._serve(mid, method or '', msg.get('params') or {})
@@ -308,7 +317,49 @@ class LspProcess:
             self._pending.clear()
         err = RpcError(reason or 'language server exited')
         for box in waiting:
-            box.put(err)
+            box.put_nowait(err)
+
+
+class Call:
+    """Запрос в пути: ждут его `result` в рабочем потоке, а `cancel`
+    зовут откуда угодно — обычно главный поток, когда набор ушёл
+    вперёд и ответ уже не нужен.
+    """
+
+    def __init__(self, proc: LspProcess, mid: int, method: str, box: Queue) -> None:
+        self._proc = proc
+        self._mid = mid
+        self.method = method
+        self._box = box
+
+    def result(self, timeout: float) -> object:
+        try:
+            msg = self._box.get(timeout=timeout)
+        except Empty:
+            if self._proc._take(self._mid) is None:
+                # ящик в этот миг снял кто-то другой — его put уже идёт
+                msg = self._box.get()
+            else:
+                self._proc._cancel(self._mid)
+                raise RpcTimeout(f'{self.method} timed out after {timeout:g}s') from None
+        if isinstance(msg, RpcCancelled):
+            # $/cancelRequest шлёт проснувшийся поток, а не отменивший:
+            # запись в трубу ждёт _wlock, пока другой поток пишет
+            # многосоткилобайтный didChange, — главный поток замер бы
+            self._proc._cancel(self._mid)
+            raise msg
+        if isinstance(msg, RpcError):
+            raise msg
+        if 'error' in msg:
+            err = msg['error'] or {}
+            raise RpcError(f"{self.method}: {err.get('message') or err.get('code')}",
+                           err.get('code'))
+        return msg.get('result')
+
+    def cancel(self) -> None:
+        box = self._proc._take(self._mid)
+        if box is not None:
+            box.put_nowait(RpcCancelled(f'{self.method} cancelled'))
 
 
 def _spawn(target: Callable) -> None:
