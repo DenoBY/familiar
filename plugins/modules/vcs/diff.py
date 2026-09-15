@@ -626,10 +626,8 @@ def render_diff_cell(di: int, rw: int, focus_diff: bool, diff_cur: int,
             sel_bg = _FOCUS_SHADE.get(bg, SEL_BG)
         head, sign, code = _split_code(body, gutter_w)
         row_fgs = fgs[di] if (fgs and di < len(fgs)) else None
-        if is_cur:
-            marker = '●' if annotated else '▎'
-            mfg = 'yellow' if annotated else 'cyan'
-            out = styled(marker, fg=mfg, bg=sel_bg, bold=True) + _bg(head[1:], sel_bg)
+        if is_cur and annotated:
+            out = styled('●', fg='yellow', bg=sel_bg, bold=True) + _bg(head[1:], sel_bg)
         else:
             out = _bg(head, sel_bg)
         out += _bg(sign, sel_bg) + render_code(code, ext, sel_bg, None, None, row_fgs)

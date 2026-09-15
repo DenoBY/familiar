@@ -417,9 +417,18 @@ class DiffCellTest(unittest.TestCase):
         out = D.render_diff_cell(0, 40, False, 0, None, False, **self._arrays())
         self.assertEqual(out, 'row-ctx')                        # без фокуса — готовая строка
 
-    def test_cell_cursor_marker(self):
+    def test_cell_cursor_is_only_a_background(self):
+        bgs = []
+
+        def spy(text, **kw):
+            bgs.append(kw.get('bg'))
+            return text
+
+        real, D.styled = D.styled, spy
+        self.addCleanup(setattr, D, 'styled', real)
         out = D.render_diff_cell(0, 40, True, 0, None, False, **self._arrays())
-        self.assertIn('▎', out)                                 # курсор — вертикальная черта
+        self.assertIn(D.SEL_BG, bgs)
+        self.assertNotIn('▎', out)       # полоса на полях путалась с меткой правки
 
     def test_cell_annotated_cursor_marker(self):
         out = D.render_diff_cell(0, 40, True, 0, None, True, **self._arrays())

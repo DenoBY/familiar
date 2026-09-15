@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 
 import kittymock  # noqa: F401
+import modules.vcs.diff as D
 import review as R
 from kittymock import EventType, MouseButton, MouseEvent, draw_text, wire
 from modules.vcs.diff import DiffSource, group_key, is_code_row
@@ -1427,15 +1428,25 @@ class YankTest(unittest.TestCase):
         self.h.focus = 'diff'
         self.h.diff_sel = (0, 4)
         self.h.diff_cur = 2                          # курсор на padding гэпа
-        out = self.h._diff_cell(2, 80, None, -1)
-        self.assertNotIn('▎', out)                   # серый курсор на padding не рисуется
+        self.assertNotIn(D.SEL_BG, self._cell_bgs(2))   # серый курсор на padding не рисуется
+
+    def _cell_bgs(self, di):
+        bgs = []
+
+        def spy(text, **kw):
+            bgs.append(kw.get('bg'))
+            return text
+
+        real, D.styled = D.styled, spy
+        self.addCleanup(setattr, D, 'styled', real)
+        self.h._diff_cell(di, 80, None, -1)
+        return bgs
 
     def test_cursor_shown_on_code_row(self):
         self.h.focus = 'diff'
         self.h.diff_sel = None
         self.h.diff_cur = 0
-        out = self.h._diff_cell(0, 80, None, -1)
-        self.assertIn('▎', out)
+        self.assertIn(D.SEL_BG, self._cell_bgs(0))
 
     def test_no_file_returns_none(self):
         self.h.rows = [{'type': 'dir', 'depth': 0, 'name': 'a',

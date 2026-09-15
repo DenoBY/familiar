@@ -9,6 +9,9 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Changed
 
+- review, log: the line under the cursor in the diff is marked by its background
+  alone — the cyan bar at the edge of the gutter is gone: next to a changed
+  line it read as one more change marker.
 - review: switching the pane to the final view (`v`) now flashes
   `final view — whole file · v back to diff` instead of a marker legend whose
   `▎`/`▔` glyphs floated off the text line in the footer.
