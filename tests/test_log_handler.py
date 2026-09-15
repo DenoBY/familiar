@@ -268,6 +268,28 @@ class LogHandlerTest(unittest.TestCase):
         cb(*args)                               # прокрутка утихла
         self.assertEqual(calls, [self.h.commits[self.h.sel]['sha']])
 
+    def _many_commits(self, n):
+        for k in range(n):
+            self._git('commit', '--allow-empty', '-m', f'c{k}')
+        wire(self.h, rows=8, cols=120)              # 5 строк списка
+        self.h.reload_commits()
+
+    def test_wheel_scrolls_list_not_selection(self):
+        self._many_commits(10)
+        wheel = MouseEvent(cell_y=3, buttons=L.MouseButton.WHEEL_DOWN)
+        self.h._on_mouse(wheel)
+        self.h.draw_screen()                        # отрисовка не тянет окно к курсору
+        self.assertEqual((self.h.sel, self.h.offset), (0, 3))
+        self.h._on_mouse(wheel)
+        self.h._on_mouse(wheel)
+        self.assertEqual(self.h.offset, len(self.h.commits) - self.h.visible_rows())
+
+    def test_move_after_wheel_brings_selection_back(self):
+        self._many_commits(10)
+        self.h.scroll_commits(6)
+        self.h.move(1)
+        self.assertEqual((self.h.sel, self.h.offset), (1, 1))
+
     def test_draw_commits_with_panel_smoke(self):
         wire(self.h, rows=30, cols=130)                    # широкий экран → панель видна
         self.h.draw_screen()
@@ -282,6 +304,11 @@ class LogHandlerTest(unittest.TestCase):
         # HEAD-ветка (main) должна попасть в строку выбранного коммита
         row = self.h._commit_row(self.h.commits[0], 120, False)
         self.assertIn('main', row)
+
+    def test_lane_color_follows_graph_toggle(self):
+        self.assertEqual(self.h._lane_color(0), L._GRAPH_COLORS[0])   # ствол
+        self.h.toggle_graph()                        # граф скрыт — цвета по типу метки
+        self.assertIsNone(self.h._lane_color(0))
 
     def test_display_refs_collapses_remote(self):
         self.assertEqual(

@@ -57,6 +57,18 @@ class GraphTest(unittest.TestCase):
         corner_color = g[0]['cells'][2][1]                     # ╮ ветки
         self.assertNotEqual(node_color, corner_color)
 
+    def test_row_color_is_node_color(self):
+        # по цвету узла красим хеш и ветки строки — он
+        # должен совпадать с цветом линии, на которой узел
+        commits = [{'sha': 'm', 'parents': ['d', 'f']},
+                   {'sha': 'f', 'parents': ['d']},
+                   {'sha': 'd', 'parents': []}]
+        g = build_graph(commits)
+        self.assertEqual([r['color'] for r in g],
+                         [r['cells'][2 * r['col']][1] for r in g])
+        self.assertEqual(g[1]['color'], g[0]['cells'][2][1])  # f — цвета ╮ своей ветки
+        self.assertNotEqual(g[0]['color'], g[1]['color'])
+
     def test_width_tight_after_merge(self):
         commits = [{'sha': 'm', 'parents': ['d', 'f']},
                    {'sha': 'f', 'parents': ['d']},

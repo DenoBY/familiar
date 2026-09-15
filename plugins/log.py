@@ -55,8 +55,9 @@ BATCH = 300   # сколько коммитов тянем за раз (докр
 # Тот же порядок, что у отложенной загрузки диффа в дереве файлов.
 DETAIL_DELAY = 0.08
 
-# Цвет ref-меток в списке коммитов по типу
-# (см. modules.log.git.parse_refs).
+# Цвет ref-меток в списке коммитов по типу (см.
+# modules.log.git.parse_refs); при видимом графе fg берётся
+# от лейна, а жирность HEAD остаётся.
 _REF_STYLE = {'head': {'fg': 'cyan', 'bold': True}, 'branch': {'fg': 'green'},
               'remote': {'fg': 'blue'}, 'tag': {'fg': 'yellow'}}
 
@@ -285,6 +286,14 @@ class CommitLogHandler(ReviewScreen):
                 out += styled(glyph, fg=_GRAPH_COLORS[color % len(_GRAPH_COLORS)])
         return out + ' ' * max(0, gw - len(cells))
 
+    def _lane_color(self, i: int) -> 'str | None':
+        """Цвет лейна узла коммита i: им же красим хеш и ветки, иначе
+        на ветвистом графе не видно, к какой линии относится метка.
+        """
+        if not self.show_graph or i >= len(self.graph):
+            return None
+        return _GRAPH_COLORS[self.graph[i]['color'] % len(_GRAPH_COLORS)]
+
     def toggle_mode(self) -> None:
         self.all_branches = not self.all_branches
         self.sel = 0
@@ -346,16 +355,38 @@ class CommitLogHandler(ReviewScreen):
             self.reload_commits()   # ref-метки уехали, узлы графа больше не «свои»
         self.draw_screen()
 
+    def set_sel(self, i: int) -> None:
+        self.sel = max(0, min(len(self.commits) - 1, i))
+        self.ensure_commit_visible()
+        self._schedule_detail()
+
     def move(self, delta: int) -> None:
         if not self.commits:
             return
-        self.sel = max(0, min(len(self.commits) - 1, self.sel + delta))
+        self.set_sel(self.sel + delta)
         if self.sel >= len(self.commits) - 1:
             self.load_more()
-        self._schedule_detail()
         self.schedule_draw()
 
+    def scroll_commits(self, delta: int) -> None:
+        """Двигает окно, но не выделение: колесо листает историю, а
+        панель подробностей и хоткеи остаются у выбранного коммита.
+        """
+        if not self.commits:
+            return
+        self.offset = max(0, min(self._offset_limit(), self.offset + delta))
+        if self.offset >= self._offset_limit():
+            self.load_more()
+        self.schedule_draw()
+
+    def _offset_limit(self) -> int:
+        return max(0, len(self.commits) - self.visible_rows())
+
     def ensure_commit_visible(self) -> None:
+        """Подтянуть окно к выделенной строке. Зовётся при смене
+        выделения, но НЕ при отрисовке: колесо скроллит список
+        независимо от курсора.
+        """
         vis = self.visible_rows()
         if self.sel < self.offset:
             self.offset = self.sel
@@ -439,7 +470,7 @@ class CommitLogHandler(ReviewScreen):
         self.print(styled(truncate(header, cols), fg='green', bold=True))
         self.print(styled('─' * cols, fg='gray'))
         vis = self.visible_rows()
-        self.ensure_commit_visible()
+        self.offset = max(0, min(self.offset, self._offset_limit()))
         if not self.commits:
             self.print(styled('  ' + (self.status or 'no matches'), fg='gray'))
             for _ in range(vis - 1):
@@ -463,7 +494,7 @@ class CommitLogHandler(ReviewScreen):
             i = self.offset + r
             if i < len(self.commits):
                 row = self._commit_row(self.commits[i], list_w - (gw + 1 if gw else 0),
-                                       i == self.sel)
+                                       i == self.sel, self._lane_color(i))
                 left = (self._graph_gutter(i, gw) + ' ' + row) if gw else row
             else:
                 left = ' ' * list_w
@@ -596,7 +627,8 @@ class CommitLogHandler(ReviewScreen):
         i = names.index(c['repo_name']) if c.get('repo_name') in names else 0
         return {'fg': _GRAPH_COLORS[i % len(_GRAPH_COLORS)]}
 
-    def _commit_row(self, c: dict, width: int, selected: bool) -> str:
+    def _commit_row(self, c: dict, width: int, selected: bool,
+                    lane: 'str | None' = None) -> str:
         if self.merged_feed:
             return self._multi_commit_row(c, width, selected)
         badge = '⑂ ' if c.get('merge') else ''
@@ -616,11 +648,13 @@ class CommitLogHandler(ReviewScreen):
         if selected:
             plain = head + subject + ' ' * gap + refs_plain + ' ' + tail_plain
             return styled(pad(plain, width), reverse=True)
-        segs = [(badge, {'fg': 'magenta'}), (f'{c["short"]}  ', {'fg': 'cyan'}),
+        segs = [(badge, {'fg': 'magenta'}), (f'{c["short"]}  ', {'fg': lane or 'cyan'}),
                 (subject, {}), (' ' * gap, None)]
         for i, (name, kind) in enumerate(refs):
-            segs.append((name + ('  ' if i < len(refs) - 1 else ''),
-                         _REF_STYLE.get(kind, {'fg': 'green'})))
+            style = _REF_STYLE.get(kind, {'fg': 'green'})
+            if lane:
+                style = {**style, 'fg': lane}
+            segs.append((name + ('  ' if i < len(refs) - 1 else ''), style))
         segs += [(' ', None), (f'{author:<{_AUTHOR_W}}', {'bold': True}),
                  ('  ', None), (f'{date:<{_DATE_W}}', {'fg': 'gray'})]
         return compose(segs, width)
@@ -658,6 +692,7 @@ class CommitLogHandler(ReviewScreen):
         if self.input_mode == 'commits':
             self.commit_filter = self.input_buffer
             self.sel = 0
+            self.offset = 0
             self.rebuild_commits()
             self.draw_screen()
             return
@@ -667,6 +702,7 @@ class CommitLogHandler(ReviewScreen):
         if mode == 'commits':
             self.commit_filter = ''
             self.sel = 0
+            self.offset = 0
             self.rebuild_commits()
             return
         super()._input_cancelled(mode)
@@ -724,12 +760,10 @@ class CommitLogHandler(ReviewScreen):
         elif k == 'PAGE_DOWN':
             self.move(self.visible_rows())
         elif k == 'HOME':
-            self.sel = 0
-            self._schedule_detail()
+            self.set_sel(0)
             self.draw_screen()
         elif k == 'END':
-            self.sel = max(0, len(self.commits) - 1)
-            self._schedule_detail()
+            self.set_sel(len(self.commits) - 1)
             self.draw_screen()
         elif k in ('ENTER', 'RIGHT'):
             self.open_commit()
@@ -796,7 +830,7 @@ class CommitLogHandler(ReviewScreen):
             return
         self.update_pointer(ev)
         if ev.buttons in (MouseButton.WHEEL_UP, MouseButton.WHEEL_DOWN):
-            self.move(-1 if ev.buttons == MouseButton.WHEEL_UP else 1)
+            self.scroll_commits(-3 if ev.buttons == MouseButton.WHEEL_UP else 3)
             return
         Handler.on_mouse_event(self, ev)   # обычный клик → on_click
 
@@ -815,13 +849,14 @@ class CommitLogHandler(ReviewScreen):
         if i == self.sel:
             self.open_commit()
         else:
-            self.sel = i
-            self._schedule_detail()
+            self.set_sel(i)
             self.draw_screen()
 
     def on_resize(self, new_size) -> None:
         if self.screen == 'diff':
             self.build_diff_rows()
+        else:
+            self.ensure_commit_visible()
         self.draw_screen()
 
     def on_eot(self) -> None:

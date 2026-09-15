@@ -59,11 +59,11 @@ def _main_chain(commits: 'list[dict]') -> 'set[str]':
 
 def build_graph(commits: 'list[dict]') -> 'list[dict]':
     """commits (по порядку git log, с полями 'sha', 'parents',
-    'refs') → на каждый коммит {'col': int, 'cells': [(glyph,
-    color)]}. cells — уже в 2-колоночной сетке (узлы на чётных
-    позициях, связи на нечётных). color — сквозной номер ветки
-    (монотонный счётчик, не индекс лейна) — палитру по нему
-    выбирает вызывающий.
+    'refs') → на каждый коммит {'col': int, 'color': int, 'cells':
+    [(glyph, color)]}. cells — уже в 2-колоночной сетке (узлы на
+    чётных позициях, связи на нечётных). color — сквозной номер
+    ветки (монотонный счётчик, не индекс лейна) — палитру по нему
+    выбирает вызывающий; верхний 'color' — цвет узла коммита.
     """
     main_shas = _main_chain(commits)
     lanes = []        # ожидаемый sha на каждом лейне (None — свободен)
@@ -136,7 +136,7 @@ def build_graph(commits: 'list[dict]') -> 'list[dict]':
                 corner = IN_L if kind == 'in' else OUT_L
             chars[2 * j], ccol[2 * j] = corner, color
 
-        out.append({'col': col, 'cells': list(zip(chars, ccol))})
+        out.append({'col': col, 'color': ccol[2 * col], 'cells': list(zip(chars, ccol))})
 
         while lanes and lanes[-1] is None:
             lanes.pop()

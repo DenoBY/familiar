@@ -5,6 +5,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- log: the hash and the branch/tag labels of a commit take the color of its
+  line in the graph, so on a busy graph you can tell at a glance which branch
+  sits on which line. With the graph hidden (`g`) they keep the old colors.
+- log: the mouse wheel scrolls the commit list without moving the selection —
+  the details panel stays on the selected commit, and the arrows bring the view
+  back to it. The wheel now moves three rows at a time, like the file tree.
+
 ## [0.39.0] — 2026-09-15
 
 ### Added
