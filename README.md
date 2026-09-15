@@ -32,7 +32,12 @@ Each kitten is a full-screen overlay opened by a hotkey:
 | [review](https://github.com/DenoBY/familiar/wiki/Review) | `Cmd+Shift+R` | Two-pane reviewer for uncommitted git changes: file tree + syntax-highlighted unified diff, word-diff, go to definition (⌥-click), an IDE-style final-code view you can edit in place, search, jump-by-change, staging files from the tree, and line comments collected into markdown to paste back to Claude. `Cmd+Shift+F` inside the overlay — Find in Files mode: live `git grep` across the whole project with match navigation. |
 | [log](https://github.com/DenoBY/familiar/wiki/Log) | `Cmd+Shift+L` | Git history browser: commit list with a branch graph and, per commit, the full `review` screen (comments, go-to-definition, Find in Files), `git fetch` / `git push`, and copying hashes / `@path` / `@path#L42` to feed Claude Code. |
 
+<details>
+<summary><b>▶ Video tour</b> — 2 minutes, with subtitles</summary>
+
 https://github.com/user-attachments/assets/930082ca-9b71-4a5d-a091-5da589fbec40
+
+</details>
 
 Full keymaps live in the per-kitten pages of the
 [wiki](https://github.com/DenoBY/familiar/wiki).
