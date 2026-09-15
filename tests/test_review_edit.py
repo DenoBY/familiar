@@ -467,6 +467,29 @@ class EditModeTest(unittest.TestCase):
         self.key('ENTER')
         self.assertEqual(list(self.h.annots), [(None, 'big.txt', 17)])
 
+    def test_edits_in_two_places_patch_the_diff_in_two_places(self):
+        # auto-import сверху и вставка внизу: быстрая модель не должна
+        # пометить изменённым всё между ними
+        self.select('big.txt')
+        self.h.set_focus('diff')
+        self.h.view_mode = 'final'
+        self.h.build_diff_rows()
+        self.h.diff_cur = self.h.diff_lineno.index(21)
+        self.h.start_comment()
+        self.h.input_text('note')
+        self.h.commit_input()
+        self.edit('big.txt', line=25)
+        self._defer_exact()
+        self.h.apply_edits([((0, 0), (0, 0), 'import x\n'), ((24, 7), (24, 7), '!')],
+                           caret=(25, 8))
+        marked = [i for i, m in enumerate(self.h.diff_marks) if m]
+        self.assertEqual(marked, [0, 1, 16, 25])
+        self.assertEqual(self.h.edit_buf.caret, (25, 8))
+        self.assertEqual(list(self.h.annots), [(None, 'big.txt', 22)])
+        self.key('z', super=True)
+        self.assertEqual(self.h.edit_buf.lines[24], 'line 24')
+        self.assertEqual(self.h.edit_buf.lines[0], 'line 0')
+
     def test_definition_in_the_same_file_moves_the_caret(self):
         self.edit('big.txt', line=1)
         self.h._navigate(Target('big.txt', 20, 'def', ''))

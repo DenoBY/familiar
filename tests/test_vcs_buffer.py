@@ -220,6 +220,42 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(b.lines, ['a', 'b', 'c'])
 
 
+class ApplyEditsTest(unittest.TestCase):
+    def test_import_on_top_and_word_below_undo_together(self):
+        b = TextBuffer('<?php\nnamespace App;\n\n$u = Use\n')
+        before = b.version
+        steps = b.apply_edits([((3, 5), (3, 8), 'User'), ((1, 14), (2, 0), '\n\nuse X;\n')],
+                              caret=(5, 9))
+        self.assertEqual(b.lines, ['<?php', 'namespace App;', '', 'use X;', '', '$u = User'])
+        self.assertEqual(b.caret, (5, 9))
+        self.assertGreater(b.version, before)
+        self.assertEqual(steps, [(3, 1, ['$u = User']),
+                                 (1, 2, ['namespace App;', '', 'use X;', ''])])
+        b.undo()
+        self.assertEqual(b.lines, ['<?php', 'namespace App;', '', '$u = Use'])
+
+    def test_overlapping_edit_dropped(self):
+        b = TextBuffer('abcdef\n')
+        b.apply_edits([((0, 1), (0, 4), 'X'), ((0, 2), (0, 3), 'Y')], caret=(0, 2))
+        self.assertEqual(b.lines, ['aXef'])
+
+    def test_selection_placed_after_edit(self):
+        b = TextBuffer('f\n')
+        b.apply_edits([((0, 1), (0, 1), '(a, b)')], caret=(0, 0), select=((0, 2), (0, 3)))
+        self.assertEqual(b.selected_text(), 'a')
+
+    def test_version_moves_on_every_text_change_only(self):
+        b = TextBuffer('ab\n')
+        v = b.version
+        b.move('right')
+        self.assertEqual(b.version, v)
+        b.type_char('x')
+        b.type_char('y')        # тот же шаг отката — версия всё равно новая
+        self.assertEqual(b.version, v + 2)
+        b.undo()
+        self.assertEqual(b.version, v + 3)
+
+
 class HelpersTest(unittest.TestCase):
     def test_decode_editable_refuses_what_would_be_corrupted(self):
         self.assertEqual(decode_editable('ёж\n'.encode()), 'ёж\n')

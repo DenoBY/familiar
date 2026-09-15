@@ -72,6 +72,9 @@ class EditorMixin:
         # по устаревшим строкам
         self._caret_snap: 'tuple | None' = None
         self._sync_pending = False
+        # шаги последней многоместной правки (apply_edits): по ним дифф
+        # патчится каждый на своём месте
+        self._splices: 'list | None' = None
         # поколение текста: фоновый пересчёт от старого текста не
         # должен подменить модель новее
         self._edit_gen = 0
@@ -213,14 +216,20 @@ class EditorMixin:
     def _sync_edit(self) -> None:
         self._sync_pending = False
         buf = self.edit_buf
+        splices, self._splices = self._splices, None
         if not self.editing or buf is None or self.diff_src is None:
             return
         lo, old_n, new_n = line_splice(self.diff_src.b, buf.lines)
         changed = bool(old_n or new_n)
         if changed:
+            steps = self._replayed(splices) or [(lo, old_n, buf.lines[lo:lo + new_n])]
+            lines = list(self.diff_src.b)
+            for s_lo, s_old, s_new in steps:
+                lines[s_lo:s_lo + s_old] = s_new
+                after = '\n'.join(lines) + '\n'
+                self.diff_src = self.diff_src.patched(after, s_lo, s_old, len(s_new))
+                self._shift_annots(s_lo, s_old, len(s_new))
             self.diff_after = buf.display_text()
-            self.diff_src = self.diff_src.patched(self.diff_after, lo, old_n, new_n)
-            self._shift_annots(lo, old_n, new_n)
             self._edit_gen += 1
         hscroll = self._caret_hscroll()
         if changed or hscroll != self.hscroll:
@@ -235,6 +244,26 @@ class EditorMixin:
         if changed:
             self._arm_exact()
         self.draw_screen()
+
+    def _replayed(self, splices: 'list | None') -> 'list | None':
+        """Шаги apply_edits, если они ровно ведут от показанного текста
+        к буферу; иначе между ними вклинилась другая правка, и надёжнее
+        один общий блок.
+        """
+        if not splices:
+            return None
+        lines = list(self.diff_src.b)
+        for lo, old_n, new in splices:
+            lines[lo:lo + old_n] = new
+        return splices if lines == self.edit_buf.lines else None
+
+    def apply_edits(self, edits: list, caret: 'tuple[int, int]',
+                    select: 'tuple | None' = None) -> None:
+        """Многоместная правка буфера (auto-import и вставка пункта)."""
+        if self._sync_pending:
+            self._sync_edit()
+        self._splices = self.edit_buf.apply_edits(edits, caret, select)
+        self._edited()
 
     def _caret_hscroll(self) -> int:
         buf = self.edit_buf

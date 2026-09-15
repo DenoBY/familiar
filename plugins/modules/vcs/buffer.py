@@ -24,6 +24,8 @@ UNDO_LIMIT = 200
 _WORD = re.compile(r'\w')
 
 Pos = tuple[int, int]
+# шаг правки: строки [lo, lo+old_n) заменены на новые
+Splice = tuple[int, int, list[str]]
 
 
 def decode_editable(raw: bytes) -> 'str | None':
@@ -66,6 +68,9 @@ class TextBuffer:
         self._redo: list[tuple] = []
         # вид последней правки: набранное подряд откатывается разом
         self._group: 'str | None' = None
+        # растёт на каждой правке текста сразу, а не на пересборке
+        # экрана: по нему фоновые ответы понимают, что текст ушёл
+        self.version = 0
 
     # --- текст ---
 
@@ -213,6 +218,7 @@ class TextBuffer:
     # --- правка ---
 
     def _checkpoint(self, group: 'str | None' = None) -> None:
+        self.version += 1
         if group is not None and group == self._group:
             return
         self._undo.append(self._snapshot())
@@ -358,6 +364,39 @@ class TextBuffer:
             self.anchor = shifted(self.anchor)
         self.goal = None
 
+    def apply_edits(self, edits: 'list[tuple[Pos, Pos, str]]', caret: Pos,
+                    select: 'tuple[Pos, Pos] | None' = None) -> 'list[Splice]':
+        """Применить несколько правок одним шагом отката и поставить
+        каретку (или выделение) в координатах уже нового текста.
+
+        Координаты правок — исходного текста (так их шлёт LSP), поэтому
+        идут с конца: нижняя правка не сдвигает верхних. Пересекающиеся
+        отбрасываются. Возвращает шаги в порядке применения — редактор
+        патчит по ним дифф, не сливая auto-import сверху и правку
+        внизу в один блок на полфайла.
+        """
+        ordered = sorted(edits, key=lambda e: (e[0], e[1]))
+        kept: 'list[tuple[Pos, Pos, str]]' = []
+        for edit in ordered:
+            if kept and edit[0] < kept[-1][1]:
+                continue
+            kept.append(edit)
+        self._checkpoint()
+        steps: 'list[Splice]' = []
+        for (la, ca), (lb, cb), text in reversed(kept):
+            la = min(la, len(self.lines) - 1)
+            lb = min(max(lb, la), len(self.lines) - 1)
+            text = _FOREIGN_BREAKS.sub('', text.replace('\r\n', '\n').replace('\r', '\n'))
+            new = (self.lines[la][:ca] + text + self.lines[lb][cb:]).split('\n')
+            self.lines[la:lb + 1] = new
+            steps.append((la, lb - la + 1, new))
+        self._settle_eol()
+        if select is not None:
+            self.select(*select)
+        else:
+            self.set_caret(*caret)
+        return steps
+
     def replace_lines(self, lo: int, hi: int, new: list[str]) -> None:
         """Заменить строки [lo, hi) — откат блока изменений в буфере."""
         self._checkpoint()
@@ -378,6 +417,7 @@ class TextBuffer:
     def _swap(self, src: list, dst: list) -> bool:
         if not src:
             return False
+        self.version += 1
         dst.append(self._snapshot())
         lines, (self.line, self.col), self.anchor, self.eol = src.pop()
         self.lines = list(lines)
