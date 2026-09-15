@@ -45,7 +45,7 @@ _KIND_FG = {
     'fd': C_SELF, 'c': C_CONST, 'e': C_CONST, 'kw': C_KEYWORD, 'sn': C_KEYWORD,
 }
 
-# SGR зачёркивания: у styled такого параметра нет во всех версиях kitty
+# зачёркивание — сырым SGR: у styled такого параметра нет
 _STRIKE, _NO_STRIKE = '\x1b[9m', '\x1b[29m'
 
 
@@ -208,7 +208,6 @@ def _squeeze_blank(lines: 'list[tuple[str, bool]]') -> 'list[tuple[str, bool]]':
 
 
 def place_doc(menu: Box, pane: Pane, content: 'list[tuple[str, bool]]') -> 'Box | None':
-    """Сбоку от списка: справа, если там хватает места, иначе слева."""
     if not content:
         return None
     want = min(DOC_WIDTH, max(len(t) for t, _ in content) + 2)

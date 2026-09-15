@@ -37,7 +37,6 @@ MAX_SESSIONS = 4
 # «сервер ещё не готов отвечать» из спеки JSON-RPC для LSP
 SERVER_NOT_INITIALIZED = -32002
 
-# TextDocumentSyncKind.Incremental
 SYNC_INCREMENTAL = 2
 
 

@@ -193,8 +193,8 @@ class CompletionMixin:
         self._cmp_rows = MAX_ROWS
         self._cmp_swallow = False
         self._words_cache: 'tuple[int, int, list[str]]' = (-1, -1, [])
-        # документация выбранного пункта — только по ⌃Space, как в
-        # JetBrains: рядом со списком она всё время перекрывала код
+        # документация — только по ⌃Space, как в JetBrains: панель
+        # рядом со списком перекрывает код на каждом нажатии
         self._doc_on = False
         self._resolve_timer = None
         self._resolve_busy = False
@@ -423,8 +423,7 @@ class CompletionMixin:
             if ask.manual and not incomplete:
                 self._cmp_words(ask, fallback=True)
                 return
-            # неполный пустой ответ — сессия жива, следующий символ
-            # переспросит; полный пустой — закрыть
+            # неполный пустой ответ держим: следующий символ переспросит
             if incomplete:
                 self._cmp = popup
             else:

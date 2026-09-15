@@ -94,7 +94,6 @@ class Item:
 
 
 def parse_completion(result: object) -> 'tuple[list[Item], bool]':
-    """(пункты в порядке сервера, isIncomplete)."""
     if isinstance(result, list):
         raw_items, incomplete, defaults = result, False, {}
     elif isinstance(result, dict):
@@ -159,7 +158,6 @@ def _doc(value: object) -> str:
 
 
 def word_start(line: str, caret: int) -> int:
-    """Начало слова перед кареткой — для пунктов без диапазона."""
     return caret - len(_WORD_TAIL.search(line[:caret]).group())
 
 
@@ -253,6 +251,5 @@ def _pos(lines: 'list[str]', pos: dict, encoding: str) -> 'Pos | None':
     if not (isinstance(line, int) and isinstance(ch, int)) or line < 0:
         return None
     if line >= len(lines):
-        # позиция за последней строкой — конец документа
         return len(lines) - 1, len(lines[-1])
     return line, decode_character(lines[line], ch, encoding)

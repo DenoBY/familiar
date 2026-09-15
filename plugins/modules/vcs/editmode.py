@@ -266,7 +266,6 @@ class EditorMixin:
 
     def apply_edits(self, edits: list, caret: 'tuple[int, int]',
                     select: 'tuple | None' = None) -> None:
-        """Многоместная правка буфера (auto-import и вставка пункта)."""
         if self._sync_pending:
             self._sync_edit()
         self._splices = self.edit_buf.apply_edits(edits, caret, select)

@@ -587,7 +587,7 @@ class ScreenTest(CompletionTestBase):
             'kind': 'markdown', 'value': '```python\ndef greet(name)\n```\n---\nSay hello.'}}}
         self.open()
         self.assertNotIn('Say hello.', self.screen())
-        self.assertEqual(self.session.resolved, [])      # не спрошенная — не нужна
+        self.assertEqual(self.session.resolved, [])
         self.key(' ', ctrl=True)
         out = self.screen()
         self.assertIn('Say hello.', out)
